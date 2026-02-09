@@ -1,15 +1,7 @@
+// src/main.ts
 import { bootstrapApplication } from '@angular/platform-browser';
-import { appConfig } from './app/app.config';
 import { AppComponent } from './app/app.component';
-
-// Ensure Firebase is initialized as early as possible to avoid race conditions
-import { initializeApp, getApps } from 'firebase/app';
-import { environment } from './environments/environment';
-
-// Initialize Firebase app immediately (safe if already initialized)
-if (!getApps().length) {
-  initializeApp(environment.firebase as any);
-}
+import { appConfig } from './app/app.config';
 
 bootstrapApplication(AppComponent, appConfig)
-  .catch((err) => console.error(err));
+  .catch((err) => console.error('Bootstrap failed:', err));
