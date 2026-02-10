@@ -1,9 +1,442 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { DatabaseService } from '../../../core/services/database.service';
+import { AuthService } from '../../../core/services/auth.service';
+import * as XLSX from 'xlsx';
+
+interface UserTable {
+  id: string;
+  name: string;
+  user_id: string;
+  item_count?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface MaterialConsumption {
+  material_name: string;
+  material_type: string;
+  unit: string;
+  total_quantity: number;
+  table_count: number;
+  sku_count: number;
+  tables: string[];
+  skus: string[];
+}
+
+interface TypeBreakdown {
+  type: string;
+  material_count: number;
+  total_quantity: number;
+  percentage: number;
+}
 
 @Component({
   selector: 'app-page4',
   standalone: true,
+  imports: [CommonModule, FormsModule],
   templateUrl: './page4.component.html',
-  styleUrl: './page4.component.css',
+  styleUrls: ['./page4.component.css']
 })
-export class Page4Component {}
+export class Page4Component implements OnInit {
+  userTables: UserTable[] = [];
+  selectedTableId: string = 'all';
+  
+  usageData: MaterialConsumption[] = [];
+  filteredData: MaterialConsumption[] = [];
+  paginatedData: MaterialConsumption[] = [];
+  typeBreakdown: TypeBreakdown[] = [];
+  
+  isLoading: boolean = false;
+  
+  currentPage: number = 1;
+  itemsPerPage: number = 15;
+  totalPages: number = 1;
+  
+  sortField: string = 'total_quantity';
+  sortAsc: boolean = false;
+  
+  totalMaterials: number = 0;
+  totalQuantity: number = 0;
+  totalTables: number = 0;
+  
+  showNotification: boolean = false;
+  notificationMessage: string = '';
+  notificationType: 'success' | 'error' | 'info' = 'info';
+  private notificationTimeout: any;
+
+  constructor(
+    private db: DatabaseService,
+    private auth: AuthService
+  ) {}
+
+  async ngOnInit(): Promise<void> {
+    await this.loadUserTables();
+    await this.loadUsageData();
+  }
+
+  async loadUserTables(): Promise<void> {
+    try {
+      const userId = this.auth.getUserId();
+      if (!userId) {
+        this.showMessage('Please login to view usage reports', 'error');
+        return;
+      }
+
+      this.userTables = await this.db.getUserTables(userId);
+      console.log('Loaded user tables:', this.userTables);
+    } catch (error) {
+      console.error('Error loading user tables:', error);
+      this.showMessage('Failed to load tables', 'error');
+    }
+  }
+
+  async loadUsageData(): Promise<void> {
+    this.isLoading = true;
+    try {
+      if (this.userTables.length === 0) {
+        await this.loadUserTables();
+      }
+
+      console.log('Loading usage data for table:', this.selectedTableId);
+      
+      const materialMap = new Map<string, {
+        material_name: string;
+        material_type: string;
+        unit: string;
+        total_quantity: number;
+        tables: Set<string>;
+        skus: Set<string>;
+      }>();
+
+      // Process each table
+      for (const table of this.userTables) {
+        if (this.selectedTableId !== 'all' && table.id !== this.selectedTableId) {
+          continue;
+        }
+
+        // Get requisitions for this table
+        const requisitions = await this.db.getTableRequisitions(table.id);
+        console.log(`Found ${requisitions.length} requisitions for table:`, table.name);
+        
+        for (const req of requisitions) {
+          if (!req.sku_code) continue;
+          
+          // Get materials for this SKU
+          const materials = await this.db.getMaterialsForSku(req.sku_code);
+          
+          for (const material of materials) {
+            if (!material.raw_material) continue;
+            
+            const quantityPerBatch = material.quantity_per_batch || 0;
+            const totalRequired = quantityPerBatch * (req.qty_needed || 0);
+            
+            const key = `${material.raw_material}_${material.type || ''}_${material.unit || ''}`;
+            const tableName = table.name || `Table ${table.id.substring(0, 8)}`;
+            const skuInfo = `${req.sku_code} (Qty: ${req.qty_needed || 0})`;
+            
+            if (!materialMap.has(key)) {
+              materialMap.set(key, {
+                material_name: material.raw_material,
+                material_type: material.type || this.determineMaterialType(material.raw_material),
+                unit: material.unit || '',
+                total_quantity: 0,
+                tables: new Set<string>(),
+                skus: new Set<string>()
+              });
+            }
+            
+            const materialData = materialMap.get(key)!;
+            materialData.total_quantity += totalRequired;
+            materialData.tables.add(tableName);
+            materialData.skus.add(skuInfo);
+          }
+        }
+      }
+
+      console.log(`Created ${materialMap.size} unique material entries`);
+
+      // Convert to array
+      this.usageData = Array.from(materialMap.values()).map(item => ({
+        material_name: item.material_name,
+        material_type: item.material_type,
+        unit: item.unit,
+        total_quantity: item.total_quantity,
+        table_count: item.tables.size,
+        sku_count: item.skus.size,
+        tables: Array.from(item.tables),
+        skus: Array.from(item.skus)
+      }));
+
+      console.log('Processed usage data:', this.usageData);
+
+      // Calculate totals
+      this.totalMaterials = this.usageData.length;
+      this.totalQuantity = this.usageData.reduce((sum, item) => sum + item.total_quantity, 0);
+      this.totalTables = this.usageData.length > 0 
+        ? new Set(this.usageData.flatMap(item => item.tables)).size 
+        : 0;
+
+      // Generate breakdown
+      this.generateTypeBreakdown();
+      
+      // Apply sorting and pagination
+      this.applySorting();
+      this.updatePagination();
+      
+      this.showMessage(
+        `Loaded ${this.usageData.length} materials from ${this.totalTables} tables`,
+        'success'
+      );
+      
+    } catch (error) {
+      console.error('Error loading usage data:', error);
+      this.showMessage('Failed to load usage data', 'error');
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  private determineMaterialType(materialName: string): string {
+    const name = materialName.toLowerCase();
+    
+    // Material type detection based on your database structure
+    if (name.includes('conductor') || name.includes('wire') || name.includes('cable')) {
+      return 'Conductor';
+    } else if (name.includes('housing') || name.includes('case') || name.includes('enclosure')) {
+      return 'Housing';
+    } else if (name.includes('electronic') || name.includes('pcb') || name.includes('circuit')) {
+      return 'Electronics';
+    } else if (name.includes('textile') || name.includes('fabric') || name.includes('cloth')) {
+      return 'Textile';
+    } else if (name.includes('sewing') || name.includes('thread') || name.includes('needle')) {
+      return 'Sewing';
+    } else if (name.includes('base') || name.includes('substrate') || name.includes('core')) {
+      return 'Base Material';
+    } else if (name.includes('printing') || name.includes('ink') || name.includes('print')) {
+      return 'Printing';
+    } else if (name.includes('chemical') || name.includes('adhesive') || name.includes('glue')) {
+      return 'Chemical';
+    } else if (name.includes('binder') || name.includes('binding')) {
+      return 'Binder';
+    }
+    
+    return 'Other';
+  }
+
+  private generateTypeBreakdown(): void {
+    const typeMap = new Map<string, { material_count: number; total_quantity: number }>();
+
+    for (const item of this.usageData) {
+      const type = item.material_type || 'Other';
+      
+      if (!typeMap.has(type)) {
+        typeMap.set(type, { material_count: 0, total_quantity: 0 });
+      }
+      
+      const typeData = typeMap.get(type)!;
+      typeData.material_count += 1;
+      typeData.total_quantity += item.total_quantity;
+    }
+
+    this.typeBreakdown = Array.from(typeMap.entries()).map(([type, data]) => ({
+      type,
+      material_count: data.material_count,
+      total_quantity: data.total_quantity,
+      percentage: this.totalQuantity > 0 ? (data.total_quantity / this.totalQuantity) * 100 : 0
+    })).sort((a, b) => b.total_quantity - a.total_quantity);
+  }
+
+  sortData(field: string): void {
+    if (this.sortField === field) {
+      this.sortAsc = !this.sortAsc;
+    } else {
+      this.sortField = field;
+      this.sortAsc = true;
+    }
+    
+    this.applySorting();
+    this.updatePagination();
+  }
+
+  private applySorting(): void {
+    this.filteredData = [...this.usageData].sort((a: any, b: any) => {
+      let aVal = a[this.sortField];
+      let bVal = b[this.sortField];
+      
+      if (typeof aVal === 'string' && typeof bVal === 'string') {
+        aVal = aVal.toLowerCase();
+        bVal = bVal.toLowerCase();
+      }
+      
+      if (aVal < bVal) return this.sortAsc ? -1 : 1;
+      if (aVal > bVal) return this.sortAsc ? 1 : -1;
+      return 0;
+    });
+  }
+
+  private updatePagination(): void {
+    this.totalPages = Math.ceil(this.filteredData.length / this.itemsPerPage);
+    this.currentPage = Math.min(this.currentPage, this.totalPages || 1);
+    
+    const start = (this.currentPage - 1) * this.itemsPerPage;
+    const end = start + this.itemsPerPage;
+    this.paginatedData = this.filteredData.slice(start, end);
+  }
+
+  previousPage(): void {
+    if (this.currentPage > 1) {
+      this.currentPage--;
+      this.updatePagination();
+    }
+  }
+
+  nextPage(): void {
+    if (this.currentPage < this.totalPages) {
+      this.currentPage++;
+      this.updatePagination();
+    }
+  }
+
+  getTypeClass(type: string): string {
+    const lowerType = (type || '').toLowerCase();
+    
+    if (lowerType.includes('conductor')) {
+      return 'meat-veg';
+    } else if (lowerType.includes('housing')) {
+      return 'spice';
+    } else if (lowerType.includes('electronic')) {
+      return 'packaging';
+    } else if (lowerType.includes('textile')) {
+      return 'liquid';
+    } else if (lowerType.includes('sewing')) {
+      return 'meat-veg';
+    } else if (lowerType.includes('base')) {
+      return 'spice';
+    } else if (lowerType.includes('printing')) {
+      return 'packaging';
+    } else if (lowerType.includes('chemical')) {
+      return 'liquid';
+    } else if (lowerType.includes('binder')) {
+      return 'spice';
+    }
+    return 'other';
+  }
+
+  async exportToExcel(): Promise<void> {
+    if (this.usageData.length === 0) {
+      this.showMessage('No data to export', 'error');
+      return;
+    }
+
+    try {
+      const workbook = XLSX.utils.book_new();
+      
+      // Main data sheet
+      const mainData: any[][] = [
+        ['Raw Material Usage Report'],
+        ['Generated', new Date().toLocaleString()],
+        ['Table Filter', this.selectedTableId === 'all' ? 'All Tables' : 
+          this.userTables.find(t => t.id === this.selectedTableId)?.name || this.selectedTableId],
+        ['Total Materials', this.totalMaterials.toString()],
+        ['Total Quantity', this.totalQuantity.toFixed(2)],
+        ['Total Tables', this.totalTables.toString()],
+        [],
+        ['Raw Material', 'Type', 'Unit', 'Total Required', 'Tables Used', 'SKUs Used In', 'Table Names']
+      ];
+
+      this.usageData.forEach(item => {
+        mainData.push([
+          item.material_name,
+          item.material_type,
+          item.unit,
+          item.total_quantity,
+          item.table_count,
+          item.sku_count,
+          item.tables.join(', ')
+        ]);
+      });
+
+      const mainSheet = XLSX.utils.aoa_to_sheet(mainData);
+      
+      const colWidths = [
+        { wch: 30 },
+        { wch: 20 },
+        { wch: 10 },
+        { wch: 15 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 40 }
+      ];
+      mainSheet['!cols'] = colWidths;
+      
+      XLSX.utils.book_append_sheet(workbook, mainSheet, 'Usage Report');
+
+      // Type breakdown sheet
+      const breakdownData: any[][] = [
+        ['Material Type Breakdown'],
+        ['Generated', new Date().toLocaleString()],
+        [],
+        ['Type', 'Material Count', 'Total Quantity', 'Percentage']
+      ];
+
+      this.typeBreakdown.forEach(item => {
+        breakdownData.push([
+          item.type,
+          item.material_count.toString(),
+          item.total_quantity.toFixed(2),
+          `${item.percentage.toFixed(1)}%`
+        ]);
+      });
+
+      const breakdownSheet = XLSX.utils.aoa_to_sheet(breakdownData);
+      
+      breakdownSheet['!cols'] = [
+        { wch: 25 },
+        { wch: 15 },
+        { wch: 15 },
+        { wch: 15 }
+      ];
+      
+      XLSX.utils.book_append_sheet(workbook, breakdownSheet, 'Type Breakdown');
+
+      // Generate filename and save
+      const tableName = this.selectedTableId === 'all' ? 'AllTables' : 
+        (this.userTables.find(t => t.id === this.selectedTableId)?.name?.replace(/\s+/g, '_') || this.selectedTableId);
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const fileName = `Material_Usage_${tableName}_${dateStr}.xlsx`;
+
+      XLSX.writeFile(workbook, fileName);
+      this.showMessage('Report exported successfully!', 'success');
+    } catch (error) {
+      console.error('Error exporting to Excel:', error);
+      this.showMessage('Failed to export report', 'error');
+    }
+  }
+
+  private showMessage(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
+    if (this.notificationTimeout) clearTimeout(this.notificationTimeout);
+    this.notificationMessage = message;
+    this.notificationType = type;
+    this.showNotification = true;
+    
+    this.notificationTimeout = setTimeout(() => {
+      this.hideNotification();
+    }, 3000);
+  }
+
+  hideNotification(): void {
+    this.showNotification = false;
+    if (this.notificationTimeout) clearTimeout(this.notificationTimeout);
+  }
+
+  getNotificationIcon(): string {
+    switch (this.notificationType) {
+      case 'success': return '✓';
+      case 'error': return '✕';
+      case 'info': 
+      default: return 'ⓘ';
+    }
+  }
+}

@@ -1,167 +1,208 @@
-<div class="page-content">
-  <header class="page-header">
-    <h1 class="page-title">Usage Report</h1>
-    <p class="page-description">Analyze material usage patterns and generate comprehensive reports.</p>
-  </header>
-
-  <!-- Stats grid -->
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Total Usage</span>
-        <span class="stat-trend stat-trend-up">+18.7%</span>
-      </div>
-      <p class="stat-value">45,678</p>
-      <p class="stat-subtitle">Units consumed this month</p>
-    </div>
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Avg. Daily Usage</span>
-        <span class="stat-trend stat-trend-up">+5.2%</span>
-      </div>
-      <p class="stat-value">1,523</p>
-      <p class="stat-subtitle">Average units per day</p>
-    </div>
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Peak Usage Day</span>
-        <span class="stat-trend stat-trend-down">-3.1%</span>
-      </div>
-      <p class="stat-value">2,847</p>
-      <p class="stat-subtitle">Highest single day usage</p>
-    </div>
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Efficiency Score</span>
-        <span class="stat-trend stat-trend-up">+2.4%</span>
-      </div>
-      <p class="stat-value">87.3%</p>
-      <p class="stat-subtitle">Material utilization rate</p>
-    </div>
+<div class="report-container">
+  <!-- Header -->
+  <div class="header">
+    <h1>Raw Material Usage</h1>
+    <p>View aggregated material consumption across production tables</p>
   </div>
 
-  <!-- Charts row -->
-  <div class="charts-row">
-    <div class="card chart-card">
-      <div class="chart-header">
-        <h3 class="chart-title">Usage Trend</h3>
-        <div class="chart-tabs">
-          <button class="tab-btn active">Week</button>
-          <button class="tab-btn">Month</button>
-        </div>
-      </div>
-      <div class="chart-body">
-        <div class="area-chart">
-          <svg viewBox="0 0 400 120" preserveAspectRatio="none">
-            <defs>
-              <linearGradient id="usageGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="hsl(217.2 91.2% 59.8%)" stop-opacity="0.4"/>
-                <stop offset="100%" stop-color="hsl(217.2 91.2% 59.8%)" stop-opacity="0"/>
-              </linearGradient>
-            </defs>
-            <path fill="url(#usageGradient)" d="M0 90 Q50 75 100 65 T200 55 T300 50 T400 45 L400 120 L0 120 Z"/>
-            <path fill="none" stroke="hsl(217.2 91.2% 59.8%)" stroke-width="2" d="M0 90 Q50 75 100 65 T200 55 T300 50 T400 45"/>
-          </svg>
-        </div>
-        <div class="chart-labels">
-          <span>Mon</span>
-          <span>Tue</span>
-          <span>Wed</span>
-          <span>Thu</span>
-          <span>Fri</span>
-          <span>Sat</span>
-          <span>Sun</span>
-        </div>
-      </div>
-    </div>
-    <div class="card chart-card chart-card-compact">
-      <h3 class="chart-title">Material Categories</h3>
-      <p class="chart-subtitle">Usage by Category</p>
-      <div class="bar-chart">
-        <div class="bar" style="--h: 75%"></div>
-        <div class="bar" style="--h: 90%"></div>
-        <div class="bar" style="--h: 60%"></div>
-        <div class="bar" style="--h: 85%"></div>
-        <div class="bar" style="--h: 70%"></div>
-      </div>
-      <div class="chart-labels">
-        <span>Raw</span>
-        <span>Parts</span>
-        <span>Supplies</span>
-        <span>Tools</span>
-        <span>Other</span>
+  <!-- Controls -->
+  <div class="controls">
+    <div class="control-group">
+      <select [(ngModel)]="selectedTableId" (change)="loadUsageData()" class="select" [disabled]="isLoading">
+        <option value="all">All Tables</option>
+        <option *ngFor="let table of userTables" [value]="table.id">
+          {{ table.name || 'Untitled' }} ({{ table.item_count || 0 }} items)
+        </option>
+      </select>
+      
+      <div class="actions">
+        <button class="btn" (click)="loadUsageData()" [disabled]="isLoading">
+          <span class="btn-icon">↻</span>
+          <span>{{ isLoading ? 'Loading...' : 'Refresh' }}</span>
+        </button>
+        <button class="btn primary" (click)="exportToExcel()" [disabled]="usageData.length === 0 || isLoading">
+          <span class="btn-icon">📊</span>
+          <span>Export</span>
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- Usage table -->
-  <div class="card table-card">
-    <div class="card-header">
-      <h3 class="card-title">Detailed Usage Report</h3>
-      <div class="card-actions">
-        <select class="select">
-          <option>Last 7 days</option>
-          <option>Last 30 days</option>
-          <option>Last 90 days</option>
-        </select>
-        <button class="btn btn-primary">Export PDF</button>
+  <!-- Loading State -->
+  <div *ngIf="isLoading" class="state loading">
+    <div class="spinner"></div>
+    <p>Loading usage data...</p>
+  </div>
+
+  <!-- Empty State -->
+  <div *ngIf="!isLoading && usageData.length === 0" class="state empty">
+    <div class="icon">📊</div>
+    <h3>No Usage Data Found</h3>
+    <p>No material usage data available for the selected criteria.</p>
+    <p *ngIf="selectedTableId === 'all'" class="hint">Try selecting a specific table or adding items to tables.</p>
+    <button class="btn" (click)="loadUsageData()">
+      <span class="btn-icon">↻</span>
+      <span>Try Again</span>
+    </button>
+  </div>
+
+  <!-- Content -->
+  <div *ngIf="!isLoading && usageData.length > 0">
+    <!-- Summary -->
+    <div class="summary">
+      <div class="stat">
+        <div class="stat-value">{{ totalMaterials }}</div>
+        <div class="stat-label">Materials</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">{{ totalQuantity | number:'1.2-2' }}</div>
+        <div class="stat-label">Total Qty</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">{{ totalTables }}</div>
+        <div class="stat-label">Tables</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">{{ usageData.length }}</div>
+        <div class="stat-label">Records</div>
       </div>
     </div>
-    <div class="table-wrapper">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Material</th>
-            <th>Category</th>
-            <th>Quantity Used</th>
-            <th>Unit</th>
-            <th>Cost</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Feb 3, 2025</td>
-            <td>Steel Sheets</td>
-            <td>Raw Materials</td>
-            <td>450</td>
-            <td>kg</td>
-            <td>$2,250</td>
-          </tr>
-          <tr>
-            <td>Feb 2, 2025</td>
-            <td>Electrical Components</td>
-            <td>Parts</td>
-            <td>120</td>
-            <td>units</td>
-            <td>$1,800</td>
-          </tr>
-          <tr>
-            <td>Feb 1, 2025</td>
-            <td>Packaging Supplies</td>
-            <td>Supplies</td>
-            <td>350</td>
-            <td>boxes</td>
-            <td>$875</td>
-          </tr>
-          <tr>
-            <td>Jan 31, 2025</td>
-            <td>Safety Equipment</td>
-            <td>Tools</td>
-            <td>45</td>
-            <td>units</td>
-            <td>$1,350</td>
-          </tr>
-          <tr>
-            <td>Jan 30, 2025</td>
-            <td>Raw Materials</td>
-            <td>Raw Materials</td>
-            <td>2,000</td>
-            <td>kg</td>
-            <td>$10,000</td>
-          </tr>
-        </tbody>
-      </table>
+
+    <!-- Table -->
+    <div class="table-container">
+      <div class="table-header">
+        <h3>Material Summary</h3>
+        <div class="table-info">{{ paginatedData.length }} of {{ usageData.length }} materials</div>
+      </div>
+      
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th (click)="sortData('material_name')">
+                <span>Material</span>
+                <span class="sort-icon" *ngIf="sortField === 'material_name'">
+                  {{ sortAsc ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th (click)="sortData('material_type')">
+                <span>Type</span>
+                <span class="sort-icon" *ngIf="sortField === 'material_type'">
+                  {{ sortAsc ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th (click)="sortData('unit')">
+                <span>Unit</span>
+                <span class="sort-icon" *ngIf="sortField === 'unit'">
+                  {{ sortAsc ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th (click)="sortData('total_quantity')">
+                <span>Quantity</span>
+                <span class="sort-icon" *ngIf="sortField === 'total_quantity'">
+                  {{ sortAsc ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th (click)="sortData('table_count')">
+                <span>Tables</span>
+                <span class="sort-icon" *ngIf="sortField === 'table_count'">
+                  {{ sortAsc ? '↑' : '↓' }}
+                </span>
+              </th>
+              <th (click)="sortData('sku_count')">
+                <span>SKUs</span>
+                <span class="sort-icon" *ngIf="sortField === 'sku_count'">
+                  {{ sortAsc ? '↑' : '↓' }}
+                </span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let item of paginatedData">
+              <td class="material">{{ item.material_name }}</td>
+              <td>
+                <span class="tag" [class]="getTypeClass(item.material_type)">
+                  {{ item.material_type }}
+                </span>
+              </td>
+              <td>{{ item.unit }}</td>
+              <td class="quantity">{{ item.total_quantity | number:'1.2-2' }}</td>
+              <td>
+                <div class="count">
+                  <span>{{ item.table_count }}</span>
+                  <span *ngIf="item.tables.length > 0" class="info" [title]="item.tables.join(', ')">ⓘ</span>
+                </div>
+              </td>
+              <td>
+                <div class="count">
+                  <span>{{ item.sku_count }}</span>
+                  <span *ngIf="item.skus.length > 0" class="info" [title]="item.skus.join('\n')">ⓘ</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div *ngIf="totalPages > 1" class="pagination">
+        <button (click)="previousPage()" [disabled]="currentPage === 1">
+          <span>←</span>
+        </button>
+        <span class="page">Page {{ currentPage }} of {{ totalPages }}</span>
+        <button (click)="nextPage()" [disabled]="currentPage === totalPages">
+          <span>→</span>
+        </button>
+      </div>
     </div>
+
+    <!-- Breakdown -->
+    <div class="breakdown">
+      <div class="breakdown-header">
+        <h3>Type Breakdown</h3>
+        <div class="breakdown-info">{{ typeBreakdown.length }} categories</div>
+      </div>
+      
+      <div class="breakdown-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Materials</th>
+              <th>Quantity</th>
+              <th>%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let breakdown of typeBreakdown">
+              <td>
+                <span class="tag" [class]="getTypeClass(breakdown.type)">
+                  {{ breakdown.type }}
+                </span>
+              </td>
+              <td>{{ breakdown.material_count }}</td>
+              <td>{{ breakdown.total_quantity | number:'1.2-2' }}</td>
+              <td>
+                <div class="percentage">
+                  <div class="bar">
+                    <div class="fill" [style.width.%]="breakdown.percentage"></div>
+                  </div>
+                  <span class="value">{{ breakdown.percentage | number:'1.1-1' }}%</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification -->
+  <div *ngIf="showNotification" class="notification" [class]="'notification-' + notificationType">
+    <div class="notification-content">
+      <span class="notification-icon">{{ getNotificationIcon() }}</span>
+      <span>{{ notificationMessage }}</span>
+    </div>
+    <button class="notification-close" (click)="hideNotification()">×</button>
   </div>
 </div>
