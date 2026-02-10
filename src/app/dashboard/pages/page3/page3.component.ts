@@ -8,19 +8,19 @@ import { Component } from '@angular/core';
 })
 export class Page3Component {
   showModal = false;
-  selectedPriority: string = 'medium';
+  priority: string = 'medium';
 
   openModal() {
     this.showModal = true;
-    document.body.style.overflow = 'hidden'; // Prevent scrolling
+    document.body.style.overflow = 'hidden';
   }
 
   closeModal() {
     this.showModal = false;
-    document.body.style.overflow = ''; // Re-enable scrolling
+    document.body.style.overflow = '';
   }
 
-  selectPriority(priority: string) {
-    this.selectedPriority = priority;
+  setPriority(level: string) {
+    this.priority = level;
   }
 }
