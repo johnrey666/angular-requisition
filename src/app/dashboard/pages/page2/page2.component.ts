@@ -18,6 +18,8 @@ interface InventoryItem {
   category: string;
   supplier: string;
   qty: number;
+  table_id: string;
+  user_id: string;
   materials?: Material[];
   materialCount?: number;
   totalRequired?: number;
@@ -87,7 +89,7 @@ export class Page2Component implements OnInit {
   async ngOnInit() {
     await this.loadCategories();
     await this.loadUserTables();
-    await this.loadInventory();
+    // Don't load inventory until a table is selected
   }
 
   async loadCategories() {
@@ -103,51 +105,50 @@ export class Page2Component implements OnInit {
   async loadUserTables() {
     try {
       const userId = this.auth.getUserId();
-      if (!userId) return;
+      if (!userId) {
+        this.showToast('You must be logged in', 'error');
+        return;
+      }
       
       this.userTables = await this.db.getUserTables(userId);
       
-      // If no tables exist, create a default one
+      // Don't create default table - user must create their own
       if (this.userTables.length === 0) {
-        await this.createDefaultTable();
+        this.currentTable = null;
+        this.inventoryItems = [];
+        this.filteredItems = [];
+        this.updatePagination();
       } else {
-        // Select the first table by default
-        this.selectTable(this.userTables[0]);
+        // If we have tables but no current table selected, select first one
+        if (!this.currentTable) {
+          await this.selectTable(this.userTables[0]);
+        }
       }
     } catch (err) {
       console.error('Failed to load user tables', err);
       this.userTables = [];
+      this.currentTable = null;
       this.showToast('Failed to load tables', 'error');
     }
   }
 
-  async createDefaultTable() {
+  async loadInventory() {
+    if (!this.currentTable) {
+      this.inventoryItems = [];
+      this.filteredItems = [];
+      this.updatePagination();
+      return;
+    }
+
     try {
       const userId = this.auth.getUserId();
-      if (!userId) return;
-      
-      const defaultTableData = {
-        user_id: userId,
-        name: 'Default Table',
-        item_count: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-      
-      const result = await this.db.createUserTable(defaultTableData);
-      if (result.success && result.tableId) {
-        await this.loadUserTables();
-        this.showToast('Default table created', 'success');
+      if (!userId) {
+        this.showToast('You must be logged in', 'error');
+        return;
       }
-    } catch (err) {
-      console.error('Failed to create default table', err);
-      this.showToast('Failed to create default table', 'error');
-    }
-  }
 
-  async loadInventory() {
-    try {
-      const items = await this.db.getInventoryItems();
+      // Load only items belonging to the current table and current user
+      const items = await this.db.getInventoryItemsByTable(this.currentTable.id, userId);
       this.inventoryItems = items.map((item: any) => ({
         ...item,
         materialCount: 0,
@@ -221,7 +222,8 @@ export class Page2Component implements OnInit {
   }
 
   canAddItem(): boolean {
-    return !!this.newItem.category &&
+    return !!this.currentTable && // Must have a table selected
+           !!this.newItem.category &&
            !!this.newItem.sku_code &&
            !!this.newItem.supplier?.trim() &&
            this.newItem.qty != null && this.newItem.qty > 0;
@@ -229,26 +231,40 @@ export class Page2Component implements OnInit {
 
   async addItem() {
     if (!this.canAddItem()) {
-      this.showToast('Please fill all required fields correctly', 'error');
+      this.showToast('Please fill all required fields and select a table', 'error');
       return;
     }
 
     this.addingItem = true;
+    
+    const userId = this.auth.getUserId();
+    if (!userId) {
+      this.showToast('You must be logged in', 'error');
+      this.addingItem = false;
+      return;
+    }
+
+    if (!this.currentTable) {
+      this.showToast('No table selected', 'error');
+      this.addingItem = false;
+      return;
+    }
+
     const entry = {
       sku_code: this.newItem.sku_code,
       sku_name: this.newItem.sku_name,
       category: this.newItem.category,
       supplier: this.newItem.supplier.trim(),
-      qty: this.newItem.qty!
+      qty: this.newItem.qty!,
+      table_id: this.currentTable.id,
+      user_id: userId
     };
 
     try {
       const res = await this.db.addInventoryItem(entry);
       if (res.success && res.id) {
-        // Add to current table if selected
-        if (this.currentTable) {
-          await this.addItemToTable(entry, res.id);
-        }
+        // Add to current table
+        await this.addItemToTable(entry, res.id);
         
         const newItem: InventoryItem = { 
           id: res.id, 
@@ -280,9 +296,16 @@ export class Page2Component implements OnInit {
     if (!this.currentTable) return;
     
     try {
-      // Create requisition for the table
+      const userId = this.auth.getUserId();
+      if (!userId) {
+        this.showToast('You must be logged in', 'error');
+        return;
+      }
+      
+      // Create requisition for the table with user_id for isolation
       const requisitionData = {
         table_id: this.currentTable.id,
+        user_id: userId,
         sku_code: itemData.sku_code,
         sku_name: itemData.sku_name,
         category: itemData.category,
@@ -295,7 +318,7 @@ export class Page2Component implements OnInit {
       
       // Update table item count
       const newCount = (this.currentTable.item_count || 0) + 1;
-      await this.db.updateTableItemCount(this.currentTable.id, newCount);
+      await this.db.updateTableItemCount(this.currentTable.id, newCount, userId);
       this.currentTable.item_count = newCount;
       
       // Refresh tables list
@@ -363,7 +386,6 @@ export class Page2Component implements OnInit {
   calculateTotalRequired(item: InventoryItem): number {
     if (!item.materials || item.materials.length === 0) return 0;
     
-    // Sum of (quantity per batch * item quantity) for all materials
     return item.materials.reduce((total, mat) => {
       const qtyPerBatch = mat.quantity_per_batch || 0;
       return total + (qtyPerBatch * (item.qty || 0));
@@ -392,16 +414,13 @@ export class Page2Component implements OnInit {
     this.currentTable = table;
     this.showTableDropdown = false;
     
-    // Load items for this table
-    try {
-      const requisitions = await this.db.getTableRequisitions(table.id);
-      // You could filter inventory items based on table requisitions here
-      // For now, we'll just show all items
-      this.showToast(`Switched to table: ${table.name}`, 'info');
-    } catch (err) {
-      console.error('Failed to load table requisitions', err);
-      this.showToast('Failed to load table data', 'error');
-    }
+    // Clear search/filters when switching tables
+    this.searchQuery = '';
+    this.filterCategory = '';
+    
+    // Load items for this table (only current user's data)
+    await this.loadInventory();
+    this.showToast(`Switched to table: ${table.name}`, 'info');
   }
 
   async createNewTable() {
@@ -424,7 +443,7 @@ export class Page2Component implements OnInit {
       };
 
       const result = await this.db.createUserTable(tableData);
-      if (result.success) {
+      if (result.success && result.tableId) {
         await this.loadUserTables();
         this.showToast(`Table "${tableName}" created successfully`, 'success');
       } else {
@@ -441,7 +460,13 @@ export class Page2Component implements OnInit {
     if (!newName?.trim() || newName === table.name) return;
 
     try {
-      const success = await this.db.updateTableName(table.id, newName.trim());
+      const userId = this.auth.getUserId();
+      if (!userId) {
+        this.showToast('You must be logged in', 'error');
+        return;
+      }
+
+      const success = await this.db.updateTableName(table.id, newName.trim(), userId);
       if (success) {
         table.name = newName.trim();
         await this.loadUserTables();
@@ -456,14 +481,34 @@ export class Page2Component implements OnInit {
   }
 
   async deleteTable(table: UserTable) {
-    if (!confirm(`Are you sure you want to delete table "${table.name}"? This action cannot be undone.`)) {
+    if (!confirm(`Are you sure you want to delete table "${table.name}"? This will also delete all items in this table. This action cannot be undone.`)) {
       return;
     }
 
     try {
-      const success = await this.db.deleteTable(table.id);
+      const userId = this.auth.getUserId();
+      if (!userId) {
+        this.showToast('You must be logged in', 'error');
+        return;
+      }
+
+      const success = await this.db.deleteTable(table.id, userId);
       if (success) {
-        await this.loadUserTables();
+        // Remove from local array
+        this.userTables = this.userTables.filter(t => t.id !== table.id);
+        
+        // If we're deleting the current table, select another or set to null
+        if (this.currentTable?.id === table.id) {
+          if (this.userTables.length > 0) {
+            await this.selectTable(this.userTables[0]);
+          } else {
+            this.currentTable = null;
+            this.inventoryItems = [];
+            this.filteredItems = [];
+            this.updatePagination();
+          }
+        }
+        
         this.showToast(`Table "${table.name}" deleted successfully`, 'success');
       } else {
         this.showToast('Failed to delete table', 'error');
@@ -476,12 +521,19 @@ export class Page2Component implements OnInit {
 
   // Export Methods
   async exportData() {
+    if (!this.currentTable) {
+      this.showToast('No table selected', 'info');
+      return;
+    }
+
     if (this.filteredItems.length === 0) {
       this.showToast('No data to export', 'info');
       return;
     }
 
     try {
+      const fileName = `${this.currentTable.name.replace(/\s+/g, '_')}_inventory_${new Date().toISOString().split('T')[0]}.csv`;
+      
       // Create CSV content
       const headers = ['SKU Code', 'SKU Name', 'Category', 'Quantity', 'Supplier', 'Total Required', 'Materials Count'];
       const rows = this.filteredItems.map(item => [
@@ -505,14 +557,14 @@ export class Page2Component implements OnInit {
       const url = URL.createObjectURL(blob);
       
       link.setAttribute('href', url);
-      link.setAttribute('download', `inventory_export_${new Date().toISOString().split('T')[0]}.csv`);
+      link.setAttribute('download', fileName);
       link.style.visibility = 'hidden';
       
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       
-      this.showToast(`Exported ${this.filteredItems.length} items successfully`, 'success');
+      this.showToast(`Exported ${this.filteredItems.length} items from "${this.currentTable.name}" successfully`, 'success');
     } catch (err) {
       console.error('Export failed', err);
       this.showToast('Error exporting data', 'error');
@@ -525,7 +577,6 @@ export class Page2Component implements OnInit {
     this.snackbarType = type;
     this.showSnackbar = true;
     
-    // Auto hide after 5 seconds
     if (this.snackbarTimeout) {
       clearTimeout(this.snackbarTimeout);
     }
@@ -545,7 +596,7 @@ export class Page2Component implements OnInit {
 
   // Pagination methods
   updatePagination() {
-    this.totalPages = Math.ceil(this.filteredItems.length / this.pageSize);
+    this.totalPages = Math.max(1, Math.ceil(this.filteredItems.length / this.pageSize));
     this.paginatedItems = this.filteredItems.slice(
       (this.currentPage - 1) * this.pageSize,
       this.currentPage * this.pageSize
@@ -571,6 +622,62 @@ export class Page2Component implements OnInit {
     this.updatePagination();
   }
 
+  /**
+   * Generate page numbers for pagination display
+   * Shows: 1, 2, ..., current-1, current, current+1, ..., last-1, last
+   * With ellipsis (...) for gaps
+   */
+  getPageNumbers(): number[] {
+    const pages: number[] = [];
+    const total = this.totalPages;
+    const current = this.currentPage;
+    const delta = 2; // Number of pages to show on each side of current page
+    
+    if (total <= 7) {
+      // Show all pages if total is 7 or less
+      for (let i = 1; i <= total; i++) {
+        pages.push(i);
+      }
+    } else {
+      // Always show first page
+      pages.push(1);
+      
+      // Calculate start and end of page range around current page
+      let start = Math.max(2, current - delta);
+      let end = Math.min(total - 1, current + delta);
+      
+      // Add ellipsis before start if needed
+      if (start > 2) {
+        pages.push(-1); // -1 represents ellipsis
+      }
+      
+      // Add page numbers in range
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      
+      // Add ellipsis after end if needed
+      if (end < total - 1) {
+        pages.push(-1); // -1 represents ellipsis
+      }
+      
+      // Always show last page
+      pages.push(total);
+    }
+    
+    return pages;
+  }
+
+  /**
+   * Navigate to specific page
+   */
+  goToPage(page: number) {
+    if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
+      this.currentPage = page;
+      this.updatePagination();
+    }
+  }
+
   // Helper methods
   getTypeClass(type: string): string {
     if (!type) return '';
@@ -588,12 +695,45 @@ export class Page2Component implements OnInit {
     return typeMap[type.toLowerCase()] || '';
   }
 
-  deleteItem(id: string, event: Event) {
+  async deleteItem(item: InventoryItem, event: Event) {
     event.stopPropagation();
+    
+    if (!this.currentTable) {
+      this.showToast('No table selected', 'error');
+      return;
+    }
+
     if (confirm('Are you sure you want to delete this item?')) {
-      this.inventoryItems = this.inventoryItems.filter(item => item.id !== id);
-      this.applyFilter();
-      this.showToast('Item deleted successfully', 'success');
+      try {
+        const userId = this.auth.getUserId();
+        if (!userId) {
+          this.showToast('You must be logged in', 'error');
+          return;
+        }
+
+        const success = await this.db.deleteInventoryItem(item.id, userId, this.currentTable.id);
+        
+        if (success) {
+          // Remove from local arrays
+          this.inventoryItems = this.inventoryItems.filter(i => i.id !== item.id);
+          this.applyFilter();
+          
+          // Update table item count
+          const newCount = Math.max(0, (this.currentTable.item_count || 0) - 1);
+          await this.db.updateTableItemCount(this.currentTable.id, newCount, userId);
+          this.currentTable.item_count = newCount;
+          
+          // Refresh tables list
+          await this.loadUserTables();
+          
+          this.showToast('Item deleted successfully', 'success');
+        } else {
+          this.showToast('Failed to delete item', 'error');
+        }
+      } catch (err) {
+        console.error('Failed to delete item', err);
+        this.showToast('Error deleting item', 'error');
+      }
     }
   }
 

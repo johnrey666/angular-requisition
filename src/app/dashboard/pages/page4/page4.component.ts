@@ -71,6 +71,10 @@ export class Page4Component implements OnInit {
     private auth: AuthService
   ) {}
 
+  get Math() {
+    return Math;
+  }
+
   async ngOnInit(): Promise<void> {
     await this.loadUserTables();
     await this.loadUsageData();
@@ -95,11 +99,18 @@ export class Page4Component implements OnInit {
   async loadUsageData(): Promise<void> {
     this.isLoading = true;
     try {
+      const userId = this.auth.getUserId();
+      if (!userId) {
+        this.showMessage('Please login to view usage reports', 'error');
+        this.isLoading = false;
+        return;
+      }
+
       if (this.userTables.length === 0) {
         await this.loadUserTables();
       }
 
-      console.log('Loading usage data for table:', this.selectedTableId);
+      console.log('Loading usage data for user:', userId, 'table:', this.selectedTableId);
       
       const materialMap = new Map<string, {
         material_name: string;
@@ -110,18 +121,27 @@ export class Page4Component implements OnInit {
         skus: Set<string>;
       }>();
 
-      // Process each table
+      // Process each table that belongs to the current user
       for (const table of this.userTables) {
         if (this.selectedTableId !== 'all' && table.id !== this.selectedTableId) {
           continue;
         }
 
-        // Get requisitions for this table
-        const requisitions = await this.db.getTableRequisitions(table.id);
+        // Verify table belongs to current user
+        if (table.user_id !== userId) {
+          console.warn(`Table ${table.id} does not belong to user ${userId}, skipping`);
+          continue;
+        }
+
+        // Get requisitions for this table with user verification
+        const requisitions = await this.db.getTableRequisitions(table.id, userId);
         console.log(`Found ${requisitions.length} requisitions for table:`, table.name);
         
         for (const req of requisitions) {
           if (!req.sku_code) continue;
+          
+          // Verify requisition belongs to correct user
+          if (req.user_id !== userId) continue;
           
           // Get materials for this SKU
           const materials = await this.db.getMaterialsForSku(req.sku_code);
@@ -193,15 +213,18 @@ export class Page4Component implements OnInit {
     } catch (error) {
       console.error('Error loading usage data:', error);
       this.showMessage('Failed to load usage data', 'error');
+      this.filteredData = [];
+      this.paginatedData = [];
     } finally {
       this.isLoading = false;
     }
   }
 
   private determineMaterialType(materialName: string): string {
+    if (!materialName) return 'Other';
+    
     const name = materialName.toLowerCase();
     
-    // Material type detection based on your database structure
     if (name.includes('conductor') || name.includes('wire') || name.includes('cable')) {
       return 'Conductor';
     } else if (name.includes('housing') || name.includes('case') || name.includes('enclosure')) {
@@ -277,12 +300,65 @@ export class Page4Component implements OnInit {
   }
 
   private updatePagination(): void {
-    this.totalPages = Math.ceil(this.filteredData.length / this.itemsPerPage);
-    this.currentPage = Math.min(this.currentPage, this.totalPages || 1);
+    if (!this.filteredData) {
+      this.filteredData = [];
+    }
+    
+    this.totalPages = Math.ceil(this.filteredData.length / this.itemsPerPage) || 1;
+    this.currentPage = Math.min(this.currentPage, this.totalPages) || 1;
     
     const start = (this.currentPage - 1) * this.itemsPerPage;
     const end = start + this.itemsPerPage;
     this.paginatedData = this.filteredData.slice(start, end);
+  }
+
+  /**
+   * Generate page numbers for pagination display
+   * Shows: 1, 2, ..., current-1, current, current+1, ..., last-1, last
+   * With ellipsis (...) for gaps
+   */
+  getPageNumbers(): number[] {
+    const pages: number[] = [];
+    const total = this.totalPages || 1;
+    const current = this.currentPage || 1;
+    const delta = 2;
+    
+    if (total <= 7) {
+      for (let i = 1; i <= total; i++) {
+        pages.push(i);
+      }
+    } else {
+      pages.push(1);
+      
+      let start = Math.max(2, current - delta);
+      let end = Math.min(total - 1, current + delta);
+      
+      if (start > 2) {
+        pages.push(-1);
+      }
+      
+      for (let i = start; i <= end; i++) {
+        pages.push(i);
+      }
+      
+      if (end < total - 1) {
+        pages.push(-1);
+      }
+      
+      pages.push(total);
+    }
+    
+    return pages;
+  }
+
+  /**
+   * Navigate to specific page
+   */
+  goToPage(page: number): void {
+    if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
+      this.currentPage = page;
+      this.updatePagination();
+    }
   }
 
   previousPage(): void {
@@ -297,6 +373,11 @@ export class Page4Component implements OnInit {
       this.currentPage++;
       this.updatePagination();
     }
+  }
+
+  onPageSizeChange(): void {
+    this.currentPage = 1;
+    this.updatePagination();
   }
 
   getTypeClass(type: string): string {
@@ -331,12 +412,19 @@ export class Page4Component implements OnInit {
     }
 
     try {
+      const userId = this.auth.getUserId();
+      if (!userId) {
+        this.showMessage('You must be logged in to export', 'error');
+        return;
+      }
+
       const workbook = XLSX.utils.book_new();
       
       // Main data sheet
       const mainData: any[][] = [
         ['Raw Material Usage Report'],
         ['Generated', new Date().toLocaleString()],
+        ['User', this.auth.getUserEmail() || userId],
         ['Table Filter', this.selectedTableId === 'all' ? 'All Tables' : 
           this.userTables.find(t => t.id === this.selectedTableId)?.name || this.selectedTableId],
         ['Total Materials', this.totalMaterials.toString()],
@@ -377,6 +465,7 @@ export class Page4Component implements OnInit {
       const breakdownData: any[][] = [
         ['Material Type Breakdown'],
         ['Generated', new Date().toLocaleString()],
+        ['User', this.auth.getUserEmail() || userId],
         [],
         ['Type', 'Material Count', 'Total Quantity', 'Percentage']
       ];

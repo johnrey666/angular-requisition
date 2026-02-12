@@ -32,6 +32,8 @@ interface InventoryItem {
   category: string;
   supplier: string;
   qty: number;
+  table_id: string;
+  user_id: string;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -138,72 +140,87 @@ export class DatabaseService {
   }
 
   async getUniqueCategories(): Promise<string[]> {
-    const snapshot = await getDocs(collection(this.firestore, 'masterData'));
-    const cats = new Set<string>();
-    
-    snapshot.forEach(doc => {
-      const data = doc.data() as MasterData;
-      const category = (data?.category || '').trim();
-      if (category) cats.add(category);
-    });
-    
-    return Array.from(cats).sort();
+    try {
+      const snapshot = await getDocs(collection(this.firestore, 'masterData'));
+      const cats = new Set<string>();
+      
+      snapshot.forEach(doc => {
+        const data = doc.data() as MasterData;
+        const category = (data?.category || '').trim();
+        if (category) cats.add(category);
+      });
+      
+      return Array.from(cats).sort();
+    } catch (err) {
+      console.error('getUniqueCategories failed', err);
+      return [];
+    }
   }
 
   async getSkusByCategory(category: string): Promise<{ sku_code: string; sku_name: string }[]> {
     if (!category?.trim()) return [];
 
-    const q = query(
-      collection(this.firestore, 'masterData'),
-      where('category', '==', category)
-    );
-    
-    const snapshot = await getDocs(q);
-    const map = new Map<string, string>();
-    
-    snapshot.forEach(doc => {
-      const data = doc.data() as MasterData;
-      const code = (data.sku_code || '').trim();
-      const name = (data.sku_name || '').trim();
-      if (code && name) map.set(code, name);
-    });
+    try {
+      const q = query(
+        collection(this.firestore, 'masterData'),
+        where('category', '==', category)
+      );
+      
+      const snapshot = await getDocs(q);
+      const map = new Map<string, string>();
+      
+      snapshot.forEach(doc => {
+        const data = doc.data() as MasterData;
+        const code = (data.sku_code || '').trim();
+        const name = (data.sku_name || '').trim();
+        if (code && name) map.set(code, name);
+      });
 
-    return Array.from(map, ([sku_code, sku_name]) => ({ sku_code, sku_name }));
+      return Array.from(map, ([sku_code, sku_name]) => ({ sku_code, sku_name }));
+    } catch (err) {
+      console.error('getSkusByCategory failed', err);
+      return [];
+    }
   }
 
   async getMaterialsForSku(skuCode: string): Promise<any[]> {
     if (!skuCode?.trim()) return [];
 
-    const q = query(
-      collection(this.firestore, 'masterData'),
-      where('sku_code', '==', skuCode)
-    );
-    
-    const snapshot = await getDocs(q);
-    const materials: any[] = [];
-    
-    snapshot.forEach(doc => {
-      const data = doc.data() as MasterData;
-      const material = {
-        raw_material: data.raw_material || '',
-        quantity_per_batch: data.qty_per_batch ?? null,
-        unit: data.batch_unit || '',
-        type: data.type || ''
-      };
+    try {
+      const q = query(
+        collection(this.firestore, 'masterData'),
+        where('sku_code', '==', skuCode)
+      );
       
-      if (material.raw_material.trim() !== '') {
-        materials.push(material);
-      }
-    });
+      const snapshot = await getDocs(q);
+      const materials: any[] = [];
+      
+      snapshot.forEach(doc => {
+        const data = doc.data() as MasterData;
+        const material = {
+          raw_material: data.raw_material || '',
+          quantity_per_batch: data.qty_per_batch ?? null,
+          unit: data.batch_unit || '',
+          type: data.type || ''
+        };
+        
+        if (material.raw_material.trim() !== '') {
+          materials.push(material);
+        }
+      });
 
-    return materials;
+      return materials;
+    } catch (err) {
+      console.error('getMaterialsForSku failed', err);
+      return [];
+    }
   }
 
   // ────────────────────────────────────────────────
-  //  Inventory (user-managed stock)
+  //  Inventory (user-managed stock with table & user isolation)
   // ────────────────────────────────────────────────
 
-  async addInventoryItem(item: any): Promise<{ success: boolean; id?: string }> {
+  async addInventoryItem(item: InventoryItem): Promise<{ success: boolean; id?: string }> {
     try {
       const docRef = await addDoc(collection(this.firestore, 'inventory'), {
         ...item,
@@ -217,22 +234,73 @@ export class DatabaseService {
     }
   }
 
-  async getInventoryItems(): Promise<any[]> {
+  async getInventoryItemsByTable(tableId: string, userId: string): Promise<any[]> {
     try {
-      const snapshot = await getDocs(collection(this.firestore, 'inventory'));
+      if (!tableId || !userId) return [];
+      
+      const q = query(
+        collection(this.firestore, 'inventory'),
+        where('table_id', '==', tableId),
+        where('user_id', '==', userId)
+      );
+      
+      const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (err) {
-      console.error('getInventoryItems failed', err);
+      console.error('getInventoryItemsByTable failed', err);
       return [];
     }
   }
 
+  async deleteInventoryItem(itemId: string, userId: string, tableId: string): Promise<boolean> {
+    try {
+      // First verify the item belongs to the user and table
+      const itemRef = doc(this.firestore, 'inventory', itemId);
+      const itemDoc = await getDoc(itemRef);
+      
+      if (!itemDoc.exists()) return false;
+      
+      const itemData = itemDoc.data() as InventoryItem;
+      if (itemData.user_id !== userId || itemData.table_id !== tableId) {
+        console.error('Unauthorized delete attempt');
+        return false;
+      }
+      
+      // Delete the inventory item
+      await deleteDoc(itemRef);
+      
+      // Also delete associated requisition
+      const requisitionsQuery = query(
+        collection(this.firestore, 'requisitions'),
+        where('inventory_item_id', '==', itemId),
+        where('user_id', '==', userId),
+        where('table_id', '==', tableId)
+      );
+      
+      const requisitionsSnapshot = await getDocs(requisitionsQuery);
+      const batch = writeBatch(this.firestore);
+      
+      requisitionsSnapshot.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      
+      await batch.commit();
+      
+      return true;
+    } catch (err) {
+      console.error('deleteInventoryItem failed', err);
+      return false;
+    }
+  }
+
   // ────────────────────────────────────────────────
-  //  Tables + Requisitions
+  //  Tables + Requisitions (with user isolation)
   // ────────────────────────────────────────────────
 
   async getUserTables(userId: string): Promise<any[]> {
     try {
+      if (!userId) return [];
+      
       const q = query(
         collection(this.firestore, 'tables'),
         where('user_id', '==', userId)
@@ -247,7 +315,12 @@ export class DatabaseService {
 
   async createUserTable(data: any): Promise<{ success: boolean; tableId?: string }> {
     try {
-      const docRef = await addDoc(collection(this.firestore, 'tables'), data);
+      const docRef = await addDoc(collection(this.firestore, 'tables'), {
+        ...data,
+        item_count: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      });
       return { success: true, tableId: docRef.id };
     } catch (err) {
       console.error('createUserTable failed', err);
@@ -255,9 +328,21 @@ export class DatabaseService {
     }
   }
 
-  async updateTableName(tableId: string, name: string): Promise<boolean> {
+  async updateTableName(tableId: string, name: string, userId: string): Promise<boolean> {
     try {
-      await updateDoc(doc(this.firestore, 'tables', tableId), {
+      // Verify ownership
+      const tableRef = doc(this.firestore, 'tables', tableId);
+      const tableDoc = await getDoc(tableRef);
+      
+      if (!tableDoc.exists()) return false;
+      
+      const tableData = tableDoc.data();
+      if (tableData['user_id'] !== userId) {
+        console.error('Unauthorized rename attempt');
+        return false;
+      }
+      
+      await updateDoc(tableRef, {
         name,
         updated_at: new Date().toISOString()
       });
@@ -268,24 +353,48 @@ export class DatabaseService {
     }
   }
 
-  async deleteTable(tableId: string): Promise<boolean> {
+  async deleteTable(tableId: string, userId: string): Promise<boolean> {
     try {
-      // Get all requisitions for this table
-      const q = query(
-        collection(this.firestore, 'requisitions'),
-        where('table_id', '==', tableId)
-      );
-      const requisitionsSnapshot = await getDocs(q);
+      // Verify ownership
+      const tableRef = doc(this.firestore, 'tables', tableId);
+      const tableDoc = await getDoc(tableRef);
+      
+      if (!tableDoc.exists()) return false;
+      
+      const tableData = tableDoc.data();
+      if (tableData['user_id'] !== userId) {
+        console.error('Unauthorized delete attempt');
+        return false;
+      }
 
       const batch = writeBatch(this.firestore);
       
-      // Delete all requisitions
+      // Delete all requisitions for this table (verify user ownership)
+      const requisitionsQuery = query(
+        collection(this.firestore, 'requisitions'),
+        where('table_id', '==', tableId),
+        where('user_id', '==', userId)
+      );
+      const requisitionsSnapshot = await getDocs(requisitionsQuery);
+      
       requisitionsSnapshot.forEach(doc => {
         batch.delete(doc.ref);
       });
       
+      // Delete all inventory items for this table
+      const inventoryQuery = query(
+        collection(this.firestore, 'inventory'),
+        where('table_id', '==', tableId),
+        where('user_id', '==', userId)
+      );
+      const inventorySnapshot = await getDocs(inventoryQuery);
+      
+      inventorySnapshot.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      
       // Delete the table itself
-      batch.delete(doc(this.firestore, 'tables', tableId));
+      batch.delete(tableRef);
       
       await batch.commit();
       return true;
@@ -295,11 +404,14 @@ export class DatabaseService {
     }
   }
 
-  async getTableRequisitions(tableId: string): Promise<any[]> {
+  async getTableRequisitions(tableId: string, userId: string): Promise<any[]> {
     try {
+      if (!tableId || !userId) return [];
+      
       const q = query(
         collection(this.firestore, 'requisitions'),
-        where('table_id', '==', tableId)
+        where('table_id', '==', tableId),
+        where('user_id', '==', userId)
       );
       const snapshot = await getDocs(q);
       return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -324,9 +436,21 @@ export class DatabaseService {
     }
   }
 
-  async updateRequisitionQty(id: string, qty: number): Promise<boolean> {
+  async updateRequisitionQty(id: string, qty: number, userId: string, tableId: string): Promise<boolean> {
     try {
-      await updateDoc(doc(this.firestore, 'requisitions', id), {
+      // Verify ownership
+      const reqRef = doc(this.firestore, 'requisitions', id);
+      const reqDoc = await getDoc(reqRef);
+      
+      if (!reqDoc.exists()) return false;
+      
+      const reqData = reqDoc.data();
+      if (reqData['user_id'] !== userId || reqData['table_id'] !== tableId) {
+        console.error('Unauthorized update attempt');
+        return false;
+      }
+      
+      await updateDoc(reqRef, {
         qty_needed: qty,
         updated_at: new Date().toISOString()
       });
@@ -337,9 +461,21 @@ export class DatabaseService {
     }
   }
 
-  async updateRequisitionSupplier(id: string, supplier: string): Promise<boolean> {
+  async updateRequisitionSupplier(id: string, supplier: string, userId: string, tableId: string): Promise<boolean> {
     try {
-      await updateDoc(doc(this.firestore, 'requisitions', id), {
+      // Verify ownership
+      const reqRef = doc(this.firestore, 'requisitions', id);
+      const reqDoc = await getDoc(reqRef);
+      
+      if (!reqDoc.exists()) return false;
+      
+      const reqData = reqDoc.data();
+      if (reqData['user_id'] !== userId || reqData['table_id'] !== tableId) {
+        console.error('Unauthorized update attempt');
+        return false;
+      }
+      
+      await updateDoc(reqRef, {
         supplier,
         updated_at: new Date().toISOString()
       });
@@ -350,9 +486,21 @@ export class DatabaseService {
     }
   }
 
-  async deleteRequisition(id: string): Promise<boolean> {
+  async deleteRequisition(id: string, userId: string, tableId: string): Promise<boolean> {
     try {
-      await deleteDoc(doc(this.firestore, 'requisitions', id));
+      // Verify ownership
+      const reqRef = doc(this.firestore, 'requisitions', id);
+      const reqDoc = await getDoc(reqRef);
+      
+      if (!reqDoc.exists()) return false;
+      
+      const reqData = reqDoc.data();
+      if (reqData['user_id'] !== userId || reqData['table_id'] !== tableId) {
+        console.error('Unauthorized delete attempt');
+        return false;
+      }
+      
+      await deleteDoc(reqRef);
       return true;
     } catch (err) {
       console.error('deleteRequisition failed', err);
@@ -360,9 +508,21 @@ export class DatabaseService {
     }
   }
 
-  async updateTableItemCount(tableId: string, count: number): Promise<boolean> {
+  async updateTableItemCount(tableId: string, count: number, userId: string): Promise<boolean> {
     try {
-      await updateDoc(doc(this.firestore, 'tables', tableId), {
+      // Verify ownership
+      const tableRef = doc(this.firestore, 'tables', tableId);
+      const tableDoc = await getDoc(tableRef);
+      
+      if (!tableDoc.exists()) return false;
+      
+      const tableData = tableDoc.data();
+      if (tableData['user_id'] !== userId) {
+        console.error('Unauthorized update attempt');
+        return false;
+      }
+      
+      await updateDoc(tableRef, {
         item_count: count,
         updated_at: new Date().toISOString()
       });
@@ -372,5 +532,68 @@ export class DatabaseService {
       return false;
     }
   }
-  
+
+  // ────────────────────────────────────────────────
+  //  Analytics & Reports (with user isolation)
+  // ────────────────────────────────────────────────
+
+  async getTableSummary(tableId: string, userId: string): Promise<any> {
+    try {
+      if (!tableId || !userId) return null;
+      
+      // Get all inventory items for this table
+      const inventoryItems = await this.getInventoryItemsByTable(tableId, userId);
+      
+      // Calculate summary statistics
+      const totalItems = inventoryItems.length;
+      const totalQuantity = inventoryItems.reduce((sum, item) => sum + (item.qty || 0), 0);
+      
+      // Get category breakdown
+      const categoryBreakdown: { [key: string]: number } = {};
+      inventoryItems.forEach(item => {
+        categoryBreakdown[item.category] = (categoryBreakdown[item.category] || 0) + 1;
+      });
+      
+      return {
+        totalItems,
+        totalQuantity,
+        categoryBreakdown,
+        categoryCount: Object.keys(categoryBreakdown).length
+      };
+    } catch (err) {
+      console.error('getTableSummary failed', err);
+      return null;
+    }
+  }
+
+  async getUserSummary(userId: string): Promise<any> {
+    try {
+      if (!userId) return null;
+      
+      // Get all tables for user
+      const tables = await this.getUserTables(userId);
+      
+      // Get all inventory items for user
+      const tablesPromises = tables.map(table => 
+        this.getInventoryItemsByTable(table.id, userId)
+      );
+      
+      const allItemsArrays = await Promise.all(tablesPromises);
+      const allItems = allItemsArrays.flat();
+      
+      return {
+        totalTables: tables.length,
+        totalItems: allItems.length,
+        totalQuantity: allItems.reduce((sum, item) => sum + (item.qty || 0), 0),
+        tables: tables.map(table => ({
+          id: table.id,
+          name: table.name,
+          itemCount: table.item_count || 0
+        }))
+      };
+    } catch (err) {
+      console.error('getUserSummary failed', err);
+      return null;
+    }
+  }
 }

@@ -72,7 +72,14 @@
     <div class="table-container">
       <div class="table-header">
         <h3>Material Summary</h3>
-        <div class="table-info">{{ paginatedData.length }} of {{ usageData.length }} materials</div>
+        <div class="table-info">
+          <ng-container *ngIf="filteredData && filteredData.length > 0; else noData">
+            Showing {{ (currentPage - 1) * itemsPerPage + 1 }}-{{ Math.min(currentPage * itemsPerPage, filteredData.length) }} of {{ filteredData.length }} materials
+          </ng-container>
+          <ng-template #noData>
+            Showing 0-0 of 0 materials
+          </ng-template>
+        </div>
       </div>
       
       <div class="table-wrapper">
@@ -144,15 +151,59 @@
         </table>
       </div>
 
-      <!-- Pagination -->
-      <div *ngIf="totalPages > 1" class="pagination">
-        <button (click)="previousPage()" [disabled]="currentPage === 1">
-          <span>←</span>
-        </button>
-        <span class="page">Page {{ currentPage }} of {{ totalPages }}</span>
-        <button (click)="nextPage()" [disabled]="currentPage === totalPages">
-          <span>→</span>
-        </button>
+      <!-- Modern Pagination with Page Numbers -->
+      <div class="card-footer" *ngIf="filteredData && filteredData.length > 0">
+        <div class="pagination-info">
+          <ng-container *ngIf="filteredData && filteredData.length > 0; else noPaginationInfo">
+            Showing {{ (currentPage - 1) * itemsPerPage + 1 }}-{{ Math.min(currentPage * itemsPerPage, filteredData.length) }} of {{ filteredData.length }}
+          </ng-container>
+          <ng-template #noPaginationInfo>
+            Showing 0-0 of 0
+          </ng-template>
+        </div>
+        
+        <div class="pagination-modern">
+          <button 
+            class="pagination-btn" 
+            [class.disabled]="currentPage === 1"
+            (click)="goToPage(currentPage - 1)"
+            [disabled]="currentPage === 1">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </button>
+          
+          <button 
+            *ngFor="let page of getPageNumbers()" 
+            class="pagination-btn" 
+            [class.active]="currentPage === page"
+            [class.dots]="page === -1"
+            (click)="page !== -1 && goToPage(page)"
+            [disabled]="page === -1">
+            <span *ngIf="page !== -1">{{ page }}</span>
+            <span *ngIf="page === -1">...</span>
+          </button>
+          
+          <button 
+            class="pagination-btn" 
+            [class.disabled]="currentPage === totalPages"
+            (click)="goToPage(currentPage + 1)"
+            [disabled]="currentPage === totalPages">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </button>
+        </div>
+        
+        <div class="pagination-size">
+          <select [(ngModel)]="itemsPerPage" (change)="onPageSizeChange()">
+            <option [value]="10">10 per page</option>
+            <option [value]="15">15 per page</option>
+            <option [value]="25">25 per page</option>
+            <option [value]="50">50 per page</option>
+            <option [value]="100">100 per page</option>
+          </select>
+        </div>
       </div>
     </div>
 

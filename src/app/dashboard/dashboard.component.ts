@@ -1,13 +1,13 @@
-import { Component, signal } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Component, signal, OnInit } from '@angular/core';
+import { RouterLink, RouterLinkActive, RouterOutlet, Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { ThemeService } from '../core/services/theme.service';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../core/services/auth.service';
 import { UserService } from '../core/services/user.service';
-import { Observable } from 'rxjs';
-import { Firestore } from '@angular/fire/firestore';
-import { doc, getDoc } from 'firebase/firestore';
+import { Observable, firstValueFrom } from 'rxjs';
+import { Firestore, doc, getDoc, setDoc } from '@angular/fire/firestore';
+import { serverTimestamp } from 'firebase/firestore';
 
 @Component({
   selector: 'app-dashboard',
@@ -16,7 +16,7 @@ import { doc, getDoc } from 'firebase/firestore';
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.css',
 })
-export class DashboardComponent {
+export class DashboardComponent implements OnInit {
   collapsed = signal(false);
 
   navItems = [
@@ -26,7 +26,7 @@ export class DashboardComponent {
     { label: 'Usage Report', route: '/dashboard/usage-report', icon: 'line-chart' },
   ] as const;
 
-  public user$: Observable<any>;
+  user$: Observable<any>;
 
   // Settings & modal state
   showSettings = false;
@@ -48,33 +48,89 @@ export class DashboardComponent {
     private fb: FormBuilder,
     private authService: AuthService,
     private userService: UserService,
-    private firestore: Firestore
+    private firestore: Firestore,
+    private router: Router
   ) {
     this.user$ = this.authService.user$;
+    
+    // Initialize form
     this.createUserForm = this.fb.nonNullable.group({
       email: ['', [Validators.required, Validators.email]],
       password: ['', [Validators.required, Validators.minLength(6)]],
       role: ['user', Validators.required],
     });
+  }
 
-    // Watch auth user and load role from Firestore
-    this.user$.subscribe(async (u) => {
-      if (u && u.uid) {
-        try {
-          const snap = await getDoc(doc(this.firestore, 'users', u.uid));
-          const data = snap.exists() ? (snap.data() as any) : null;
-          this.userRole = data?.role ?? null;
-          this.isAdmin = this.userRole === 'admin';
-        } catch (err) {
-          console.error('Failed to load user role', err);
-          this.userRole = null;
-          this.isAdmin = false;
-        }
+  async ngOnInit() {
+    // Load user role immediately
+    await this.loadUserRole();
+    
+    // Subscribe to auth state changes
+    this.user$.subscribe(async (user) => {
+      if (user?.uid) {
+        await this.loadUserRole(user.uid);
       } else {
         this.userRole = null;
         this.isAdmin = false;
       }
     });
+  }
+
+  private async loadUserRole(uid?: string) {
+    try {
+      const userId = uid || this.authService.getUserId();
+      if (!userId) {
+        this.userRole = null;
+        this.isAdmin = false;
+        return;
+      }
+
+      const userDoc = await getDoc(doc(this.firestore, 'users', userId));
+      if (userDoc.exists()) {
+        const data = userDoc.data() as any;
+        this.userRole = data['role'] || 'user';
+        this.isAdmin = this.userRole === 'admin';
+        console.log('User role loaded:', this.userRole, 'isAdmin:', this.isAdmin);
+      } else {
+        // Create user document if it doesn't exist using setDoc directly
+        const currentUser = await firstValueFrom(this.user$);
+        if (currentUser) {
+          const userRef = doc(this.firestore, 'users', currentUser.uid);
+          await setDoc(userRef, {
+            email: currentUser.email,
+            role: 'user',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+          this.userRole = 'user';
+          this.isAdmin = false;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load user role', err);
+      this.userRole = null;
+      this.isAdmin = false;
+    }
+  }
+
+  getUserInitials(user: any): string {
+    if (!user) return 'U';
+    if (user.email) {
+      return user.email.charAt(0).toUpperCase();
+    }
+    if (user.displayName) {
+      return user.displayName.charAt(0).toUpperCase();
+    }
+    return 'U';
+  }
+
+  getUserDisplayName(user: any): string {
+    if (!user) return 'User';
+    if (user.displayName) return user.displayName;
+    if (user.email) {
+      return user.email.split('@')[0] || user.email;
+    }
+    return 'User';
   }
 
   toggleSidebar() {
@@ -114,15 +170,47 @@ export class DashboardComponent {
     const { email, password, role } = this.createUserForm.getRawValue();
 
     try {
+      // Check admin status again
+      if (!this.isAdmin) {
+        throw new Error('You do not have permission to create users');
+      }
+
+      // Use the existing createUserAccount method from UserService
       await this.userService.createUserAccount(email, password, role);
-      this.createSuccess = 'User created successfully';
+      this.createSuccess = 'User created successfully!';
       this.createUserForm.reset({ email: '', password: '', role: 'user' });
-      setTimeout(() => this.closeCreateUserModal(), 1000);
+      
+      // Auto close after success
+      setTimeout(() => this.closeCreateUserModal(), 1500);
     } catch (err: any) {
       console.error('Create user failed', err);
-      this.createError = err?.message || 'Create user failed';
+      
+      // Handle specific Firebase Auth errors
+      if (err.code === 'auth/email-already-in-use') {
+        this.createError = 'This email is already registered.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        this.createError = 'Email/password accounts are not enabled. Please enable them in Firebase Console.';
+      } else if (err.code === 'auth/weak-password') {
+        this.createError = 'Password is too weak. Please use at least 6 characters.';
+      } else if (err.message?.includes('Only administrators')) {
+        this.createError = 'You do not have permission to create users.';
+      } else if (err.message?.includes('must be done through Firebase Console')) {
+        this.createError = 'Due to security restrictions, please create users directly in Firebase Console.';
+      } else {
+        this.createError = err?.message || 'Failed to create user. Please try again.';
+      }
     } finally {
       this.isCreating = false;
     }
   }
+
+  async logout() {
+    try {
+      await this.authService.signOut();
+      this.router.navigate(['/login']);
+    } catch (err) {
+      console.error('Logout failed', err);
+    }
+  }
+
 }

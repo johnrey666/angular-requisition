@@ -37,7 +37,7 @@
         </button>
         <div class="dropdown-menu" *ngIf="showTableDropdown">
           <div class="dropdown-header">
-            <span>Tables</span>
+            <span>Your Tables</span>
             <button class="btn-icon" (click)="createNewTable()" title="New Table">
               <span>＋</span>
             </button>
@@ -50,16 +50,19 @@
               <span class="name">{{ table.name || 'Untitled' }}</span>
               <span class="count">{{ table.item_count || 0 }}</span>
             </div>
-            <div *ngIf="userTables.length === 0" class="empty">No tables</div>
+            <div *ngIf="userTables.length === 0" class="empty">
+              <span>No tables yet</span>
+              <button class="btn-link" (click)="createNewTable()">Create one</button>
+            </div>
           </div>
-          <div class="divider"></div>
-          <div class="dropdown-item" (click)="createNewTable()">
+          <div class="divider" *ngIf="userTables.length > 0"></div>
+          <div class="dropdown-item" *ngIf="userTables.length > 0" (click)="createNewTable()">
             <span class="icon">＋</span>
             Create New Table
           </div>
         </div>
       </div>
-      <button class="btn btn-primary" (click)="exportData()" [disabled]="filteredItems.length === 0">
+      <button class="btn btn-primary" (click)="exportData()" [disabled]="!currentTable || filteredItems.length === 0">
         <span class="icon">📤</span>
         Export
       </button>
@@ -88,12 +91,29 @@
     </div>
   </div>
 
-  <!-- Add New Item -->
-  <div class="card">
+  <!-- Table Required Warning / No Table Selected -->
+  <div class="card" *ngIf="!currentTable">
+    <div class="card-body">
+      <div class="empty-state">
+        <span class="icon-large">📋</span>
+        <h3>No Table Selected</h3>
+        <p>You need to create or select a table before adding inventory items.</p>
+        <div class="actions">
+          <button class="btn btn-primary" (click)="createNewTable()">
+            <span class="icon">＋</span>
+            Create Your First Table
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add New Item - Only shown when table is selected -->
+  <div class="card" *ngIf="currentTable">
     <div class="card-header">
       <div>
-        <h3>Add Item</h3>
-        <p>Add new inventory items</p>
+        <h3>Add Item to "{{ currentTable.name }}"</h3>
+        <p>Add new inventory items to current table</p>
       </div>
     </div>
     <div class="card-body">
@@ -140,8 +160,8 @@
     </div>
   </div>
 
-  <!-- Search and Filter -->
-  <div class="card">
+  <!-- Search and Filter - Only shown when table is selected -->
+  <div class="card" *ngIf="currentTable">
     <div class="card-body">
       <div class="search-filter">
         <div class="search">
@@ -160,12 +180,12 @@
     </div>
   </div>
 
-  <!-- Current Table -->
+  <!-- Current Table Info -->
   <div class="card" *ngIf="currentTable">
     <div class="card-body">
       <div class="table-info">
         <div>
-          <h4>{{ currentTable.name || 'Untitled' }}</h4>
+          <h4>{{ currentTable.name }}</h4>
           <div class="badges">
             <span class="badge">📦 {{ filteredItems.length }} items</span>
             <span class="badge">📊 {{ totalQuantity | number:'1.0-0' }} total</span>
@@ -185,20 +205,15 @@
     </div>
   </div>
 
-  <!-- Inventory Table -->
-  <div class="card">
+  <!-- Inventory Table - Only shown when table is selected -->
+  <div class="card" *ngIf="currentTable">
     <div class="card-header">
       <div>
-        <h3>Inventory Items</h3>
+        <h3>Inventory Items - {{ currentTable.name }}</h3>
         <div class="badges">
           <span class="badge">Showing {{ filteredItems.length }}</span>
           <span class="badge">Qty {{ totalQuantity | number:'1.0-0' }}</span>
         </div>
-      </div>
-      <div class="pagination">
-        <button class="btn-icon" [disabled]="currentPage === 1" (click)="prevPage()">‹</button>
-        <span>Page {{ currentPage }} of {{ totalPages }}</span>
-        <button class="btn-icon" [disabled]="currentPage === totalPages" (click)="nextPage()">›</button>
       </div>
     </div>
 
@@ -235,7 +250,7 @@
                 </div>
               </td>
               <td>
-                <button class="btn-icon danger" (click)="deleteItem(item.id, $event)" title="Delete">🗑️</button>
+                <button class="btn-icon danger" (click)="deleteItem(item, $event)" title="Delete">🗑️</button>
               </td>
             </tr>
             
@@ -295,7 +310,7 @@
               <div class="empty-state">
                 <h4>No items found</h4>
                 <p *ngIf="searchQuery || filterCategory">Try adjusting filters</p>
-                <p *ngIf="!searchQuery && !filterCategory">Add your first item</p>
+                <p *ngIf="!searchQuery && !filterCategory">Add your first item to this table</p>
               </div>
             </td>
           </tr>
@@ -303,13 +318,51 @@
       </table>
     </div>
     
-    <div class="card-footer">
-      <div>Showing {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, filteredItems.length) }} of {{ filteredItems.length }}</div>
-      <div>
+    <!-- Modern Pagination with Page Numbers -->
+    <div class="card-footer" *ngIf="filteredItems.length > 0">
+      <div class="pagination-info">
+        Showing {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, filteredItems.length) }} of {{ filteredItems.length }}
+      </div>
+      
+      <div class="pagination-modern">
+        <button 
+          class="pagination-btn" 
+          [class.disabled]="currentPage === 1"
+          (click)="goToPage(currentPage - 1)"
+          [disabled]="currentPage === 1">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M15 18l-6-6 6-6"/>
+          </svg>
+        </button>
+        
+        <button 
+          *ngFor="let page of getPageNumbers()" 
+          class="pagination-btn" 
+          [class.active]="currentPage === page"
+          [class.dots]="page === -1"
+          (click)="page !== -1 && goToPage(page)"
+          [disabled]="page === -1">
+          <span *ngIf="page !== -1">{{ page }}</span>
+          <span *ngIf="page === -1">...</span>
+        </button>
+        
+        <button 
+          class="pagination-btn" 
+          [class.disabled]="currentPage === totalPages"
+          (click)="goToPage(currentPage + 1)"
+          [disabled]="currentPage === totalPages">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="pagination-size">
         <select [(ngModel)]="pageSize" (change)="onPageSizeChange()">
-          <option value="10">10 per page</option>
-          <option value="25">25 per page</option>
-          <option value="50">50 per page</option>
+          <option [value]="10">10 per page</option>
+          <option [value]="25">25 per page</option>
+          <option [value]="50">50 per page</option>
+          <option [value]="100">100 per page</option>
         </select>
       </div>
     </div>
