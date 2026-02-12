@@ -51,7 +51,7 @@ export class Page4Component implements OnInit {
   isLoading: boolean = false;
   
   currentPage: number = 1;
-  itemsPerPage: number = 15;
+  itemsPerPage: number = 10;
   totalPages: number = 1;
   
   sortField: string = 'total_quantity';

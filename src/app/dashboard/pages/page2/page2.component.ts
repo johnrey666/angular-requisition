@@ -81,6 +81,9 @@ export class Page2Component implements OnInit {
   snackbarType: 'success' | 'error' | 'info' = 'info';
   snackbarTimeout: any;
 
+  // Expose Math to template
+  Math = Math;
+
   constructor(
     private db: DatabaseService,
     private auth: AuthService
@@ -330,12 +333,15 @@ export class Page2Component implements OnInit {
   }
 
   async toggleRow(item: InventoryItem) {
+    if (!item.id) return;
+    
     this.expandedRows[item.id] = !this.expandedRows[item.id];
 
     if (this.expandedRows[item.id] && !item.materials) {
       this.loadingMaterials[item.id] = true;
       try {
-        item.materials = await this.db.getMaterialsForSku(item.sku_code);
+        const materials = await this.db.getMaterialsForSku(item.sku_code);
+        item.materials = materials || [];
         item.materialCount = item.materials?.length || 0;
         item.totalRequired = this.calculateTotalRequired(item);
       } catch (err) {
@@ -392,9 +398,10 @@ export class Page2Component implements OnInit {
     }, 0);
   }
 
-  calculateMaterialTotal(itemQty: number, qtyPerBatch: number | null): number {
+  calculateMaterialTotal(itemQty: number | null, qtyPerBatch: number | null): number {
+    const qty = itemQty || 0;
     const batchQty = qtyPerBatch || 0;
-    return batchQty * itemQty;
+    return batchQty * qty;
   }
 
   // Table Management Methods
@@ -735,9 +742,5 @@ export class Page2Component implements OnInit {
         this.showToast('Error deleting item', 'error');
       }
     }
-  }
-
-  get Math() {
-    return Math;
   }
 }
