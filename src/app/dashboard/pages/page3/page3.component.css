@@ -1050,3 +1050,140 @@ tr:hover td {
     margin-left: 0;
   }
 }
+/* Add these to your existing CSS */
+
+/* Status Badges */
+.status-pending {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.status-submitted {
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.status-scheduled {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
+.status-approved {
+  background: #f0fdf4;
+  color: #065f46;
+}
+
+.status-rejected {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+/* Action Buttons */
+.action-buttons {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-icon:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.btn-icon.success:hover {
+  background: #f0fdf4;
+  color: #059669;
+}
+
+.btn-icon.primary:hover {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.btn-icon.danger:hover {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.btn-success {
+  background: #059669;
+  color: white;
+  border-color: #059669;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: #047857;
+  border-color: #047857;
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: white;
+  border-color: #dc2626;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+/* Scheduled Date */
+.scheduled-date {
+  font-size: 11px;
+  color: #6b21a8;
+  background: #f3e8ff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* Modal Subtitle */
+.modal-subtitle {
+  font-size: 13px;
+  color: #475569;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* Role Badge */
+.role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  border-radius: 12px;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.role-badge.admin {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.role-badge.procurement {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.role-badge.user {
+  background: #dbeafe;
+  color: #1e40af;
+}

@@ -1,3 +1,4 @@
+<!-- src/app/features/page3/page3.component.html -->
 <div class="page-content">
   <!-- Snackbar -->
   <div class="snackbar" [class.show]="showSnackbar" [class]="snackbarType">
@@ -20,7 +21,6 @@
             <line x1="3" y1="9" x2="21" y2="9"/>
             <line x1="9" y1="21" x2="9" y2="9"/>
           </svg>
-          <!-- Show current table name if selected, otherwise show "Manage Tables" -->
           {{ selectedTable ? selectedTable.name : 'Manage Tables' }}
         </button>
         
@@ -58,7 +58,7 @@
         </div>
       </div>
       
-      <button class="btn btn-primary" (click)="openModal()">
+      <button class="btn btn-primary" (click)="openModal()" *ngIf="canCreateRequisition()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M12 5v14M5 12h14"/>
         </svg>
@@ -127,6 +127,13 @@
               </svg>
               {{ filteredRequisitions.length }} requisitions
             </span>
+            <span class="stat" *ngIf="userRole">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <circle cx="12" cy="8" r="4"/>
+                <path d="M5.3 18.3a7 7 0 0 1 13.4 0"/>
+              </svg>
+              Role: {{ userRole }}
+            </span>
           </div>
         </div>
         <div class="table-actions">
@@ -173,8 +180,10 @@
           <select [(ngModel)]="filterStatus" (ngModelChange)="applyFilter()">
             <option value="">All status</option>
             <option value="Pending">Pending</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Scheduled">Scheduled</option>
             <option value="Approved">Approved</option>
-            <option value="Processing">Processing</option>
+            <option value="Rejected">Rejected</option>
           </select>
         </div>
       </div>
@@ -199,7 +208,8 @@
               <th>Supplier</th>
               <th>Brand</th>
               <th>Status</th>
-              <th></th>
+              <th>Scheduled</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -218,24 +228,89 @@
               <td class="limit">{{ req.supplier }}</td>
               <td class="limit">{{ req.brand || '—' }}</td>
               <td>
-                <span class="status" [class]="(req.status || 'pending').toLowerCase()">
+                <span class="status" [class]="getStatusBadgeClass(req.status)">
                   {{ req.status || 'Pending' }}
                 </span>
               </td>
               <td>
-                <button class="delete-btn" (click)="deleteRequisition(req)" title="Delete">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
-                    <line x1="10" y1="11" x2="10" y2="17"/>
-                    <line x1="14" y1="11" x2="14" y2="17"/>
-                  </svg>
-                </button>
+                <span *ngIf="req.scheduled_date" class="scheduled-date">
+                  {{ req.scheduled_date | date:'short' }}
+                </span>
+              </td>
+              <td>
+                <div class="action-buttons">
+                  <!-- User Actions -->
+                  <button *ngIf="canSubmitRequisition(req)" 
+                          class="btn-icon success" 
+                          (click)="submitRequisition(req)"
+                          title="Submit for Approval">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                  </button>
+
+                  <!-- Procurement Actions -->
+                  <button *ngIf="canScheduleRequisition(req)" 
+                          class="btn-icon primary" 
+                          (click)="openScheduleModal(req)"
+                          title="Schedule">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <rect x="3" y="4" width="18" height="18" rx="2"/>
+                      <line x1="16" y1="2" x2="16" y2="6"/>
+                      <line x1="8" y1="2" x2="8" y2="6"/>
+                      <line x1="3" y1="10" x2="21" y2="10"/>
+                    </svg>
+                  </button>
+
+                  <!-- Admin Actions -->
+                  <button *ngIf="canApproveRequisition(req)" 
+                          class="btn-icon success" 
+                          (click)="openApproveModal(req)"
+                          title="Approve">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                  </button>
+
+                  <!-- Reject Action (Admin/Procurement) -->
+                  <button *ngIf="canRejectRequisition(req)" 
+                          class="btn-icon danger" 
+                          (click)="openRejectModal(req)"
+                          title="Reject">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <line x1="18" y1="6" x2="6" y2="18"/>
+                      <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                  </button>
+
+                  <!-- Edit Button -->
+                  <button *ngIf="canEditRequisition(req)" 
+                          class="btn-icon" 
+                          (click)="openModal(); editingRequisition = req"
+                          title="Edit">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+                    </svg>
+                  </button>
+
+                  <!-- Delete Button -->
+                  <button *ngIf="canDeleteRequisition(req)" 
+                          class="btn-icon danger" 
+                          (click)="deleteRequisition(req)"
+                          title="Delete">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+                      <line x1="10" y1="11" x2="10" y2="17"/>
+                      <line x1="14" y1="11" x2="14" y2="17"/>
+                    </svg>
+                  </button>
+                </div>
               </td>
             </tr>
             
             <tr *ngIf="filteredRequisitions.length === 0">
-              <td colspan="11" class="empty">
+              <td colspan="12" class="empty">
                 <div>
                   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                     <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -279,13 +354,13 @@
     </div>
   </ng-container>
 
-  <!-- Modal -->
+  <!-- Create/Edit Requisition Modal -->
   <div class="modal" [class.active]="showModal">
     <div class="backdrop" (click)="closeModal()"></div>
     <div class="modal-container">
       <div class="modal-header">
         <div>
-          <h3>New Requisition</h3>
+          <h3>{{ editingRequisition ? 'Edit' : 'New' }} Requisition</h3>
           <span class="note">All fields marked * are required</span>
         </div>
         <button class="close" (click)="closeModal()">
@@ -456,13 +531,113 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" (click)="closeModal()">Cancel</button>
         <button class="btn btn-primary" (click)="onSubmit()" [disabled]="isSubmitting">
-          {{ isSubmitting ? 'Submitting...' : 'Submit' }}
+          {{ isSubmitting ? 'Saving...' : (editingRequisition ? 'Update' : 'Create') }}
         </button>
       </div>
     </div>
   </div>
 
-  <!-- Table Modal - Fixed with separate inputs for create and edit -->
+  <!-- Schedule Modal (Procurement) -->
+  <div class="modal" [class.active]="showScheduleModal">
+    <div class="backdrop" (click)="closeScheduleModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>Schedule Requisition</h3>
+        <button class="close" (click)="closeScheduleModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">
+          Set scheduled date for requisition <strong>{{ selectedRequisition?.reqNumber }}</strong>
+        </p>
+        
+        <div class="field">
+          <label>Date *</label>
+          <input 
+            type="date" 
+            [(ngModel)]="scheduledDate" 
+            [min]="today"
+            placeholder="Select date">
+        </div>
+
+        <div class="field">
+          <label>Time (optional)</label>
+          <input 
+            type="time" 
+            [(ngModel)]="scheduledTime"
+            placeholder="Select time">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeScheduleModal()">Cancel</button>
+        <button class="btn btn-primary" (click)="scheduleRequisition()" [disabled]="!scheduledDate">
+          Schedule
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approve Modal (Admin) -->
+  <div class="modal" [class.active]="showApproveModal">
+    <div class="backdrop" (click)="closeApproveModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>Approve Requisition</h3>
+        <button class="close" (click)="closeApproveModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">
+          Approve requisition <strong>{{ selectedRequisition?.reqNumber }}</strong>
+        </p>
+        
+        <div class="field">
+          <label>Notes (optional)</label>
+          <textarea 
+            [(ngModel)]="approvalNotes"
+            rows="3"
+            placeholder="Add any approval notes..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeApproveModal()">Cancel</button>
+        <button class="btn btn-success" (click)="approveRequisition()">
+          Approve
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reject Modal (Admin/Procurement) -->
+  <div class="modal" [class.active]="showRejectModal">
+    <div class="backdrop" (click)="closeRejectModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>Reject Requisition</h3>
+        <button class="close" (click)="closeRejectModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">
+          Reject requisition <strong>{{ selectedRequisition?.reqNumber }}</strong>
+        </p>
+        
+        <div class="field">
+          <label>Reason *</label>
+          <textarea 
+            [(ngModel)]="rejectionReason"
+            rows="3"
+            placeholder="Please provide a reason for rejection..."></textarea>
+          <span class="error" *ngIf="showRejectModal && !rejectionReason">Reason is required</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeRejectModal()">Cancel</button>
+        <button class="btn btn-danger" (click)="rejectRequisition()" [disabled]="!rejectionReason">
+          Reject
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table Modal -->
   <div class="modal" [class.active]="showTableModal">
     <div class="backdrop" (click)="closeTableModal()"></div>
     <div class="modal-container modal-sm">

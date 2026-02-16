@@ -1,6 +1,6 @@
 // src/core/services/database.service.ts
 import { Injectable } from '@angular/core';
-import { Firestore, collection, addDoc, getDocs, query, where, doc, getDoc, updateDoc, deleteDoc, writeBatch } from '@angular/fire/firestore';
+import { Firestore, collection, addDoc, getDocs, query, where, doc, getDoc, updateDoc, deleteDoc, writeBatch, orderBy } from '@angular/fire/firestore';
 import { AuthService } from './auth.service';
 import { firstValueFrom } from 'rxjs';
 import { User } from '../models/database.model';
@@ -358,7 +358,7 @@ export class DatabaseService {
     try {
       const docRef = await addDoc(collection(this.firestore, 'tables'), {
         ...data,
-        type,  // Add the type field
+        type,
         item_count: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -448,32 +448,55 @@ export class DatabaseService {
 
   async getTableRequisitions(tableId: string, userId: string): Promise<any[]> {
     try {
-      if (!tableId || !userId) return [];
+      if (!tableId || !userId) {
+        console.log('Missing tableId or userId:', { tableId, userId });
+        return [];
+      }
+      
+      console.log('Fetching requisitions for table:', tableId, 'user:', userId);
       
       const q = query(
         collection(this.firestore, 'requisitions'),
         where('table_id', '==', tableId),
-        where('user_id', '==', userId)
+        where('user_id', '==', userId),
+        orderBy('created_at', 'desc')
       );
+      
       const snapshot = await getDocs(q);
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      console.log('Found requisitions count:', snapshot.size);
+      
+      const requisitions = snapshot.docs.map(doc => {
+        const data = doc.data();
+        console.log('Requisition data:', { id: doc.id, ...data });
+        return { id: doc.id, ...data };
+      });
+      
+      return requisitions;
     } catch (err) {
-      console.error('getTableRequisitions failed', err);
+      console.error('getTableRequisitions failed:', err);
       return [];
     }
   }
 
   async createRequisition(data: any, materials: any[]): Promise<{ success: boolean; id?: string }> {
     try {
-      const docRef = await addDoc(collection(this.firestore, 'requisitions'), {
+      console.log('Creating requisition with data:', data);
+      
+      // Ensure all required fields are present
+      const requisitionData = {
         ...data,
-        materials,
+        materials: materials || [],
+        status: data.status || 'Pending',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
-      });
+      };
+      
+      const docRef = await addDoc(collection(this.firestore, 'requisitions'), requisitionData);
+      console.log('Requisition created with ID:', docRef.id);
+      
       return { success: true, id: docRef.id };
     } catch (err) {
-      console.error('createRequisition failed', err);
+      console.error('createRequisition failed:', err);
       return { success: false };
     }
   }
@@ -601,6 +624,251 @@ export class DatabaseService {
     } catch (err) {
       console.error('updateRequisition failed', err);
       return false;
+    }
+  }
+
+  // ────────────────────────────────────────────────
+  //  Requisition Status Management
+  // ────────────────────────────────────────────────
+
+  /**
+   * Update requisition status with additional workflow data
+   * @param id - Requisition ID
+   * @param status - New status (Pending, Submitted, Scheduled, Approved, Rejected)
+   * @param userId - User ID making the change
+   * @param tableId - Table ID
+   * @param additionalData - Additional data like scheduled_date, approved_by, etc.
+   */
+  async updateRequisitionStatus(
+    id: string, 
+    status: string, 
+    userId: string, 
+    tableId: string,
+    additionalData: any = {}
+  ): Promise<boolean> {
+    try {
+      // Verify the requisition exists and belongs to the user/table
+      const reqRef = doc(this.firestore, 'requisitions', id);
+      const reqDoc = await getDoc(reqRef);
+      
+      if (!reqDoc.exists()) return false;
+      
+      const reqData = reqDoc.data();
+      
+      // Check ownership - users can only update their own requisitions
+      // But procurement and admin can update any (checked at component level)
+      if (reqData['user_id'] !== userId && reqData['table_id'] !== tableId) {
+        console.error('Unauthorized status update attempt');
+        return false;
+      }
+      
+      // Prepare update data based on status
+      const updateData: any = {
+        status,
+        updated_at: new Date().toISOString(),
+        ...additionalData
+      };
+
+      // Add specific timestamps based on status
+      switch(status) {
+        case 'Submitted':
+          updateData.submitted_at = new Date().toISOString();
+          break;
+        case 'Scheduled':
+          updateData.scheduled_at = new Date().toISOString();
+          updateData.scheduled_by = userId;
+          break;
+        case 'Approved':
+          updateData.approved_at = new Date().toISOString();
+          updateData.approved_by = userId;
+          break;
+        case 'Rejected':
+          updateData.rejected_at = new Date().toISOString();
+          updateData.rejected_by = userId;
+          break;
+      }
+      
+      await updateDoc(reqRef, updateData);
+      
+      return true;
+    } catch (err) {
+      console.error('updateRequisitionStatus failed', err);
+      return false;
+    }
+  }
+
+  /**
+   * Get requisitions by status for a specific table
+   * @param tableId - Table ID
+   * @param userId - User ID
+   * @param status - Status to filter by (optional)
+   */
+  async getRequisitionsByStatus(tableId: string, userId: string, status?: string): Promise<any[]> {
+    try {
+      if (!tableId || !userId) return [];
+      
+      let q;
+      if (status) {
+        q = query(
+          collection(this.firestore, 'requisitions'),
+          where('table_id', '==', tableId),
+          where('user_id', '==', userId),
+          where('status', '==', status),
+          orderBy('created_at', 'desc')
+        );
+      } else {
+        q = query(
+          collection(this.firestore, 'requisitions'),
+          where('table_id', '==', tableId),
+          where('user_id', '==', userId),
+          orderBy('created_at', 'desc')
+        );
+      }
+      
+      const snapshot = await getDocs(q);
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (err) {
+      console.error('getRequisitionsByStatus failed', err);
+      return [];
+    }
+  }
+
+  /**
+   * Get pending requisitions that need submission
+   * @param tableId - Table ID
+   * @param userId - User ID
+   */
+  async getPendingRequisitions(tableId: string, userId: string): Promise<any[]> {
+    return this.getRequisitionsByStatus(tableId, userId, 'Pending');
+  }
+
+  /**
+   * Get submitted requisitions that need scheduling (for procurement)
+   * @param tableId - Table ID
+   * @param userId - User ID
+   */
+  async getSubmittedRequisitions(tableId: string, userId: string): Promise<any[]> {
+    return this.getRequisitionsByStatus(tableId, userId, 'Submitted');
+  }
+
+  /**
+   * Get scheduled requisitions that need approval (for admin)
+   * @param tableId - Table ID
+   * @param userId - User ID
+   */
+  async getScheduledRequisitions(tableId: string, userId: string): Promise<any[]> {
+    return this.getRequisitionsByStatus(tableId, userId, 'Scheduled');
+  }
+
+  /**
+   * Get approved requisitions
+   * @param tableId - Table ID
+   * @param userId - User ID
+   */
+  async getApprovedRequisitions(tableId: string, userId: string): Promise<any[]> {
+    return this.getRequisitionsByStatus(tableId, userId, 'Approved');
+  }
+
+  /**
+   * Get rejected requisitions
+   * @param tableId - Table ID
+   * @param userId - User ID
+   */
+  async getRejectedRequisitions(tableId: string, userId: string): Promise<any[]> {
+    return this.getRequisitionsByStatus(tableId, userId, 'Rejected');
+  }
+
+  // ────────────────────────────────────────────────
+  //  Workflow Statistics
+  // ────────────────────────────────────────────────
+
+  /**
+   * Get workflow statistics for a table
+   * @param tableId - Table ID
+   * @param userId - User ID
+   */
+  async getWorkflowStats(tableId: string, userId: string): Promise<any> {
+    try {
+      if (!tableId || !userId) return null;
+      
+      const allRequisitions = await this.getTableRequisitions(tableId, userId);
+      
+      const stats = {
+        total: allRequisitions.length,
+        pending: allRequisitions.filter(r => r.status === 'Pending').length,
+        submitted: allRequisitions.filter(r => r.status === 'Submitted').length,
+        scheduled: allRequisitions.filter(r => r.status === 'Scheduled').length,
+        approved: allRequisitions.filter(r => r.status === 'Approved').length,
+        rejected: allRequisitions.filter(r => r.status === 'Rejected').length,
+        approvalRate: 0
+      };
+      
+      // Calculate approval rate
+      const totalProcessed = stats.approved + stats.rejected;
+      stats.approvalRate = totalProcessed > 0 
+        ? Math.round((stats.approved / totalProcessed) * 100) 
+        : 0;
+      
+      return stats;
+    } catch (err) {
+      console.error('getWorkflowStats failed', err);
+      return null;
+    }
+  }
+
+  /**
+   * Get requisitions that need action based on user role
+   * @param userId - User ID
+   * @param role - User role
+   */
+  async getRequisitionsNeedingAction(userId: string, role: string): Promise<any[]> {
+    try {
+      if (!userId) return [];
+      
+      // Get all tables for the user
+      const tables = await this.getUserTables(userId);
+      
+      let allRequisitions: any[] = [];
+      
+      for (const table of tables) {
+        let q;
+        
+        // Different queries based on role
+        if (role === 'user') {
+          // Users need to submit their pending requisitions
+          q = query(
+            collection(this.firestore, 'requisitions'),
+            where('user_id', '==', userId),
+            where('table_id', '==', table.id),
+            where('status', '==', 'Pending'),
+            where('submitted_at', '==', null)
+          );
+        } else if (role === 'procurement') {
+          // Procurement needs to schedule submitted requisitions
+          q = query(
+            collection(this.firestore, 'requisitions'),
+            where('table_id', '==', table.id),
+            where('status', '==', 'Submitted')
+          );
+        } else if (role === 'admin') {
+          // Admin needs to approve scheduled requisitions
+          q = query(
+            collection(this.firestore, 'requisitions'),
+            where('table_id', '==', table.id),
+            where('status', '==', 'Scheduled')
+          );
+        } else {
+          continue;
+        }
+        
+        const snapshot = await getDocs(q);
+        allRequisitions = [...allRequisitions, ...snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))];
+      }
+      
+      return allRequisitions;
+    } catch (err) {
+      console.error('getRequisitionsNeedingAction failed', err);
+      return [];
     }
   }
 

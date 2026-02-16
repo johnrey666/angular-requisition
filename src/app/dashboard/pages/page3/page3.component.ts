@@ -1,8 +1,11 @@
+// src/app/features/page3/page3.component.ts
 import { Component, OnInit, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { Firestore, doc, getDoc } from '@angular/fire/firestore';
+import { Router } from '@angular/router';
 
 interface Requisition {
   id: string;
@@ -15,12 +18,18 @@ interface Requisition {
   unit: string;
   supplier: string;
   brand: string;
-  status: string;
+  status: 'Pending' | 'Submitted' | 'Scheduled' | 'Approved' | 'Rejected';
   category: string;
   remarks: string;
   created_at?: string;
   user_id?: string;
   table_id?: string;
+  submitted_at?: string;
+  scheduled_date?: string;
+  scheduled_by?: string;
+  approved_at?: string;
+  approved_by?: string;
+  rejection_reason?: string;
   [key: string]: any;
 }
 
@@ -65,6 +74,9 @@ export class Page3Component implements OnInit {
   // UI State
   showModal = false;
   showTableModal = false;
+  showScheduleModal = false;
+  showApproveModal = false;
+  showRejectModal = false;
   submitted = false;
   isLoading = false;
   isSubmitting = false;
@@ -84,6 +96,15 @@ export class Page3Component implements OnInit {
     customBrand: '',
     remarks: ''
   };
+
+  // Schedule Data
+  selectedRequisition: Requisition | null = null;
+  scheduledDate: string = '';
+  scheduledTime: string = '';
+
+  // Approval Data
+  approvalNotes: string = '';
+  rejectionReason: string = '';
 
   // Editing
   editingRequisition: Requisition | null = null;
@@ -111,32 +132,55 @@ export class Page3Component implements OnInit {
   importMessage = '';
   selectedFileName = '';
 
-  Math = Math;
+  // User Role
+  userRole: string = '';
+  userId: string = '';
 
-  // User ID - will be set from auth service
-  private userId: string = '';
+  Math = Math;
 
   constructor(
     private db: DatabaseService,
-    private auth: AuthService
+    private auth: AuthService,
+    private firestore: Firestore,
+    private router: Router
   ) {}
 
   async ngOnInit() {
-    // Get the current user ID from auth service
+    // Get the current user ID and role from auth service
     const user = await this.auth.getCurrentUserPromise();
     if (user) {
       this.userId = user.uid;
+      console.log('User ID:', this.userId);
+      await this.loadUserRole();
       await this.loadCategories();
       await this.loadUserTables();
     } else {
+      console.log('No user found, redirecting to login');
       this.showToast('Please log in to continue', 'error');
-      // Redirect to login or handle unauthenticated state
+      this.router.navigate(['/login']);
+    }
+  }
+
+  async loadUserRole() {
+    try {
+      const userDoc = await getDoc(doc(this.firestore, 'users', this.userId));
+      if (userDoc.exists()) {
+        const data = userDoc.data() as any;
+        this.userRole = data['role'] || 'user';
+      } else {
+        this.userRole = 'user';
+      }
+      console.log('User role:', this.userRole);
+    } catch (err) {
+      console.error('Failed to load user role:', err);
+      this.userRole = 'user';
     }
   }
 
   async loadCategories() {
     try {
       this.categories = await this.db.getUniqueCategories();
+      console.log('Loaded categories:', this.categories);
     } catch (err) {
       console.error('Failed to load categories:', err);
     }
@@ -149,8 +193,10 @@ export class Page3Component implements OnInit {
     }
 
     try {
+      console.log('Loading tables for user:', this.userId);
       // Only load requisition type tables
       this.tables = await this.db.getUserTablesByType(this.userId, 'requisition');
+      console.log('Loaded tables:', this.tables);
       
       // Load last selected table from localStorage or use first table
       const lastTableId = localStorage.getItem(`lastSelectedRequisitionTable_${this.userId}`);
@@ -160,7 +206,9 @@ export class Page3Component implements OnInit {
         this.selectedTableId = this.tables[0].id;
       }
       
-      await this.onTableChange();
+      if (this.selectedTableId) {
+        await this.onTableChange();
+      }
     } catch (err) {
       console.error('Failed to load tables:', err);
       this.showToast('Failed to load tables', 'error');
@@ -169,39 +217,52 @@ export class Page3Component implements OnInit {
 
   async onTableChange() {
     if (!this.selectedTableId) {
+      console.log('No table selected');
       this.requisitions = [];
       this.filteredRequisitions = [];
       this.selectedTable = null;
       return;
     }
 
+    console.log('Table changed to:', this.selectedTableId);
+    
     // Save selection with user-specific key
     localStorage.setItem(`lastSelectedRequisitionTable_${this.userId}`, this.selectedTableId);
     
     // Update selected table
     this.selectedTable = this.tables.find(t => t.id === this.selectedTableId) || null;
+    console.log('Selected table:', this.selectedTable);
     
     // Load requisitions for selected table
     await this.loadRequisitions();
   }
 
   async loadRequisitions() {
-    if (!this.selectedTableId || !this.userId) return;
+    if (!this.selectedTableId || !this.userId) {
+      console.log('Missing tableId or userId for loading requisitions');
+      return;
+    }
 
     this.isLoading = true;
     try {
+      console.log('Loading requisitions for table:', this.selectedTableId, 'user:', this.userId);
       const data = await this.db.getTableRequisitions(this.selectedTableId, this.userId);
+      console.log('Raw requisitions data:', data);
       
-      // Ensure each requisition has a reqNumber (generate one if missing)
-      this.requisitions = data.map((req: any, index: number) => {
-        if (!req.reqNumber) {
-          // Generate a reqNumber if it doesn't exist
-          req.reqNumber = `MR-${new Date().getFullYear()}-${String(index + 1).padStart(3, '0')}`;
-        }
-        return req as Requisition;
+      // Map the data to ensure proper field names
+      this.requisitions = data.map((req: any) => {
+        // Ensure status is set
+        const status = req.status || 'Pending';
+        
+        return {
+          ...req,
+          status,
+          quantity: req.quantity || req.qty_needed || 0,
+          reqNumber: req.reqNumber || `MR-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`
+        } as Requisition;
       });
       
-      console.log('Loaded requisitions:', this.requisitions);
+      console.log('Processed requisitions:', this.requisitions);
       this.applyFilter();
     } catch (err) {
       console.error('Failed to load requisitions:', err);
@@ -221,6 +282,7 @@ export class Page3Component implements OnInit {
 
     try {
       this.availableSkus = await this.db.getSkusByCategory(this.formData.category);
+      console.log('Available SKUs:', this.availableSkus);
       this.formData.skuName = '';
       this.selectedSkuCode = '';
     } catch (err) {
@@ -237,6 +299,7 @@ export class Page3Component implements OnInit {
 
     const selectedItem = this.availableSkus.find(item => item.sku_name === this.formData.skuName);
     this.selectedSkuCode = selectedItem ? selectedItem.sku_code : '';
+    console.log('Selected SKU code:', this.selectedSkuCode);
   }
 
   async onFileSelected(event: any) {
@@ -301,7 +364,18 @@ export class Page3Component implements OnInit {
         ? this.formData.customBrand?.trim()
         : this.formData.brand || '';
 
-      const requisitionData: any = {
+      // Generate requisition number
+      let reqNumber = '';
+      if (this.editingRequisition) {
+        reqNumber = this.editingRequisition.reqNumber;
+      } else {
+        const year = new Date().getFullYear();
+        const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+        reqNumber = `MR-${year}-${random}`;
+      }
+
+      const requisitionData = {
+        reqNumber,
         type: this.formData.type,
         dateNeeded: this.formData.dateNeeded || 'ASAP',
         skuCode,
@@ -316,6 +390,8 @@ export class Page3Component implements OnInit {
         user_id: this.userId,
         table_id: this.selectedTableId
       };
+
+      console.log('Submitting requisition data:', requisitionData);
 
       let result;
       
@@ -332,32 +408,17 @@ export class Page3Component implements OnInit {
           this.showToast('Requisition updated successfully', 'success');
         }
       } else {
-        // Generate requisition number for new requisitions
-        let nextNumber = 1;
-        if (this.requisitions.length > 0) {
-          const lastReq = this.requisitions[this.requisitions.length - 1];
-          // Safely extract the number from reqNumber
-          let lastNum = 0;
-          if (lastReq && lastReq.reqNumber) {
-            const parts = lastReq.reqNumber.split('-');
-            lastNum = parseInt(parts[parts.length - 1] || '0');
-          }
-          nextNumber = lastNum + 1;
-        }
-        const reqNumber = `MR-${new Date().getFullYear()}-${String(nextNumber).padStart(3, '0')}`;
-        
-        // Add reqNumber to the data
-        requisitionData.reqNumber = reqNumber;
-        
+        // Create new requisition
         result = await this.db.createRequisition(requisitionData, []);
         
         if (result.success) {
-          this.showToast('Requisition submitted successfully', 'success');
+          console.log('Requisition created with ID:', result.id);
+          this.showToast('Requisition created successfully', 'success');
         }
       }
       
-      if (result) {
-        await this.loadRequisitions();
+      if (result && (result === true || result.success)) {
+        await this.loadRequisitions(); // Reload to show the new requisition
         await this.updateTableItemCount();
         this.closeModal();
       } else {
@@ -365,14 +426,202 @@ export class Page3Component implements OnInit {
       }
     } catch (err) {
       console.error('Submit error:', err);
-      this.showToast('Failed to save requisition', 'error');
+      this.showToast('Failed to save requisition: ' + (err as Error).message, 'error');
     } finally {
       this.isSubmitting = false;
     }
   }
 
+  // Submit requisition for approval (User action)
+  async submitRequisition(req: Requisition) {
+    if (this.userRole !== 'user') {
+      this.showToast('Only users can submit requisitions', 'error');
+      return;
+    }
+
+    if (!confirm(`Submit requisition ${req.reqNumber} for approval?`)) return;
+
+    try {
+      const success = await this.db.updateRequisitionStatus(
+        req.id,
+        'Submitted',
+        this.userId,
+        this.selectedTableId || '',
+        { submitted_at: new Date().toISOString() }
+      );
+
+      if (success) {
+        await this.loadRequisitions();
+        this.showToast('Requisition submitted for approval', 'success');
+      } else {
+        this.showToast('Failed to submit requisition', 'error');
+      }
+    } catch (err) {
+      console.error('Submit error:', err);
+      this.showToast('Failed to submit requisition', 'error');
+    }
+  }
+
+  // Open schedule modal (Procurement action)
+  openScheduleModal(req: Requisition) {
+    if (this.userRole !== 'procurement' && this.userRole !== 'admin') {
+      this.showToast('Only procurement can schedule requisitions', 'error');
+      return;
+    }
+
+    if (req.status !== 'Submitted') {
+      this.showToast('Only submitted requisitions can be scheduled', 'error');
+      return;
+    }
+
+    this.selectedRequisition = req;
+    this.scheduledDate = '';
+    this.scheduledTime = '';
+    this.showScheduleModal = true;
+  }
+
+  // Schedule requisition (Procurement action)
+  async scheduleRequisition() {
+    if (!this.selectedRequisition || !this.scheduledDate) {
+      this.showToast('Please select a date', 'error');
+      return;
+    }
+
+    try {
+      const scheduledDateTime = this.scheduledTime 
+        ? `${this.scheduledDate}T${this.scheduledTime}`
+        : this.scheduledDate;
+
+      const success = await this.db.updateRequisitionStatus(
+        this.selectedRequisition.id,
+        'Scheduled',
+        this.userId,
+        this.selectedTableId || '',
+        {
+          scheduled_date: scheduledDateTime,
+          scheduled_by: this.userId
+        }
+      );
+
+      if (success) {
+        await this.loadRequisitions();
+        this.closeScheduleModal();
+        this.showToast('Requisition scheduled successfully', 'success');
+      } else {
+        this.showToast('Failed to schedule requisition', 'error');
+      }
+    } catch (err) {
+      console.error('Schedule error:', err);
+      this.showToast('Failed to schedule requisition', 'error');
+    }
+  }
+
+  // Open approve modal (Admin action)
+  openApproveModal(req: Requisition) {
+    if (this.userRole !== 'admin') {
+      this.showToast('Only admins can approve requisitions', 'error');
+      return;
+    }
+
+    if (req.status !== 'Scheduled') {
+      this.showToast('Only scheduled requisitions can be approved', 'error');
+      return;
+    }
+
+    this.selectedRequisition = req;
+    this.approvalNotes = '';
+    this.showApproveModal = true;
+  }
+
+  // Approve requisition (Admin action)
+  async approveRequisition() {
+    if (!this.selectedRequisition) return;
+
+    try {
+      const success = await this.db.updateRequisitionStatus(
+        this.selectedRequisition.id,
+        'Approved',
+        this.userId,
+        this.selectedTableId || '',
+        {
+          approved_by: this.userId,
+          approval_notes: this.approvalNotes || null
+        }
+      );
+
+      if (success) {
+        await this.loadRequisitions();
+        this.closeApproveModal();
+        this.showToast('Requisition approved successfully', 'success');
+      } else {
+        this.showToast('Failed to approve requisition', 'error');
+      }
+    } catch (err) {
+      console.error('Approve error:', err);
+      this.showToast('Failed to approve requisition', 'error');
+    }
+  }
+
+  // Open reject modal (Admin/Procurement action)
+  openRejectModal(req: Requisition) {
+    if (this.userRole !== 'admin' && this.userRole !== 'procurement') {
+      this.showToast('You do not have permission to reject requisitions', 'error');
+      return;
+    }
+
+    this.selectedRequisition = req;
+    this.rejectionReason = '';
+    this.showRejectModal = true;
+  }
+
+  // Reject requisition (Admin/Procurement action)
+  async rejectRequisition() {
+    if (!this.selectedRequisition) return;
+
+    if (!this.rejectionReason.trim()) {
+      this.showToast('Please provide a rejection reason', 'error');
+      return;
+    }
+
+    try {
+      const success = await this.db.updateRequisitionStatus(
+        this.selectedRequisition.id,
+        'Rejected',
+        this.userId,
+        this.selectedTableId || '',
+        {
+          rejected_by: this.userId,
+          rejection_reason: this.rejectionReason
+        }
+      );
+
+      if (success) {
+        await this.loadRequisitions();
+        this.closeRejectModal();
+        this.showToast('Requisition rejected', 'success');
+      } else {
+        this.showToast('Failed to reject requisition', 'error');
+      }
+    } catch (err) {
+      console.error('Reject error:', err);
+      this.showToast('Failed to reject requisition', 'error');
+    }
+  }
+
   async deleteRequisition(req: Requisition) {
     if (!this.selectedTableId || !this.userId) return;
+    
+    // Check permissions
+    if (this.userRole !== 'admin' && req.user_id !== this.userId) {
+      this.showToast('You can only delete your own requisitions', 'error');
+      return;
+    }
+
+    // Prevent deletion of approved requisitions
+    if (req.status === 'Approved') {
+      this.showToast('Approved requisitions cannot be deleted', 'error');
+      return;
+    }
     
     if (!confirm(`Delete requisition ${req.reqNumber || 'Unknown'}?`)) return;
 
@@ -426,6 +675,25 @@ export class Page3Component implements OnInit {
   closeModal() {
     this.showModal = false;
     this.editingRequisition = null;
+  }
+
+  closeScheduleModal() {
+    this.showScheduleModal = false;
+    this.selectedRequisition = null;
+    this.scheduledDate = '';
+    this.scheduledTime = '';
+  }
+
+  closeApproveModal() {
+    this.showApproveModal = false;
+    this.selectedRequisition = null;
+    this.approvalNotes = '';
+  }
+
+  closeRejectModal() {
+    this.showRejectModal = false;
+    this.selectedRequisition = null;
+    this.rejectionReason = '';
   }
 
   resetForm() {
@@ -496,7 +764,7 @@ export class Page3Component implements OnInit {
       const result = await this.db.createUserTable({
         name: this.newTableName.trim(),
         user_id: this.userId
-      }, 'requisition');  // Pass the type here
+      }, 'requisition');
 
       if (result.success && result.tableId) {
         // Add new table to list
@@ -541,11 +809,6 @@ export class Page3Component implements OnInit {
     this.openTableModal();
   }
 
-  cancelEdit() {
-    this.editingTable = null;
-    this.editTableName = '';
-  }
-
   async updateTableName() {
     if (!this.editingTable || !this.editTableName.trim()) return;
 
@@ -570,7 +833,6 @@ export class Page3Component implements OnInit {
         
         this.closeTableModal();
         this.showToast('Table renamed successfully', 'success');
-        this.cancelEdit();
       } else {
         this.showToast('Failed to rename table', 'error');
       }
@@ -733,5 +995,48 @@ export class Page3Component implements OnInit {
   onPageSizeChange() {
     this.currentPage = 1;
     this.updatePagination();
+  }
+
+  // Helper methods for role-based UI
+  canCreateRequisition(): boolean {
+    return this.userRole === 'user' || this.userRole === 'procurement' || this.userRole === 'admin';
+  }
+
+  canSubmitRequisition(req: Requisition): boolean {
+    return this.userRole === 'user' && req.status === 'Pending' && req.user_id === this.userId;
+  }
+
+  canScheduleRequisition(req: Requisition): boolean {
+    return (this.userRole === 'procurement' || this.userRole === 'admin') && req.status === 'Submitted';
+  }
+
+  canApproveRequisition(req: Requisition): boolean {
+    return this.userRole === 'admin' && req.status === 'Scheduled';
+  }
+
+  canRejectRequisition(req: Requisition): boolean {
+    return (this.userRole === 'admin' || this.userRole === 'procurement') && 
+           (req.status === 'Submitted' || req.status === 'Scheduled');
+  }
+
+  canEditRequisition(req: Requisition): boolean {
+    return (this.userRole === 'admin' || req.user_id === this.userId) && 
+           req.status !== 'Approved' && req.status !== 'Rejected';
+  }
+
+  canDeleteRequisition(req: Requisition): boolean {
+    return (this.userRole === 'admin' || (this.userRole === 'user' && req.user_id === this.userId)) && 
+           req.status !== 'Approved';
+  }
+
+  getStatusBadgeClass(status: string): string {
+    switch(status) {
+      case 'Pending': return 'status-pending';
+      case 'Submitted': return 'status-submitted';
+      case 'Scheduled': return 'status-scheduled';
+      case 'Approved': return 'status-approved';
+      case 'Rejected': return 'status-rejected';
+      default: return 'status-pending';
+    }
   }
 }
