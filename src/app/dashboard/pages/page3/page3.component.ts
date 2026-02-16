@@ -4,23 +4,23 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { Firestore, doc, getDoc } from '@angular/fire/firestore';
+import { Firestore, doc, getDoc, collection, query, where, getDocs } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 
 interface Requisition {
   id: string;
   reqNumber: string;
   type: string;
-  dateNeeded: string;
+  dateNeeded?: string;
   skuCode: string;
   skuName: string;
   quantity: number;
   unit: string;
   supplier: string;
-  brand: string;
-  status: 'Pending' | 'Submitted' | 'Scheduled' | 'Approved' | 'Rejected';
+  brand?: string;
+  status: string;
   category: string;
-  remarks: string;
+  remarks?: string;
   created_at?: string;
   user_id?: string;
   table_id?: string;
@@ -237,6 +237,7 @@ export class Page3Component implements OnInit {
     await this.loadRequisitions();
   }
 
+  // DIRECT FIREBASE QUERY TO DEBUG
   async loadRequisitions() {
     if (!this.selectedTableId || !this.userId) {
       console.log('Missing tableId or userId for loading requisitions');
@@ -245,24 +246,41 @@ export class Page3Component implements OnInit {
 
     this.isLoading = true;
     try {
-      console.log('Loading requisitions for table:', this.selectedTableId, 'user:', this.userId);
-      const data = await this.db.getTableRequisitions(this.selectedTableId, this.userId);
-      console.log('Raw requisitions data:', data);
+      console.log('=== LOADING REQUISITIONS ===');
+      console.log('Table ID:', this.selectedTableId);
+      console.log('User ID:', this.userId);
       
-      // Map the data to ensure proper field names
-      this.requisitions = data.map((req: any) => {
-        // Ensure status is set
-        const status = req.status || 'Pending';
-        
+      // DIRECT QUERY to Firebase to see what's happening
+      const requisitionsRef = collection(this.firestore, 'requisitions');
+      const q = query(
+        requisitionsRef,
+        where('table_id', '==', this.selectedTableId),
+        where('user_id', '==', this.userId)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      console.log('Query snapshot size:', querySnapshot.size);
+      
+      // Log each document
+      querySnapshot.forEach(doc => {
+        console.log('Document ID:', doc.id);
+        console.log('Document data:', doc.data());
+      });
+      
+      // Map the data
+      const data = querySnapshot.docs.map(doc => {
+        const docData = doc.data();
         return {
-          ...req,
-          status,
-          quantity: req.quantity || req.qty_needed || 0,
-          reqNumber: req.reqNumber || `MR-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`
+          id: doc.id,
+          ...docData
         } as Requisition;
       });
       
-      console.log('Processed requisitions:', this.requisitions);
+      console.log('Mapped requisitions:', data);
+      
+      this.requisitions = data;
+      console.log('Final requisitions array:', this.requisitions);
+      
       this.applyFilter();
     } catch (err) {
       console.error('Failed to load requisitions:', err);
@@ -388,7 +406,8 @@ export class Page3Component implements OnInit {
         category: this.formData.category,
         remarks: this.formData.remarks?.trim() || '',
         user_id: this.userId,
-        table_id: this.selectedTableId
+        table_id: this.selectedTableId,
+        materials: [] // Add empty materials array
       };
 
       console.log('Submitting requisition data:', requisitionData);
@@ -975,6 +994,7 @@ export class Page3Component implements OnInit {
     }
 
     this.filteredRequisitions = filtered;
+    console.log('Filtered requisitions:', this.filteredRequisitions);
     this.currentPage = 1;
     this.updatePagination();
   }
@@ -983,6 +1003,7 @@ export class Page3Component implements OnInit {
     this.totalPages = Math.max(1, Math.ceil(this.filteredRequisitions.length / this.pageSize));
     const start = (this.currentPage - 1) * this.pageSize;
     this.paginatedRequisitions = this.filteredRequisitions.slice(start, start + this.pageSize);
+    console.log('Paginated requisitions:', this.paginatedRequisitions);
   }
 
   goToPage(page: number) {
