@@ -1,4 +1,4 @@
-// src/core/services/auth.service.ts
+// src/app/core/services/auth.service.ts
 import { Injectable } from '@angular/core';
 import { Auth, authState, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } from '@angular/fire/auth';
 import { BehaviorSubject, Observable } from 'rxjs';
@@ -16,13 +16,18 @@ export class AuthService {
   }
 
   // Get current user as observable
-  getCurrentUser(): Observable<any> {
+  getCurrentUserObservable(): Observable<any> {
     return authState(this.auth);
   }
 
   // Get current user as promise
   getCurrentUserPromise(): Promise<any> {
     return Promise.resolve(this.auth.currentUser);
+  }
+
+  // Get current user synchronously
+  getCurrentUser() {
+    return this.auth.currentUser;
   }
 
   // Sign in with email and password
@@ -32,10 +37,12 @@ export class AuthService {
 
   // Sign out
   signOut(): Promise<void> {
+    // Clear stored admin password on logout
+    sessionStorage.removeItem('adminPassword');
     return signOut(this.auth);
   }
 
-  // Create new user (admin only)
+  // Create new user (admin only) - This will be used by UserService
   createUser(email: string, password: string): Promise<any> {
     return createUserWithEmailAndPassword(this.auth, email, password);
   }

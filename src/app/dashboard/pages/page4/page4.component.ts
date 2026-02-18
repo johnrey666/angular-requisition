@@ -3,12 +3,15 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { Firestore, doc, getDoc } from '@angular/fire/firestore';
+import { Router } from '@angular/router';
 import * as XLSX from 'xlsx';
 
 interface UserTable {
   id: string;
   name: string;
   user_id: string;
+  type: 'inventory' | 'requisition';
   item_count?: number;
   created_at?: string;
   updated_at?: string;
@@ -66,9 +69,15 @@ export class Page4Component implements OnInit {
   notificationType: 'success' | 'error' | 'info' = 'info';
   private notificationTimeout: any;
 
+  // User Role
+  userRole: string = '';
+  userId: string = '';
+
   constructor(
     private db: DatabaseService,
-    private auth: AuthService
+    private auth: AuthService,
+    private firestore: Firestore,
+    private router: Router
   ) {}
 
   get Math() {
@@ -76,19 +85,60 @@ export class Page4Component implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    await this.loadUserTables();
-    await this.loadUsageData();
+    const user = await this.auth.getCurrentUserPromise();
+    if (user) {
+      this.userId = user.uid;
+      await this.loadUserRole();
+      
+      // Check if user has access to usage reports
+      if (this.userRole !== 'production' && this.userRole !== 'admin') {
+        this.showMessage('You do not have access to Usage Reports', 'error');
+        this.router.navigate(['/dashboard']);
+        return;
+      }
+      
+      await this.loadUserTables();
+      await this.loadUsageData();
+    } else {
+      this.showMessage('Please login to view usage reports', 'error');
+      this.router.navigate(['/login']);
+    }
+  }
+
+  async loadUserRole() {
+    try {
+      const userDoc = await getDoc(doc(this.firestore, 'users', this.userId));
+      if (userDoc.exists()) {
+        const data = userDoc.data() as any;
+        this.userRole = data['role'] || 'user';
+      }
+    } catch (error) {
+      console.error('Error loading user role:', error);
+    }
   }
 
   async loadUserTables(): Promise<void> {
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
-        this.showMessage('Please login to view usage reports', 'error');
-        return;
+      const allTables = await this.db.getUserTables(this.userId);
+      
+      // For production role, filter to show only production-relevant tables
+      // This assumes tables might have production in name or you have a convention
+      if (this.userRole === 'production') {
+        this.userTables = allTables.filter(table => 
+          table.name?.toLowerCase().includes('production') || 
+          table.name?.toLowerCase().includes('prod') ||
+          table.name?.toLowerCase().includes('line') ||
+          table.name?.toLowerCase().includes('batch')
+        );
+        
+        // If no production-specific tables found, show all tables
+        if (this.userTables.length === 0) {
+          this.userTables = allTables;
+        }
+      } else {
+        this.userTables = allTables;
       }
-
-      this.userTables = await this.db.getUserTables(userId);
+      
       console.log('Loaded user tables:', this.userTables);
     } catch (error) {
       console.error('Error loading user tables:', error);
@@ -99,8 +149,7 @@ export class Page4Component implements OnInit {
   async loadUsageData(): Promise<void> {
     this.isLoading = true;
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
+      if (!this.userId) {
         this.showMessage('Please login to view usage reports', 'error');
         this.isLoading = false;
         return;
@@ -110,7 +159,7 @@ export class Page4Component implements OnInit {
         await this.loadUserTables();
       }
 
-      console.log('Loading usage data for user:', userId, 'table:', this.selectedTableId);
+      console.log('Loading usage data for user:', this.userId, 'table:', this.selectedTableId);
       
       const materialMap = new Map<string, {
         material_name: string;
@@ -128,20 +177,20 @@ export class Page4Component implements OnInit {
         }
 
         // Verify table belongs to current user
-        if (table.user_id !== userId) {
-          console.warn(`Table ${table.id} does not belong to user ${userId}, skipping`);
+        if (table.user_id !== this.userId) {
+          console.warn(`Table ${table.id} does not belong to user ${this.userId}, skipping`);
           continue;
         }
 
         // Get requisitions for this table with user verification
-        const requisitions = await this.db.getTableRequisitions(table.id, userId);
+        const requisitions = await this.db.getTableRequisitions(table.id, this.userId);
         console.log(`Found ${requisitions.length} requisitions for table:`, table.name);
         
         for (const req of requisitions) {
           if (!req.sku_code) continue;
           
           // Verify requisition belongs to correct user
-          if (req.user_id !== userId) continue;
+          if (req.user_id !== this.userId) continue;
           
           // Get materials for this SKU
           const materials = await this.db.getMaterialsForSku(req.sku_code);
@@ -405,33 +454,31 @@ export class Page4Component implements OnInit {
     return 'other';
   }
 
-  async exportToExcel(): Promise<void> {
+  // Production-specific export
+  async exportProductionPlan(): Promise<void> {
     if (this.usageData.length === 0) {
       this.showMessage('No data to export', 'error');
       return;
     }
 
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
-        this.showMessage('You must be logged in to export', 'error');
-        return;
-      }
-
+      this.showMessage('Generating production plan...', 'info');
+      
+      // Create a production-focused report
       const workbook = XLSX.utils.book_new();
       
-      // Main data sheet
+      // Production Requirements Sheet
       const mainData: any[][] = [
-        ['Raw Material Usage Report'],
+        ['PRODUCTION MATERIAL REQUIREMENTS'],
         ['Generated', new Date().toLocaleString()],
-        ['User', this.auth.getUserEmail() || userId],
-        ['Table Filter', this.selectedTableId === 'all' ? 'All Tables' : 
-          this.userTables.find(t => t.id === this.selectedTableId)?.name || this.selectedTableId],
+        ['Plant/Line', this.selectedTableId === 'all' ? 'All Production Lines' : 
+          this.userTables.find(t => t.id === this.selectedTableId)?.name || 'Selected Line'],
+        ['Production Manager', this.userRole],
+        ['Date Range', 'Current Requirements'],
         ['Total Materials', this.totalMaterials.toString()],
-        ['Total Quantity', this.totalQuantity.toFixed(2)],
-        ['Total Tables', this.totalTables.toString()],
+        ['Total Required', this.totalQuantity.toFixed(2)],
         [],
-        ['Raw Material', 'Type', 'Unit', 'Total Required', 'Tables Used', 'SKUs Used In', 'Table Names']
+        ['Material', 'Type', 'Unit', 'Required Qty', 'Production Lines', 'SKUs']
       ];
 
       this.usageData.forEach(item => {
@@ -439,10 +486,110 @@ export class Page4Component implements OnInit {
           item.material_name,
           item.material_type,
           item.unit,
-          item.total_quantity,
-          item.table_count,
-          item.sku_count,
-          item.tables.join(', ')
+          item.total_quantity.toFixed(2),
+          item.tables.join(', '),
+          item.skus.join('; ')
+        ]);
+      });
+
+      const mainSheet = XLSX.utils.aoa_to_sheet(mainData);
+      
+      // Set column widths
+      mainSheet['!cols'] = [
+        { wch: 30 }, // Material
+        { wch: 20 }, // Type
+        { wch: 10 }, // Unit
+        { wch: 15 }, // Required Qty
+        { wch: 40 }, // Production Lines
+        { wch: 50 }  // SKUs
+      ];
+      
+      XLSX.utils.book_append_sheet(workbook, mainSheet, 'Production Requirements');
+
+      // Production Schedule Summary
+      const scheduleData: any[][] = [
+        ['PRODUCTION SCHEDULE SUMMARY'],
+        ['Generated', new Date().toLocaleString()],
+        [],
+        ['Line/Table', 'Materials Count', 'Total Quantity']
+      ];
+
+      // Group by table/line
+      const tableMap = new Map<string, { materials: Set<string>, totalQty: number }>();
+      this.usageData.forEach(item => {
+        item.tables.forEach(table => {
+          if (!tableMap.has(table)) {
+            tableMap.set(table, { materials: new Set(), totalQty: 0 });
+          }
+          const tableData = tableMap.get(table)!;
+          tableData.materials.add(item.material_name);
+          tableData.totalQty += item.total_quantity;
+        });
+      });
+
+      tableMap.forEach((data, table) => {
+        scheduleData.push([
+          table,
+          data.materials.size.toString(),
+          data.totalQty.toFixed(2)
+        ]);
+      });
+
+      const scheduleSheet = XLSX.utils.aoa_to_sheet(scheduleData);
+      scheduleSheet['!cols'] = [
+        { wch: 30 },
+        { wch: 15 },
+        { wch: 15 }
+      ];
+      
+      XLSX.utils.book_append_sheet(workbook, scheduleSheet, 'Production Schedule');
+
+      // Generate filename and save
+      const tableName = this.selectedTableId === 'all' ? 'AllLines' : 
+        (this.userTables.find(t => t.id === this.selectedTableId)?.name?.replace(/\s+/g, '_') || 'Production');
+      const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const fileName = `Production_Plan_${tableName}_${dateStr}.xlsx`;
+
+      XLSX.writeFile(workbook, fileName);
+      this.showMessage('Production plan exported successfully!', 'success');
+    } catch (error) {
+      console.error('Error exporting production plan:', error);
+      this.showMessage('Failed to export production plan', 'error');
+    }
+  }
+
+  async exportToExcel(): Promise<void> {
+    if (this.usageData.length === 0) {
+      this.showMessage('No data to export', 'error');
+      return;
+    }
+
+    try {
+      const workbook = XLSX.utils.book_new();
+      
+      // Main data sheet
+      const mainData: any[][] = [
+        ['Raw Material Usage Report'],
+        ['Generated', new Date().toLocaleString()],
+        ['User', this.auth.getUserEmail() || this.userId],
+        ['Role', this.userRole],
+        ['Table Filter', this.selectedTableId === 'all' ? 'All Tables' : 
+          this.userTables.find(t => t.id === this.selectedTableId)?.name || this.selectedTableId],
+        ['Total Materials', this.totalMaterials.toString()],
+        ['Total Quantity', this.totalQuantity.toFixed(2)],
+        ['Total Tables', this.totalTables.toString()],
+        [],
+        ['Raw Material', 'Type', 'Unit', 'Total Required', 'Tables Used', 'SKUs Used In']
+      ];
+
+      this.usageData.forEach(item => {
+        mainData.push([
+          item.material_name,
+          item.material_type,
+          item.unit,
+          item.total_quantity.toFixed(2),
+          item.table_count.toString(),
+          item.sku_count.toString()
         ]);
       });
 
@@ -454,8 +601,7 @@ export class Page4Component implements OnInit {
         { wch: 10 },
         { wch: 15 },
         { wch: 12 },
-        { wch: 12 },
-        { wch: 40 }
+        { wch: 12 }
       ];
       mainSheet['!cols'] = colWidths;
       
@@ -465,7 +611,7 @@ export class Page4Component implements OnInit {
       const breakdownData: any[][] = [
         ['Material Type Breakdown'],
         ['Generated', new Date().toLocaleString()],
-        ['User', this.auth.getUserEmail() || userId],
+        ['User', this.auth.getUserEmail() || this.userId],
         [],
         ['Type', 'Material Count', 'Total Quantity', 'Percentage']
       ];

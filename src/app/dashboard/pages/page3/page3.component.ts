@@ -1,4 +1,3 @@
-// src/app/features/page3/page3.component.ts
 import { Component, OnInit, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
@@ -77,6 +76,7 @@ export class Page3Component implements OnInit {
   showScheduleModal = false;
   showApproveModal = false;
   showRejectModal = false;
+  showAllPending = false; // For procurement view
   submitted = false;
   isLoading = false;
   isSubmitting = false;
@@ -126,6 +126,7 @@ export class Page3Component implements OnInit {
   showSnackbar = false;
   snackbarMessage = '';
   snackbarType: 'success' | 'error' | 'info' = 'info';
+  snackbarTimeout: any;
 
   // Import
   importStatus: 'idle' | 'loading' | 'success' | 'error' = 'idle';
@@ -146,16 +147,21 @@ export class Page3Component implements OnInit {
   ) {}
 
   async ngOnInit() {
-    // Get the current user ID and role from auth service
     const user = await this.auth.getCurrentUserPromise();
     if (user) {
       this.userId = user.uid;
-      console.log('User ID:', this.userId);
       await this.loadUserRole();
+      
+      // Check if user has procurement access
+      if (this.userRole !== 'procurement' && this.userRole !== 'admin' && this.userRole !== 'user') {
+        this.showToast('You do not have access to Requisitions', 'error');
+        this.router.navigate(['/dashboard']);
+        return;
+      }
+      
       await this.loadCategories();
       await this.loadUserTables();
     } else {
-      console.log('No user found, redirecting to login');
       this.showToast('Please log in to continue', 'error');
       this.router.navigate(['/login']);
     }
@@ -237,7 +243,56 @@ export class Page3Component implements OnInit {
     await this.loadRequisitions();
   }
 
-  // DIRECT FIREBASE QUERY TO DEBUG
+  // Procurement view toggle
+  async toggleViewAllPending() {
+    this.showAllPending = !this.showAllPending;
+    
+    if (this.showAllPending) {
+      await this.loadAllPendingRequisitions();
+      this.showToast('Showing all pending requisitions', 'info');
+    } else {
+      await this.onTableChange();
+      this.showToast(`Showing ${this.selectedTable?.name} requisitions`, 'info');
+    }
+  }
+
+  // Load all pending requisitions for procurement
+  async loadAllPendingRequisitions() {
+    if (this.userRole !== 'procurement' && this.userRole !== 'admin') {
+      return; // Only procurement and admin can see all
+    }
+
+    this.isLoading = true;
+    try {
+      // Get all tables first
+      const allTables = await this.db.getUserTables(this.userId);
+      
+      let allRequisitions: Requisition[] = [];
+      
+      for (const table of allTables) {
+        // Get pending and submitted requisitions
+        const pendingReqs = await this.db.getRequisitionsByStatus(table.id, this.userId, 'Pending');
+        const submittedReqs = await this.db.getRequisitionsByStatus(table.id, this.userId, 'Submitted');
+        allRequisitions = [...allRequisitions, ...pendingReqs, ...submittedReqs];
+      }
+      
+      // Sort by date (newest first)
+      allRequisitions.sort((a, b) => {
+        return new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime();
+      });
+      
+      this.requisitions = allRequisitions;
+      console.log('All pending requisitions:', this.requisitions);
+      
+      this.applyFilter();
+    } catch (err) {
+      console.error('Failed to load all pending requisitions:', err);
+      this.showToast('Failed to load pending requisitions', 'error');
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
   async loadRequisitions() {
     if (!this.selectedTableId || !this.userId) {
       console.log('Missing tableId or userId for loading requisitions');
@@ -246,9 +301,7 @@ export class Page3Component implements OnInit {
 
     this.isLoading = true;
     try {
-      console.log('=== LOADING REQUISITIONS ===');
-      console.log('Table ID:', this.selectedTableId);
-      console.log('User ID:', this.userId);
+      console.log('Loading requisitions for table:', this.selectedTableId);
       
       // DIRECT QUERY to Firebase to see what's happening
       const requisitionsRef = collection(this.firestore, 'requisitions');
@@ -260,12 +313,6 @@ export class Page3Component implements OnInit {
       
       const querySnapshot = await getDocs(q);
       console.log('Query snapshot size:', querySnapshot.size);
-      
-      // Log each document
-      querySnapshot.forEach(doc => {
-        console.log('Document ID:', doc.id);
-        console.log('Document data:', doc.data());
-      });
       
       // Map the data
       const data = querySnapshot.docs.map(doc => {
@@ -279,8 +326,6 @@ export class Page3Component implements OnInit {
       console.log('Mapped requisitions:', data);
       
       this.requisitions = data;
-      console.log('Final requisitions array:', this.requisitions);
-      
       this.applyFilter();
     } catch (err) {
       console.error('Failed to load requisitions:', err);
@@ -877,6 +922,7 @@ export class Page3Component implements OnInit {
     this.selectedTableId = table.id;
     this.selectedTable = table;
     this.showTableDropdown = false;
+    this.showAllPending = false; // Reset all pending view
     
     // Reset filters
     this.searchQuery = '';
@@ -969,11 +1015,22 @@ export class Page3Component implements OnInit {
     this.snackbarMessage = message;
     this.snackbarType = type;
     this.showSnackbar = true;
-    setTimeout(() => this.hideSnackbar(), 3000);
+    
+    if (this.snackbarTimeout) {
+      clearTimeout(this.snackbarTimeout);
+    }
+    
+    this.snackbarTimeout = setTimeout(() => {
+      this.hideSnackbar();
+    }, 3000);
   }
 
   hideSnackbar() {
     this.showSnackbar = false;
+    if (this.snackbarTimeout) {
+      clearTimeout(this.snackbarTimeout);
+      this.snackbarTimeout = null;
+    }
   }
 
   applyFilter() {

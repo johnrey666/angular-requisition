@@ -1,5 +1,20 @@
-<!-- src/app/features/page3/page3.component.html -->
 <div class="page-content">
+  <!-- Role Badge -->
+  <div class="role-header" *ngIf="userRole">
+    <span class="role-badge" [class]="'role-' + userRole">
+      {{ userRole | titlecase }} Access
+    </span>
+    <span class="role-description" *ngIf="userRole === 'procurement'">
+      Procurement Dashboard - Manage and schedule requisitions
+    </span>
+    <span class="role-description" *ngIf="userRole === 'user'">
+      Requisition Management - Create and track your requests
+    </span>
+    <span class="role-description" *ngIf="userRole === 'admin'">
+      Administrator - Full control over requisitions
+    </span>
+  </div>
+
   <!-- Snackbar -->
   <div class="snackbar" [class.show]="showSnackbar" [class]="snackbarType">
     <span>{{ snackbarMessage }}</span>
@@ -26,7 +41,7 @@
         
         <div class="dropdown-menu" *ngIf="showTableDropdown">
           <div class="dropdown-header">
-            <span>Your Tables</span>
+            <span>Your Requisition Tables</span>
             <button class="btn-icon" (click)="openTableModal()" title="New Table">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M12 5v14M5 12h14"/>
@@ -58,6 +73,19 @@
         </div>
       </div>
       
+      <!-- View toggle for procurement -->
+      <button 
+        *ngIf="userRole === 'procurement' || userRole === 'admin'"
+        class="btn btn-outline" 
+        (click)="toggleViewAllPending()"
+        [class.active]="showAllPending">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+        {{ showAllPending ? 'My Table' : 'All Pending' }}
+      </button>
+      
       <button class="btn btn-primary" (click)="openModal()" *ngIf="canCreateRequisition()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M12 5v14M5 12h14"/>
@@ -68,7 +96,7 @@
   </div>
 
   <!-- No Table Selected State -->
-  <div class="empty-card" *ngIf="!selectedTable">
+  <div class="empty-card" *ngIf="!selectedTable && !showAllPending">
     <div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -86,8 +114,8 @@
     </div>
   </div>
 
-  <!-- Rest of your existing content - only shown when table is selected -->
-  <ng-container *ngIf="selectedTable">
+  <!-- Rest of your existing content - only shown when table is selected or all pending view -->
+  <ng-container *ngIf="selectedTable || showAllPending">
     <!-- Import Section -->
     <div class="import-card">
       <div class="import-header">
@@ -115,8 +143,8 @@
       </div>
     </div>
 
-    <!-- Current Table Info -->
-    <div class="table-info-card">
+    <!-- Current Table Info - Only show when a specific table is selected -->
+    <div class="table-info-card" *ngIf="selectedTable && !showAllPending">
       <div class="table-info-content">
         <div>
           <h4>{{ selectedTable.name }}</h4>
@@ -152,6 +180,30 @@
             </svg>
             Delete
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- All Pending View Header -->
+    <div class="table-info-card" *ngIf="showAllPending">
+      <div class="table-info-content">
+        <div>
+          <h4>All Pending Requisitions</h4>
+          <div class="stats">
+            <span class="stat">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+              </svg>
+              {{ filteredRequisitions.length }} pending requisitions
+            </span>
+            <span class="stat">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <circle cx="12" cy="8" r="4"/>
+                <path d="M5.3 18.3a7 7 0 0 1 13.4 0"/>
+              </svg>
+              Procurement View
+            </span>
+          </div>
         </div>
       </div>
     </div>

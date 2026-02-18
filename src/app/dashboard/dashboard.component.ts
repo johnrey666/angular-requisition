@@ -1,3 +1,4 @@
+// src/app/dashboard/dashboard.component.ts
 import { Component, signal, OnInit, ViewChild, ElementRef, HostListener } from '@angular/core';
 import { RouterLink, RouterLinkActive, RouterOutlet, Router } from '@angular/router';
 import { CommonModule } from '@angular/common';
@@ -23,8 +24,10 @@ export class DashboardComponent implements OnInit {
 
   navItems = [
     { label: 'Dashboard', route: '/dashboard', icon: 'dashboard' },
-    { label: 'Daily Production', route: '/dashboard/daily-production', icon: 'factory' },
-    { label: 'Material Requisition', route: '/dashboard/material-requisition', icon: 'document' },
+    { label: 'Store', route: '/dashboard/store', icon: 'store' },
+    { label: 'Production', route: '/dashboard/production', icon: 'factory' },
+    { label: 'Procurement', route: '/dashboard/procurement', icon: 'document' },
+    { label: 'Users', route: '/dashboard/users', icon: 'users' },
     { label: 'Usage Report', route: '/dashboard/usage-report', icon: 'line-chart' },
   ] as const;
 
@@ -57,7 +60,7 @@ export class DashboardComponent implements OnInit {
   ) {
     this.user$ = this.authService.user$;
     
-    // Initialize form
+    // Initialize form with updated roles
     this.createUserForm = this.fb.nonNullable.group({
       email: ['', [Validators.required, Validators.email]],
       password: ['', [Validators.required, Validators.minLength(6)]],
@@ -97,14 +100,16 @@ export class DashboardComponent implements OnInit {
         return;
       }
 
-      const userDoc = await getDoc(doc(this.firestore, 'users', userId));
+      const userDocRef = doc(this.firestore, 'users', userId);
+      const userDoc = await getDoc(userDocRef);
+      
       if (userDoc.exists()) {
         const data = userDoc.data() as any;
         this.userRole = data['role'] || 'user';
         this.isAdmin = this.userRole === 'admin';
         console.log('User role loaded:', this.userRole, 'isAdmin:', this.isAdmin);
       } else {
-        // Create user document if it doesn't exist using setDoc directly
+        // Create user document if it doesn't exist
         const currentUser = await firstValueFrom(this.user$);
         if (currentUser) {
           const userRef = doc(this.firestore, 'users', currentUser.uid);
@@ -198,13 +203,22 @@ export class DashboardComponent implements OnInit {
     const { email, password, role } = this.createUserForm.getRawValue();
 
     try {
-      // Check admin status again
+      // Check admin status again - only admin can create users
       if (!this.isAdmin) {
         throw new Error('You do not have permission to create users');
       }
 
-      // Use the existing createUserAccount method from UserService
+      // Get current admin user
+      const currentUser = this.authService.getCurrentUser();
+      if (!currentUser) {
+        throw new Error('You must be logged in as admin');
+      }
+
+      console.log('Creating new user with email:', email, 'role:', role);
+      
+      // Use the updated createUserAccount method
       await this.userService.createUserAccount(email, password, role);
+      
       this.createSuccess = 'User created successfully!';
       this.createUserForm.reset({ email: '', password: '', role: 'user' });
       
@@ -220,10 +234,10 @@ export class DashboardComponent implements OnInit {
         this.createError = 'Email/password accounts are not enabled. Please enable them in Firebase Console.';
       } else if (err.code === 'auth/weak-password') {
         this.createError = 'Password is too weak. Please use at least 6 characters.';
-      } else if (err.message?.includes('Only administrators')) {
+      } else if (err.message?.includes('Admin credentials not available')) {
+        this.createError = 'Admin session expired. Please log out and log in again.';
+      } else if (err.message?.includes('permission-denied') || err.message?.includes('Permission denied')) {
         this.createError = 'You do not have permission to create users.';
-      } else if (err.message?.includes('must be done through Firebase Console')) {
-        this.createError = 'Due to security restrictions, please create users directly in Firebase Console.';
       } else {
         this.createError = err?.message || 'Failed to create user. Please try again.';
       }
@@ -234,6 +248,9 @@ export class DashboardComponent implements OnInit {
 
   async logout() {
     try {
+      // Clear stored admin password
+      this.userService.clearAdminPassword();
+      
       await this.authService.signOut();
       this.router.navigate(['/login']);
       this.showLogoutConfirm = false;
@@ -241,5 +258,10 @@ export class DashboardComponent implements OnInit {
     } catch (err) {
       console.error('Logout failed', err);
     }
+  }
+
+  // Helper method to check if current route is active
+  isRouteActive(route: string): boolean {
+    return this.router.url === route;
   }
 }

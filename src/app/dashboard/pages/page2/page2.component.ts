@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import * as ExcelJS from 'exceljs';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { Firestore, doc, getDoc } from '@angular/fire/firestore';
+import { Router } from '@angular/router';
 
 interface Material {
   raw_material: string;
@@ -83,21 +85,48 @@ export class Page2Component implements OnInit {
   snackbarType: 'success' | 'error' | 'info' = 'info';
   snackbarTimeout: any;
 
+  // User Role
+  userRole: string = '';
+  userId: string = '';
+
   // Expose Math to template
   Math = Math;
 
   constructor(
     private db: DatabaseService,
-    private auth: AuthService
+    private auth: AuthService,
+    private firestore: Firestore,
+    private router: Router
   ) {}
 
   async ngOnInit() {
     const user = await this.auth.getCurrentUserPromise();
     if (user) {
+      this.userId = user.uid;
+      await this.loadUserRole();
       await this.loadCategories();
       await this.loadUserTables();
     } else {
       this.showToast('Please log in to continue', 'error');
+      this.router.navigate(['/login']);
+    }
+  }
+
+  async loadUserRole() {
+    try {
+      const userDoc = await getDoc(doc(this.firestore, 'users', this.userId));
+      if (userDoc.exists()) {
+        const data = userDoc.data() as any;
+        this.userRole = data['role'] || 'user';
+        
+        // Redirect if not authorized for store
+        if (this.userRole !== 'store' && this.userRole !== 'admin') {
+          this.showToast('You do not have access to Store Management', 'error');
+          this.router.navigate(['/dashboard']);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load user role', err);
     }
   }
 
@@ -113,17 +142,16 @@ export class Page2Component implements OnInit {
 
   async loadUserTables() {
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
+      if (!this.userId) {
         this.showToast('You must be logged in', 'error');
         return;
       }
       
       // Only load inventory type tables
-      this.userTables = await this.db.getUserTablesByType(userId, 'inventory');
+      this.userTables = await this.db.getUserTablesByType(this.userId, 'inventory');
       
       // Load last selected table from localStorage or use first table
-      const lastTableId = localStorage.getItem(`lastSelectedInventoryTable_${userId}`);
+      const lastTableId = localStorage.getItem(`lastSelectedInventoryTable_${this.userId}`);
       if (lastTableId && this.userTables.some(t => t.id === lastTableId)) {
         this.currentTable = this.userTables.find(t => t.id === lastTableId) || null;
       } else if (this.userTables.length > 0) {
@@ -154,13 +182,12 @@ export class Page2Component implements OnInit {
     }
 
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
+      if (!this.userId) {
         this.showToast('You must be logged in', 'error');
         return;
       }
 
-      const items = await this.db.getInventoryItemsByTable(this.currentTable.id, userId);
+      const items = await this.db.getInventoryItemsByTable(this.currentTable.id, this.userId);
       this.inventoryItems = items.map((item: any) => ({
         ...item,
         materialCount: 0,
@@ -246,8 +273,7 @@ export class Page2Component implements OnInit {
 
     this.addingItem = true;
     
-    const userId = this.auth.getUserId();
-    if (!userId) {
+    if (!this.userId) {
       this.showToast('You must be logged in', 'error');
       this.addingItem = false;
       return;
@@ -266,7 +292,7 @@ export class Page2Component implements OnInit {
       supplier: this.newItem.supplier.trim(),
       qty: this.newItem.qty!,
       table_id: this.currentTable.id,
-      user_id: userId
+      user_id: this.userId
     };
 
     try {
@@ -303,15 +329,14 @@ export class Page2Component implements OnInit {
     if (!this.currentTable) return;
     
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
+      if (!this.userId) {
         this.showToast('You must be logged in', 'error');
         return;
       }
       
       const requisitionData = {
         table_id: this.currentTable.id,
-        user_id: userId,
+        user_id: this.userId,
         sku_code: itemData.sku_code,
         sku_name: itemData.sku_name,
         category: itemData.category,
@@ -323,7 +348,7 @@ export class Page2Component implements OnInit {
       await this.db.createRequisition(requisitionData, []);
       
       const newCount = (this.currentTable.item_count || 0) + 1;
-      await this.db.updateTableItemCount(this.currentTable.id, newCount, userId);
+      await this.db.updateTableItemCount(this.currentTable.id, newCount, this.userId);
       this.currentTable.item_count = newCount;
       
       await this.loadUserTables();
@@ -412,14 +437,17 @@ export class Page2Component implements OnInit {
       return;
     }
 
+    // Verify ownership
+    if (table.user_id !== this.userId) {
+      this.showToast('You can only access your own tables', 'error');
+      return;
+    }
+
     this.currentTable = table;
     this.showTableDropdown = false;
     
     // Save selection with user-specific key
-    const userId = this.auth.getUserId();
-    if (userId) {
-      localStorage.setItem(`lastSelectedInventoryTable_${userId}`, table.id);
-    }
+    localStorage.setItem(`lastSelectedInventoryTable_${this.userId}`, table.id);
     
     this.searchQuery = '';
     this.filterCategory = '';
@@ -433,14 +461,13 @@ export class Page2Component implements OnInit {
     if (!tableName?.trim()) return;
 
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
+      if (!this.userId) {
         this.showToast('You must be logged in to create tables', 'error');
         return;
       }
 
       const tableData = {
-        user_id: userId,
+        user_id: this.userId,
         name: tableName.trim(),
         item_count: 0
       };
@@ -466,17 +493,22 @@ export class Page2Component implements OnInit {
       return;
     }
 
+    // Verify ownership
+    if (table.user_id !== this.userId) {
+      this.showToast('You can only rename your own tables', 'error');
+      return;
+    }
+
     const newName = prompt('Enter new table name:', table.name);
     if (!newName?.trim() || newName === table.name) return;
 
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
+      if (!this.userId) {
         this.showToast('You must be logged in', 'error');
         return;
       }
 
-      const success = await this.db.updateTableName(table.id, newName.trim(), userId);
+      const success = await this.db.updateTableName(table.id, newName.trim(), this.userId);
       if (success) {
         table.name = newName.trim();
         await this.loadUserTables();
@@ -497,18 +529,23 @@ export class Page2Component implements OnInit {
       return;
     }
 
+    // Verify ownership
+    if (table.user_id !== this.userId) {
+      this.showToast('You can only delete your own tables', 'error');
+      return;
+    }
+
     if (!confirm(`Are you sure you want to delete table "${table.name}"? This will also delete all items in this table. This action cannot be undone.`)) {
       return;
     }
 
     try {
-      const userId = this.auth.getUserId();
-      if (!userId) {
+      if (!this.userId) {
         this.showToast('You must be logged in', 'error');
         return;
       }
 
-      const success = await this.db.deleteTable(table.id, userId);
+      const success = await this.db.deleteTable(table.id, this.userId);
       if (success) {
         this.userTables = this.userTables.filter(t => t.id !== table.id);
         
@@ -533,7 +570,6 @@ export class Page2Component implements OnInit {
     }
   }
 
-  // Updated Export Method
   async exportData() {
     if (!this.currentTable) {
       this.showToast('No table selected', 'info');
@@ -552,13 +588,13 @@ export class Page2Component implements OnInit {
       
       // Create a new workbook
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'Inventory Management System';
-      workbook.lastModifiedBy = 'Inventory Management System';
+      workbook.creator = 'Store Management System';
+      workbook.lastModifiedBy = 'Store Management System';
       workbook.created = new Date();
       workbook.modified = new Date();
       
       // Create worksheet
-      const worksheet = workbook.addWorksheet('Inventory with Materials', {
+      const worksheet = workbook.addWorksheet('Store Inventory', {
         properties: {
           defaultColWidth: 15,
           showGridLines: true
@@ -568,7 +604,7 @@ export class Page2Component implements OnInit {
       // Title
       worksheet.mergeCells('A1:J1');
       const titleRow = worksheet.getRow(1);
-      titleRow.getCell(1).value = `INVENTORY WITH RAW MATERIALS - ${this.currentTable.name}`;
+      titleRow.getCell(1).value = `STORE INVENTORY - ${this.currentTable.name}`;
       titleRow.getCell(1).font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
       titleRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF2C3E50' } };
       titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
@@ -577,7 +613,7 @@ export class Page2Component implements OnInit {
       // Generation info
       worksheet.mergeCells('A2:J2');
       const infoRow = worksheet.getRow(2);
-      infoRow.getCell(1).value = `Generated on: ${new Date().toLocaleString()} | Total Items: ${this.filteredItems.length}`;
+      infoRow.getCell(1).value = `Store Manager: ${this.userRole} | Generated on: ${new Date().toLocaleString()} | Total Items: ${this.filteredItems.length}`;
       infoRow.getCell(1).font = { name: 'Arial', size: 11, italic: true };
       infoRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
       infoRow.height = 25;
@@ -587,13 +623,13 @@ export class Page2Component implements OnInit {
         'SKU Code',
         'Item Name',
         'Category',
-        'Qty',
+        'Stock Qty',
         'Supplier',
         'Materials',
         'Qty/Batch',
         'Unit',
         'Type',
-        'Total'
+        'Total Required'
       ];
       
       const headerRow = worksheet.addRow(headers);
@@ -856,20 +892,19 @@ export class Page2Component implements OnInit {
 
     if (confirm('Are you sure you want to delete this item?')) {
       try {
-        const userId = this.auth.getUserId();
-        if (!userId) {
+        if (!this.userId) {
           this.showToast('You must be logged in', 'error');
           return;
         }
 
-        const success = await this.db.deleteInventoryItem(item.id, userId, this.currentTable.id);
+        const success = await this.db.deleteInventoryItem(item.id, this.userId, this.currentTable.id);
         
         if (success) {
           this.inventoryItems = this.inventoryItems.filter(i => i.id !== item.id);
           this.applyFilter();
           
           const newCount = Math.max(0, (this.currentTable.item_count || 0) - 1);
-          await this.db.updateTableItemCount(this.currentTable.id, newCount, userId);
+          await this.db.updateTableItemCount(this.currentTable.id, newCount, this.userId);
           this.currentTable.item_count = newCount;
           
           await this.loadUserTables();

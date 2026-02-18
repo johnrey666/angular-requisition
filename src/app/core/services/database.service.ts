@@ -1,4 +1,4 @@
-// src/core/services/database.service.ts
+// src/app/core/services/database.service.ts
 import { Injectable } from '@angular/core';
 import { Firestore, collection, addDoc, getDocs, query, where, doc, getDoc, updateDoc, deleteDoc, writeBatch, orderBy } from '@angular/fire/firestore';
 import { AuthService } from './auth.service';
@@ -60,10 +60,11 @@ export class DatabaseService {
   // ────────────────────────────────────────────────
 
   async getCurrentUser(): Promise<User | null> {
-    const authUser = await firstValueFrom(this.auth.getCurrentUser());
-    if (!authUser) return null;
-
     try {
+      // Use getCurrentUserPromise instead of getCurrentUserObservable
+      const authUser = await this.auth.getCurrentUserPromise();
+      if (!authUser) return null;
+
       const userDoc = await getDoc(doc(this.firestore, 'users', authUser.uid));
       if (userDoc.exists()) {
         const data = userDoc.data() as any;
@@ -75,10 +76,15 @@ export class DatabaseService {
           role: data.role || undefined
         };
       }
-      return { id: authUser.uid, email: authUser.email || undefined } as User;
+      
+      // Return basic user if no document exists
+      return { 
+        id: authUser.uid, 
+        email: authUser.email || undefined 
+      } as User;
     } catch (err) {
       console.error('getCurrentUser failed', err);
-      return { id: authUser?.uid, email: authUser?.email } as User;
+      return null;
     }
   }
 

@@ -1,4 +1,12 @@
 <div class="page-content">
+  <!-- Role Badge -->
+  <div class="role-header" *ngIf="userRole">
+    <span class="role-badge" [class]="'role-' + userRole">
+      {{ userRole | titlecase }} Access
+    </span>
+    <span class="role-description">Store Inventory Management</span>
+  </div>
+
   <!-- Snackbar -->
   <div class="snackbar" [class.show]="showSnackbar" [class]="snackbarType">
     <span class="snackbar-message">{{ snackbarMessage }}</span>
@@ -8,8 +16,8 @@
   <!-- Header -->
   <div class="page-header">
     <div class="header-title">
-      <h1>Inventory Management</h1>
-      <span class="subtitle">Track inventory items and material requirements</span>
+      <h1>Store Inventory Management</h1>
+      <span class="subtitle">Track inventory items and stock levels</span>
     </div>
     <div class="header-actions">
       <!-- Tables Dropdown - Shows current table name when selected -->
@@ -21,12 +29,12 @@
             <line x1="9" y1="21" x2="9" y2="9"/>
           </svg>
           <!-- Show current table name if selected, otherwise show "Manage Tables" -->
-          {{ currentTable ? currentTable.name : 'Manage Tables' }}
+          {{ currentTable ? currentTable.name : 'Manage Store Tables' }}
         </button>
         
         <div class="dropdown-menu" *ngIf="showTableDropdown">
           <div class="dropdown-header">
-            <span>Your Tables</span>
+            <span>Your Store Tables</span>
             <button class="btn-icon" (click)="createNewTable()" title="New Table">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <path d="M12 5v14M5 12h14"/>
@@ -44,7 +52,7 @@
             </div>
             
             <div *ngIf="userTables.length === 0" class="dropdown-empty">
-              <p>No tables yet</p>
+              <p>No store tables yet</p>
               <button class="btn-link" (click)="createNewTable()">Create one</button>
             </div>
           </div>
@@ -53,7 +61,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path d="M12 5v14M5 12h14"/>
             </svg>
-            Create New Table
+            Create New Store Table
           </div>
         </div>
       </div>
@@ -65,7 +73,7 @@
           <polyline points="8 12 12 16 16 12"/>
           <line x1="12" y1="2" x2="12" y2="16"/>
         </svg>
-        Export
+        Export Stock Report
       </button>
     </div>
   </div>
@@ -78,7 +86,7 @@
         <line x1="3" y1="9" x2="21" y2="9"/>
         <line x1="9" y1="21" x2="9" y2="9"/>
       </svg>
-      <span>Master Data</span>
+      <span>Master Data (Product Catalog)</span>
     </div>
     <div class="import-body">
       <input type="file" accept=".xlsx,.xls" (change)="onFileSelected($event)" [disabled]="uploadingMaster" hidden #fileInput>
@@ -88,13 +96,13 @@
           <polyline points="8 12 12 16 16 12"/>
           <line x1="12" y1="2" x2="12" y2="16"/>
         </svg>
-        {{ uploadingMaster ? 'Uploading...' : 'Upload Excel' }}
+        {{ uploadingMaster ? 'Uploading...' : 'Upload Product Catalog' }}
       </button>
       <span class="import-status" [class.success]="uploadStatus.includes('Success')" [class.error]="uploadStatus.includes('Error')">
         {{ uploadStatus || 'No file selected' }}
       </span>
       <span *ngIf="categories.length" class="import-badge">
-        {{ categories.length }} categories
+        {{ categories.length }} product categories
       </span>
     </div>
   </div>
@@ -107,13 +115,13 @@
         <line x1="3" y1="9" x2="21" y2="9"/>
         <line x1="9" y1="21" x2="9" y2="9"/>
       </svg>
-      <h3>No Table Selected</h3>
-      <p>You need to create or select a table before adding inventory items.</p>
+      <h3>No Store Table Selected</h3>
+      <p>You need to create or select a store table before managing inventory.</p>
       <button class="btn btn-primary" (click)="createNewTable()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M12 5v14M5 12h14"/>
         </svg>
-        Create Your First Table
+        Create Your First Store Table
       </button>
     </div>
   </div>
@@ -122,8 +130,8 @@
   <div class="card" *ngIf="currentTable">
     <div class="card-header">
       <div>
-        <h3>Add Item to "{{ currentTable.name }}"</h3>
-        <span class="field-hint">Add new inventory items to current table</span>
+        <h3>Add Stock to "{{ currentTable.name }}"</h3>
+        <span class="field-hint">Add new inventory items to current store table</span>
       </div>
     </div>
     <div class="card-body">
@@ -155,7 +163,7 @@
         </div>
 
         <div class="field">
-          <label>Quantity</label>
+          <label>Stock Quantity</label>
           <input [(ngModel)]="newItem.qty" placeholder="0" type="number" min="1" (input)="onQuantityChange()">
         </div>
 
@@ -168,7 +176,7 @@
             <svg *ngIf="!addingItem" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path d="M12 5v14M5 12h14"/>
             </svg>
-            <span>{{ addingItem ? 'Adding...' : 'Add Item' }}</span>
+            <span>{{ addingItem ? 'Adding...' : 'Add to Stock' }}</span>
           </button>
         </div>
       </div>
@@ -220,7 +228,7 @@
               <line x1="12" y1="19" x2="12" y2="5"/>
               <polyline points="5 12 12 5 19 12"/>
             </svg>
-            {{ totalQuantity | number:'1.0-0' }} total
+            {{ totalQuantity | number:'1.0-0' }} total units
           </span>
         </div>
       </div>
@@ -248,8 +256,8 @@
   <div class="card" *ngIf="currentTable">
     <div class="card-header">
       <div>
-        <h3>Inventory Items</h3>
-        <span class="field-hint">{{ currentTable.name }} • {{ filteredItems.length }} items</span>
+        <h3>Stock Inventory</h3>
+        <span class="field-hint">{{ currentTable.name }} • {{ filteredItems.length }} items • {{ totalQuantity | number }} total units</span>
       </div>
     </div>
 
@@ -261,7 +269,7 @@
             <th>SKU Code</th>
             <th>Item Name</th>
             <th>Category</th>
-            <th>Qty</th>
+            <th>Stock Qty</th>
             <th>Supplier</th>
             <th>Materials</th>
             <th></th>
@@ -311,6 +319,7 @@
                   <div *ngIf="!loadingMaterials[item.id] && item.materials?.length">
                     <div class="expanded-header">
                       <h4>Raw Materials for {{ item.sku_code }}</h4>
+                      <span class="material-note">Based on current stock: {{ item.qty | number }} units</span>
                     </div>
                     
                     <div class="materials-grid">
@@ -321,7 +330,7 @@
                             <th>Qty/Batch</th>
                             <th>Unit</th>
                             <th>Type</th>
-                            <th>Total</th>
+                            <th>Total Required</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -343,7 +352,7 @@
                       <line x1="3" y1="9" x2="21" y2="9"/>
                       <line x1="9" y1="21" x2="9" y2="9"/>
                     </svg>
-                    <p>No materials defined for this SKU</p>
+                    <p>No materials defined for this SKU in master data</p>
                   </div>
                 </div>
               </td>
@@ -359,7 +368,7 @@
                   <line x1="9" y1="21" x2="9" y2="9"/>
                 </svg>
                 <h4>No items found</h4>
-                <p>{{ searchQuery || filterCategory ? 'Try adjusting your filters' : 'Add your first item to this table' }}</p>
+                <p>{{ searchQuery || filterCategory ? 'Try adjusting your filters' : 'Add your first item to this store table' }}</p>
               </div>
             </td>
           </tr>
