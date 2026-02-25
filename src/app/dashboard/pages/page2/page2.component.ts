@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import * as ExcelJS from 'exceljs';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { Firestore, doc, getDoc } from '@angular/fire/firestore';
+import { Firestore, doc, getDoc, collection, query, where, getDocs } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 
 interface Material {
@@ -33,7 +33,7 @@ interface ProductionTable {
   id: string;
   name: string;
   user_id: string;
-  type: 'requisition' | 'inventory';
+  type: 'production' | 'inventory';
   item_count?: number;
   created_at?: string;
   updated_at?: string;
@@ -61,7 +61,7 @@ export class Page2Component implements OnInit {
   filteredItems: ProductionItem[] = [];
   paginatedItems: ProductionItem[] = [];
   
-  // Table Management - Only requisition type for production
+  // Table Management
   productionTables: ProductionTable[] = [];
   currentTable: ProductionTable | null = null;
   showTableDropdown = false;
@@ -108,8 +108,8 @@ export class Page2Component implements OnInit {
     if (user) {
       this.userId = user.uid;
       await this.loadUserRole();
-      await this.loadCategories();
-      await this.loadProductionTables();
+      await this.loadCategories(); // Load categories first
+      await this.loadProductionTablesDirectly();
     } else {
       this.showToast('Please log in to continue', 'error');
       this.router.navigate(['/login']);
@@ -124,13 +124,12 @@ export class Page2Component implements OnInit {
         this.userRole = data['role'] || 'user';
         console.log('User role loaded:', this.userRole);
         
-        // Check if user has access to production page
         if (!this.allowedRoles.includes(this.userRole)) {
           this.showToast('You do not have access to Production Management', 'error');
           this.router.navigate(['/dashboard']);
         }
       } else {
-        this.userRole = 'user'; // Default to user
+        this.userRole = 'user';
         console.log('No role document found, defaulting to user');
       }
     } catch (err) {
@@ -139,10 +138,131 @@ export class Page2Component implements OnInit {
     }
   }
 
+  // Direct Firestore query to load production tables
+  async loadProductionTablesDirectly() {
+    try {
+      if (!this.userId) {
+        this.showToast('You must be logged in', 'error');
+        return;
+      }
+      
+      console.log('Loading production tables directly for user:', this.userId);
+      
+      const tablesRef = collection(this.firestore, 'tables');
+      const q = query(
+        tablesRef, 
+        where('user_id', '==', this.userId),
+        where('type', '==', 'production')
+      );
+      
+      const querySnapshot = await getDocs(q);
+      console.log('Found', querySnapshot.size, 'production tables');
+      
+      const loadedTables: ProductionTable[] = [];
+      querySnapshot.forEach(doc => {
+        const data = doc.data();
+        console.log('Production table document:', { id: doc.id, ...data });
+        
+        loadedTables.push({
+          id: doc.id,
+          name: data['name'] || 'Untitled',
+          user_id: data['user_id'] || this.userId,
+          type: data['type'] || 'production',
+          item_count: data['item_count'] || 0,
+          created_at: data['created_at'],
+          updated_at: data['updated_at']
+        });
+      });
+      
+      console.log('Loaded production tables:', loadedTables);
+      this.productionTables = loadedTables;
+      
+      const lastTableId = localStorage.getItem(`lastSelectedProductionTable_${this.userId}`);
+      if (lastTableId && this.productionTables.some(t => t.id === lastTableId)) {
+        this.currentTable = this.productionTables.find(t => t.id === lastTableId) || null;
+        console.log('Restored last selected production table:', this.currentTable);
+      } else if (this.productionTables.length > 0) {
+        this.currentTable = this.productionTables[0];
+        console.log('Defaulting to first production table:', this.currentTable);
+      }
+      
+      if (this.currentTable) {
+        await this.loadProductionItemsDirectly();
+      } else {
+        this.productionItems = [];
+        this.filteredItems = [];
+        this.updatePagination();
+      }
+    } catch (err) {
+      console.error('Failed to load production tables directly:', err);
+      this.productionTables = [];
+      this.currentTable = null;
+      this.showToast('Failed to load production tables', 'error');
+    }
+  }
+
+  // Direct Firestore query to load production items
+  async loadProductionItemsDirectly() {
+    if (!this.currentTable || !this.userId) {
+      console.log('Missing table or userId for loading production items');
+      return;
+    }
+
+    try {
+      console.log('Loading production items for table:', this.currentTable.id);
+      
+      const requisitionsRef = collection(this.firestore, 'requisitions');
+      const q = query(
+        requisitionsRef,
+        where('table_id', '==', this.currentTable.id),
+        where('user_id', '==', this.userId)
+      );
+      
+      const querySnapshot = await getDocs(q);
+      console.log('Found', querySnapshot.size, 'production items');
+      
+      const loadedItems: ProductionItem[] = [];
+      querySnapshot.forEach(doc => {
+        const data = doc.data();
+        loadedItems.push({
+          id: doc.id,
+          sku_code: data['sku_code'] || '',
+          sku_name: data['sku_name'] || '',
+          category: data['category'] || '',
+          supplier: data['supplier'] || '',
+          qty_needed: data['qty_needed'] || data['quantity'] || 0,
+          table_id: data['table_id'] || this.currentTable!.id,
+          user_id: data['user_id'] || this.userId,
+          created_at: data['created_at'],
+          materialCount: 0,
+          totalRequired: 0
+        });
+      });
+      
+      console.log('Loaded production items:', loadedItems);
+      this.productionItems = loadedItems;
+      this.applyFilter();
+      
+    } catch (err) {
+      console.error('Failed to load production items:', err);
+      this.productionItems = [];
+      this.filteredItems = [];
+      this.updatePagination();
+      this.showToast('Failed to load production items', 'error');
+    }
+  }
+
   async loadCategories() {
     try {
+      console.log('Loading categories from master data...');
       this.categories = await this.db.getUniqueCategories();
       console.log('Loaded categories:', this.categories);
+      
+      // If no categories found, show message
+      if (this.categories.length === 0) {
+        console.log('No categories found in master data');
+        this.uploadStatus = 'No categories found. Please upload master data first.';
+      }
     } catch (err) {
       console.error('Failed to load categories', err);
       this.categories = [];
@@ -157,11 +277,9 @@ export class Page2Component implements OnInit {
         return;
       }
       
-      // Load requisition type tables for production
-      this.productionTables = await this.db.getUserTablesByType(this.userId, 'requisition');
+      this.productionTables = await this.db.getUserTablesByType(this.userId, 'production');
       console.log('Loaded production tables:', this.productionTables);
       
-      // Load last selected table from localStorage or use first table
       const lastTableId = localStorage.getItem(`lastSelectedProductionTable_${this.userId}`);
       if (lastTableId && this.productionTables.some(t => t.id === lastTableId)) {
         this.currentTable = this.productionTables.find(t => t.id === lastTableId) || null;
@@ -198,7 +316,6 @@ export class Page2Component implements OnInit {
         return;
       }
 
-      // Get requisitions for this table
       const requisitions = await this.db.getTableRequisitions(this.currentTable.id, this.userId);
       console.log('Loaded requisitions:', requisitions);
       
@@ -208,7 +325,7 @@ export class Page2Component implements OnInit {
         sku_name: req.sku_name,
         category: req.category,
         supplier: req.supplier,
-        qty_needed: req.qty_needed,
+        qty_needed: req.qty_needed || req.quantity || 0,
         table_id: req.table_id,
         user_id: req.user_id,
         created_at: req.created_at,
@@ -236,8 +353,13 @@ export class Page2Component implements OnInit {
     }
 
     try {
+      console.log('Loading SKUs for category:', this.newItem.category);
       this.availableSkus = await this.db.getSkusByCategory(this.newItem.category);
       console.log('Available SKUs for category:', this.availableSkus);
+      
+      if (this.availableSkus.length === 0) {
+        this.showToast('No SKUs found for this category', 'info');
+      }
     } catch (err) {
       console.error('Failed to load SKUs', err);
       this.availableSkus = [];
@@ -255,6 +377,13 @@ export class Page2Component implements OnInit {
     const file = input.files?.[0];
     if (!file) return;
 
+    // Check if user is admin
+    if (this.userRole !== 'admin') {
+      this.showToast('Only administrators can upload master data', 'error');
+      input.value = '';
+      return;
+    }
+
     this.uploadingMaster = true;
     this.uploadStatus = 'Uploading master data...';
 
@@ -262,7 +391,7 @@ export class Page2Component implements OnInit {
       const result = await this.db.uploadMasterData(file);
       if (result.success) {
         this.uploadStatus = `Successfully imported ${result.count || 0} rows`;
-        await this.loadCategories();
+        await this.loadCategories(); // Reload categories after upload
         this.showToast(`Successfully imported ${result.count || 0} rows`, 'success');
       } else {
         this.uploadStatus = `Upload failed: ${result.error || 'Unknown error'}`;
@@ -316,10 +445,8 @@ export class Page2Component implements OnInit {
     };
 
     try {
-      // Create requisition - note: createRequisition expects 2 arguments (data and materials array)
       const result = await this.db.createRequisition(entry, []);
       
-      // Check the response structure - assuming it returns { success: boolean, id: string }
       if (result.success && result.id) {
         const newItem: ProductionItem = { 
           id: result.id, 
@@ -330,19 +457,15 @@ export class Page2Component implements OnInit {
         
         this.productionItems.unshift(newItem);
         
-        // Update table item count
         const newCount = (this.currentTable.item_count || 0) + 1;
         await this.db.updateTableItemCount(this.currentTable.id, newCount, this.userId);
         this.currentTable.item_count = newCount;
         
-        // Refresh tables to get updated count
-        await this.loadProductionTables();
+        await this.loadProductionTablesDirectly();
         
-        // Reset form
         this.newItem = { category: '', sku_code: '', sku_name: '', supplier: '', qty_needed: null };
         this.availableSkus = [];
         
-        // Apply filter to update view
         this.applyFilter();
         
         this.showToast('Item added to production successfully', 'success');
@@ -430,13 +553,11 @@ export class Page2Component implements OnInit {
   }
 
   async selectTable(table: ProductionTable) {
-    // Verify table type
-    if (table.type !== 'requisition') {
+    if (table.type !== 'production') {
       this.showToast('Invalid table type', 'error');
       return;
     }
 
-    // Verify ownership
     if (table.user_id !== this.userId) {
       this.showToast('You can only access your own tables', 'error');
       return;
@@ -445,13 +566,12 @@ export class Page2Component implements OnInit {
     this.currentTable = table;
     this.showTableDropdown = false;
     
-    // Save selection with user-specific key
     localStorage.setItem(`lastSelectedProductionTable_${this.userId}`, table.id);
     
     this.searchQuery = '';
     this.filterCategory = '';
     
-    await this.loadProductionItems();
+    await this.loadProductionItemsDirectly();
     this.showToast(`Switched to production line: ${table.name}`, 'info');
   }
 
@@ -471,10 +591,9 @@ export class Page2Component implements OnInit {
         item_count: 0
       };
 
-      // Create table with type 'requisition' for production
-      const result = await this.db.createUserTable(tableData, 'requisition');
+      const result = await this.db.createUserTable(tableData, 'production');
       if (result.success && result.tableId) {
-        await this.loadProductionTables();
+        await this.loadProductionTablesDirectly();
         this.showToast(`Production line "${tableName}" created successfully`, 'success');
       } else {
         this.showToast('Failed to create production line', 'error');
@@ -486,13 +605,11 @@ export class Page2Component implements OnInit {
   }
 
   async renameTable(table: ProductionTable) {
-    // Verify table type
-    if (table.type !== 'requisition') {
+    if (table.type !== 'production') {
       this.showToast('Invalid table type', 'error');
       return;
     }
 
-    // Verify ownership
     if (table.user_id !== this.userId) {
       this.showToast('You can only rename your own tables', 'error');
       return;
@@ -510,7 +627,7 @@ export class Page2Component implements OnInit {
       const success = await this.db.updateTableName(table.id, newName.trim(), this.userId);
       if (success) {
         table.name = newName.trim();
-        await this.loadProductionTables();
+        await this.loadProductionTablesDirectly();
         this.showToast('Production line renamed successfully', 'success');
       } else {
         this.showToast('Failed to rename production line', 'error');
@@ -522,13 +639,11 @@ export class Page2Component implements OnInit {
   }
 
   async deleteTable(table: ProductionTable) {
-    // Verify table type
-    if (table.type !== 'requisition') {
+    if (table.type !== 'production') {
       this.showToast('Invalid table type', 'error');
       return;
     }
 
-    // Verify ownership
     if (table.user_id !== this.userId) {
       this.showToast('You can only delete your own tables', 'error');
       return;
@@ -584,7 +699,6 @@ export class Page2Component implements OnInit {
           return;
         }
 
-        // Delete requisition - now passing 3 arguments: requisitionId, userId, tableId
         const success = await this.db.deleteRequisition(item.id, this.userId, this.currentTable.id);
         
         if (success) {
@@ -594,7 +708,7 @@ export class Page2Component implements OnInit {
           await this.db.updateTableItemCount(this.currentTable.id, newCount, this.userId);
           this.currentTable.item_count = newCount;
           
-          await this.loadProductionTables();
+          await this.loadProductionTablesDirectly();
           this.applyFilter();
           
           this.showToast('Production item deleted successfully', 'success');
@@ -624,14 +738,12 @@ export class Page2Component implements OnInit {
       
       const fileName = `${this.currentTable.name.replace(/\s+/g, '_')}_production_requirements_${new Date().toISOString().split('T')[0]}.xlsx`;
       
-      // Create a new workbook
       const workbook = new ExcelJS.Workbook();
       workbook.creator = 'Production Management System';
       workbook.lastModifiedBy = 'Production Management System';
       workbook.created = new Date();
       workbook.modified = new Date();
       
-      // Create worksheet
       const worksheet = workbook.addWorksheet('Production Requirements', {
         properties: {
           defaultColWidth: 15,
@@ -639,7 +751,6 @@ export class Page2Component implements OnInit {
         }
       });
 
-      // Title
       worksheet.mergeCells('A1:J1');
       const titleRow = worksheet.getRow(1);
       titleRow.getCell(1).value = `PRODUCTION REQUIREMENTS - ${this.currentTable.name}`;
@@ -648,7 +759,6 @@ export class Page2Component implements OnInit {
       titleRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
       titleRow.height = 30;
 
-      // Generation info
       worksheet.mergeCells('A2:J2');
       const infoRow = worksheet.getRow(2);
       infoRow.getCell(1).value = `Production Manager: ${this.userRole} | Generated on: ${new Date().toLocaleString()} | Total Items: ${this.filteredItems.length}`;
@@ -656,7 +766,6 @@ export class Page2Component implements OnInit {
       infoRow.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
       infoRow.height = 25;
 
-      // Headers
       const headers = [
         'SKU Code',
         'Item Name',
@@ -684,9 +793,7 @@ export class Page2Component implements OnInit {
       });
       headerRow.height = 30;
 
-      // Add data rows with materials
       for (const item of this.filteredItems) {
-        // Load materials if not already loaded
         if (!item.materials) {
           try {
             const materials = await this.db.getMaterialsForSku(item.sku_code);
@@ -701,7 +808,6 @@ export class Page2Component implements OnInit {
         const materials = item.materials || [];
 
         if (materials.length === 0) {
-          // SKU with no materials - single row
           const row = worksheet.addRow([
             item.sku_code,
             item.sku_name || item.sku_code,
@@ -714,14 +820,13 @@ export class Page2Component implements OnInit {
             '',
             ''
           ]);
-          styleDataRow(row);
-          row.getCell(4).numFmt = '#,##0'; // Quantity
+          this.styleDataRow(row);
+          row.getCell(4).numFmt = '#,##0';
         } else {
-          // SKU with materials - multiple rows
           for (let i = 0; i < materials.length; i++) {
             const mat = materials[i];
             const row = worksheet.addRow([
-              i === 0 ? item.sku_code : '', // Only show SKU on first row of the group
+              i === 0 ? item.sku_code : '',
               i === 0 ? (item.sku_name || item.sku_code) : '',
               i === 0 ? item.category : '',
               i === 0 ? item.qty_needed : '',
@@ -732,65 +837,30 @@ export class Page2Component implements OnInit {
               mat.type || '',
               this.calculateMaterialTotal(item.qty_needed, mat.quantity_per_batch)
             ]);
-            styleDataRow(row);
+            this.styleDataRow(row);
             
-            // Format number cells
             if (i === 0) {
-              row.getCell(4).numFmt = '#,##0'; // Quantity needed
+              row.getCell(4).numFmt = '#,##0';
             }
-            row.getCell(7).numFmt = '#,##0.00'; // Qty per batch
-            row.getCell(10).numFmt = '#,##0.00'; // Total
+            row.getCell(7).numFmt = '#,##0.00';
+            row.getCell(10).numFmt = '#,##0.00';
           }
         }
         
-        // Add empty row between SKUs for better readability
         worksheet.addRow([]);
       }
 
-      // Helper function for styling data rows
-      function styleDataRow(row: any) {
-        row.eachCell((cell: any) => {
-          cell.font = { name: 'Arial', size: 10 };
-          cell.border = {
-            top: { style: 'thin', color: { argb: 'FFBDC3C7' } },
-            left: { style: 'thin', color: { argb: 'FFBDC3C7' } },
-            bottom: { style: 'thin', color: { argb: 'FFBDC3C7' } },
-            right: { style: 'thin', color: { argb: 'FFBDC3C7' } }
-          };
-        });
-        
-        // Center align certain columns
-        [4, 7, 8, 9, 10].forEach(colIndex => {
-          const cell = row.getCell(colIndex);
-          if (cell.value) {
-            cell.alignment = { vertical: 'middle', horizontal: 'center' };
-          }
-        });
-        
-        // Left align text columns
-        [1, 2, 3, 5, 6].forEach(colIndex => {
-          const cell = row.getCell(colIndex);
-          if (cell.value) {
-            cell.alignment = { vertical: 'middle', horizontal: 'left' };
-          }
-        });
-      }
-
-      // Auto-fit columns
+      const widths = [18, 25, 15, 12, 20, 30, 15, 10, 15, 15];
       worksheet.columns.forEach((column, index) => {
-        const widths = [18, 25, 15, 12, 20, 30, 15, 10, 15, 15];
         column.width = widths[index] || 15;
       });
 
-      // Freeze header row
       worksheet.views = [
         { state: 'frozen', xSplit: 0, ySplit: 3, activeCell: 'A4' }
       ];
 
-      // Generate Excel file
       const buffer = await workbook.xlsx.writeBuffer();
       
-      // Create blob and download
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
@@ -812,6 +882,32 @@ export class Page2Component implements OnInit {
       console.error('Export failed', err);
       this.showToast('Error exporting data: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error');
     }
+  }
+
+  private styleDataRow(row: any) {
+    row.eachCell((cell: any) => {
+      cell.font = { name: 'Arial', size: 10 };
+      cell.border = {
+        top: { style: 'thin', color: { argb: 'FFBDC3C7' } },
+        left: { style: 'thin', color: { argb: 'FFBDC3C7' } },
+        bottom: { style: 'thin', color: { argb: 'FFBDC3C7' } },
+        right: { style: 'thin', color: { argb: 'FFBDC3C7' } }
+      };
+    });
+    
+    [4, 7, 8, 9, 10].forEach(colIndex => {
+      const cell = row.getCell(colIndex);
+      if (cell.value) {
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      }
+    });
+    
+    [1, 2, 3, 5, 6].forEach(colIndex => {
+      const cell = row.getCell(colIndex);
+      if (cell.value) {
+        cell.alignment = { vertical: 'middle', horizontal: 'left' };
+      }
+    });
   }
 
   showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {

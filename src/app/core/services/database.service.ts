@@ -1,9 +1,7 @@
 // src/app/core/services/database.service.ts
 import { Injectable } from '@angular/core';
-import { Firestore, collection, addDoc, query, where, doc, getDoc, updateDoc, deleteDoc, writeBatch, orderBy } from '@angular/fire/firestore';
-import { getDocs } from 'firebase/firestore';
+import { Firestore, collection, addDoc, query, where, doc, getDoc, updateDoc, deleteDoc, writeBatch, orderBy, getDocs, CollectionReference, DocumentData } from '@angular/fire/firestore';
 import { AuthService } from './auth.service';
-import { firstValueFrom } from 'rxjs';
 import { User } from '../models/database.model';
 import * as XLSX from 'xlsx';
 
@@ -41,11 +39,12 @@ interface InventoryItem {
   updated_at?: Date;
 }
 
+// UPDATED: Added 'production' type
 interface Table {
   id: string;
   name: string;
   user_id: string;
-  type: 'inventory' | 'requisition';
+  type: 'inventory' | 'requisition' | 'production';
   item_count?: number;
   created_at?: string;
   updated_at?: string;
@@ -64,7 +63,6 @@ export class DatabaseService {
 
   async getCurrentUser(): Promise<User | null> {
     try {
-      // Use getCurrentUserPromise instead of getCurrentUserObservable
       const authUser = await this.auth.getCurrentUserPromise();
       if (!authUser) return null;
 
@@ -80,7 +78,6 @@ export class DatabaseService {
         };
       }
       
-      // Return basic user if no document exists
       return { 
         id: authUser.uid, 
         email: authUser.email || undefined 
@@ -92,12 +89,11 @@ export class DatabaseService {
   }
 
   // ────────────────────────────────────────────────
-  //  Master Data Upload & Queries - FIXED VERSION
+  //  Master Data Upload & Queries - FIXED
   // ────────────────────────────────────────────────
 
   async uploadMasterData(file: File): Promise<{ success: boolean; count?: number; error?: string }> {
     try {
-      // First check if user is authenticated
       const currentUser = await this.auth.getCurrentUserPromise();
       if (!currentUser) {
         return { success: false, error: 'You must be logged in to upload master data' };
@@ -108,10 +104,7 @@ export class DatabaseService {
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
 
-      // Get raw rows (array of arrays)
       const json: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', blankrows: false });
-
-      // Skip header row
       const dataRows = json.slice(1);
 
       const batch = writeBatch(this.firestore);
@@ -120,7 +113,6 @@ export class DatabaseService {
       let savedCount = 0;
 
       for (const row of dataRows) {
-        // Skip empty or invalid rows
         if (!Array.isArray(row) || row.length < 5 || !row[0]?.toString().trim()) {
           continue;
         }
@@ -142,7 +134,6 @@ export class DatabaseService {
           supplier: row[13] ? String(row[13]).trim() : null,
           created_at: new Date(),
           updated_at: new Date(),
-          // Add metadata for security rules if needed
           uploaded_by: currentUser.uid,
           uploaded_at: new Date()
         };
@@ -164,7 +155,6 @@ export class DatabaseService {
     } catch (err: any) {
       console.error('Master data upload failed', err);
       
-      // Check for specific Firestore permission error
       if (err.code === 'permission-denied' || err.message?.includes('permission')) {
         return { 
           success: false, 
@@ -176,60 +166,81 @@ export class DatabaseService {
     }
   }
 
+  // FIXED: Simplified getUniqueCategories
   async getUniqueCategories(): Promise<string[]> {
     try {
-      const snapshot = await getDocs(collection(this.firestore, 'masterData'));
+      console.log('Fetching unique categories from masterData...');
+      const masterDataRef = collection(this.firestore, 'masterData');
+      const snapshot = await getDocs(masterDataRef);
+      
+      console.log('Found', snapshot.size, 'master data documents');
+      
       const cats = new Set<string>();
       
       snapshot.forEach(doc => {
         const data = doc.data() as MasterData;
+        console.log('Document data:', data);
         const category = (data?.category || '').trim();
-        if (category) cats.add(category);
+        if (category) {
+          cats.add(category);
+          console.log('Added category:', category);
+        }
       });
       
-      return Array.from(cats).sort();
+      const result = Array.from(cats).sort();
+      console.log('Unique categories:', result);
+      return result;
     } catch (err) {
       console.error('getUniqueCategories failed', err);
       return [];
     }
   }
 
+  // FIXED: Simplified getSkusByCategory
   async getSkusByCategory(category: string): Promise<{ sku_code: string; sku_name: string }[]> {
     if (!category?.trim()) return [];
 
     try {
-      const q = query(
-        collection(this.firestore, 'masterData'),
-        where('category', '==', category)
-      );
-      
+      console.log('Fetching SKUs for category:', category);
+      const masterDataRef = collection(this.firestore, 'masterData');
+      const q = query(masterDataRef, where('category', '==', category));
       const snapshot = await getDocs(q);
+      
+      console.log('Found', snapshot.size, 'SKUs for category');
+      
       const map = new Map<string, string>();
       
       snapshot.forEach(doc => {
         const data = doc.data() as MasterData;
         const code = (data.sku_code || '').trim();
         const name = (data.sku_name || '').trim();
-        if (code && name) map.set(code, name);
+        if (code && name) {
+          map.set(code, name);
+          console.log('Found SKU:', { code, name });
+        }
       });
 
-      return Array.from(map, ([sku_code, sku_name]) => ({ sku_code, sku_name }));
+      const result = Array.from(map, ([sku_code, sku_name]) => ({ sku_code, sku_name }));
+      console.log('SKUs for category:', result);
+      return result;
     } catch (err) {
       console.error('getSkusByCategory failed', err);
       return [];
     }
   }
 
+  // FIXED: Simplified getMaterialsForSku
   async getMaterialsForSku(skuCode: string): Promise<any[]> {
     if (!skuCode?.trim()) return [];
 
     try {
-      const q = query(
-        collection(this.firestore, 'masterData'),
-        where('sku_code', '==', skuCode)
-      );
-      
+      console.log('Fetching materials for SKU:', skuCode);
+      const masterDataRef = collection(this.firestore, 'masterData');
+      const q = query(masterDataRef, where('sku_code', '==', skuCode));
       const snapshot = await getDocs(q);
+      
+      console.log('Found', snapshot.size, 'material documents');
+      
       const materials: any[] = [];
       
       snapshot.forEach(doc => {
@@ -243,9 +254,11 @@ export class DatabaseService {
         
         if (material.raw_material.trim() !== '') {
           materials.push(material);
+          console.log('Added material:', material);
         }
       });
 
+      console.log('Materials for SKU:', materials);
       return materials;
     } catch (err) {
       console.error('getMaterialsForSku failed', err);
@@ -254,7 +267,7 @@ export class DatabaseService {
   }
 
   // ────────────────────────────────────────────────
-  //  Inventory (user-managed stock with table & user isolation)
+  //  Inventory
   // ────────────────────────────────────────────────
 
   async addInventoryItem(item: InventoryItem): Promise<{ success: boolean; id?: string }> {
@@ -291,7 +304,6 @@ export class DatabaseService {
 
   async deleteInventoryItem(itemId: string, userId: string, tableId: string): Promise<boolean> {
     try {
-      // First verify the item belongs to the user and table
       const itemRef = doc(this.firestore, 'inventory', itemId);
       const itemDoc = await getDoc(itemRef);
       
@@ -303,10 +315,8 @@ export class DatabaseService {
         return false;
       }
       
-      // Delete the inventory item
       await deleteDoc(itemRef);
       
-      // Also delete associated requisition
       const requisitionsQuery = query(
         collection(this.firestore, 'requisitions'),
         where('inventory_item_id', '==', itemId),
@@ -331,13 +341,9 @@ export class DatabaseService {
   }
 
   // ────────────────────────────────────────────────
-  //  Tables + Requisitions (with user isolation and type) - FIXED
+  //  Tables + Requisitions
   // ────────────────────────────────────────────────
 
-  /**
-   * Get all tables for a user (legacy method - returns all tables regardless of type)
-   * @deprecated Use getUserTablesByType instead
-   */
   async getUserTables(userId: string): Promise<any[]> {
     try {
       if (!userId) return [];
@@ -354,12 +360,7 @@ export class DatabaseService {
     }
   }
 
-  /**
-   * Get tables by type for a user - FIXED with better logging
-   * @param userId - The user ID
-   * @param type - The table type ('inventory' or 'requisition')
-   */
-  async getUserTablesByType(userId: string, type: 'inventory' | 'requisition'): Promise<any[]> {
+  async getUserTablesByType(userId: string, type: 'inventory' | 'requisition' | 'production'): Promise<any[]> {
     try {
       if (!userId) {
         console.log('No userId provided');
@@ -393,23 +394,16 @@ export class DatabaseService {
     }
   }
 
-  /**
-   * Create a new user table with type - FIXED with actual Firebase write
-   * @param data - Table data (name, user_id)
-   * @param type - Table type ('inventory' or 'requisition')
-   */
-  async createUserTable(data: any, type: 'inventory' | 'requisition'): Promise<{ success: boolean; tableId?: string }> {
+  async createUserTable(data: any, type: 'inventory' | 'requisition' | 'production'): Promise<{ success: boolean; tableId?: string }> {
     try {
       console.log('Creating table with data:', data, 'type:', type);
       
-      // Get current user to ensure we have proper auth
       const currentUser = await this.auth.getCurrentUserPromise();
       if (!currentUser) {
         console.error('No authenticated user');
         return { success: false };
       }
 
-      // Ensure user_id matches authenticated user
       if (data.user_id !== currentUser.uid) {
         console.error('User ID mismatch');
         return { success: false };
@@ -426,10 +420,7 @@ export class DatabaseService {
 
       console.log('Saving table to Firebase:', tableData);
       
-      // Get reference to tables collection
       const tablesRef = collection(this.firestore, 'tables');
-      
-      // Add the document to Firebase
       const docRef = await addDoc(tablesRef, tableData);
       
       console.log('Table created successfully with ID:', docRef.id);
@@ -458,7 +449,6 @@ export class DatabaseService {
 
   async updateTableName(tableId: string, name: string, userId: string): Promise<boolean> {
     try {
-      // Verify ownership
       const tableRef = doc(this.firestore, 'tables', tableId);
       const tableDoc = await getDoc(tableRef);
       
@@ -483,7 +473,6 @@ export class DatabaseService {
 
   async deleteTable(tableId: string, userId: string): Promise<boolean> {
     try {
-      // Verify ownership
       const tableRef = doc(this.firestore, 'tables', tableId);
       const tableDoc = await getDoc(tableRef);
       
@@ -497,7 +486,6 @@ export class DatabaseService {
 
       const batch = writeBatch(this.firestore);
       
-      // Delete all requisitions for this table (verify user ownership)
       const requisitionsQuery = query(
         collection(this.firestore, 'requisitions'),
         where('table_id', '==', tableId),
@@ -509,7 +497,6 @@ export class DatabaseService {
         batch.delete(doc.ref);
       });
       
-      // Delete all inventory items for this table
       const inventoryQuery = query(
         collection(this.firestore, 'inventory'),
         where('table_id', '==', tableId),
@@ -521,7 +508,6 @@ export class DatabaseService {
         batch.delete(doc.ref);
       });
       
-      // Delete the table itself
       batch.delete(tableRef);
       
       await batch.commit();
@@ -553,7 +539,6 @@ export class DatabaseService {
       
       const requisitions = snapshot.docs.map(doc => {
         const data = doc.data();
-        console.log('Requisition data:', { id: doc.id, ...data });
         return { id: doc.id, ...data };
       });
       
@@ -568,7 +553,6 @@ export class DatabaseService {
     try {
       console.log('Creating requisition with data:', data);
       
-      // Ensure all required fields are present
       const requisitionData = {
         ...data,
         materials: materials || [],
@@ -589,7 +573,6 @@ export class DatabaseService {
 
   async updateRequisitionQty(id: string, qty: number, userId: string, tableId: string): Promise<boolean> {
     try {
-      // Verify ownership
       const reqRef = doc(this.firestore, 'requisitions', id);
       const reqDoc = await getDoc(reqRef);
       
@@ -614,7 +597,6 @@ export class DatabaseService {
 
   async updateRequisitionSupplier(id: string, supplier: string, userId: string, tableId: string): Promise<boolean> {
     try {
-      // Verify ownership
       const reqRef = doc(this.firestore, 'requisitions', id);
       const reqDoc = await getDoc(reqRef);
       
@@ -639,7 +621,6 @@ export class DatabaseService {
 
   async deleteRequisition(id: string, userId: string, tableId: string): Promise<boolean> {
     try {
-      // Verify ownership
       const reqRef = doc(this.firestore, 'requisitions', id);
       const reqDoc = await getDoc(reqRef);
       
@@ -661,7 +642,6 @@ export class DatabaseService {
 
   async updateTableItemCount(tableId: string, count: number, userId: string): Promise<boolean> {
     try {
-      // Verify ownership
       const tableRef = doc(this.firestore, 'tables', tableId);
       const tableDoc = await getDoc(tableRef);
       
@@ -686,7 +666,6 @@ export class DatabaseService {
 
   async updateRequisition(id: string, data: any, userId: string, tableId: string): Promise<boolean> {
     try {
-      // Verify ownership
       const reqRef = doc(this.firestore, 'requisitions', id);
       const reqDoc = await getDoc(reqRef);
       
@@ -698,7 +677,6 @@ export class DatabaseService {
         return false;
       }
       
-      // Don't update reqNumber for existing requisitions
       const { reqNumber, ...updateData } = data;
       
       await updateDoc(reqRef, {
@@ -713,18 +691,6 @@ export class DatabaseService {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Requisition Status Management
-  // ────────────────────────────────────────────────
-
-  /**
-   * Update requisition status with additional workflow data
-   * @param id - Requisition ID
-   * @param status - New status (Pending, Submitted, Scheduled, Approved, Rejected)
-   * @param userId - User ID making the change
-   * @param tableId - Table ID
-   * @param additionalData - Additional data like scheduled_date, approved_by, etc.
-   */
   async updateRequisitionStatus(
     id: string, 
     status: string, 
@@ -733,7 +699,6 @@ export class DatabaseService {
     additionalData: any = {}
   ): Promise<boolean> {
     try {
-      // Verify the requisition exists and belongs to the user/table
       const reqRef = doc(this.firestore, 'requisitions', id);
       const reqDoc = await getDoc(reqRef);
       
@@ -741,21 +706,17 @@ export class DatabaseService {
       
       const reqData = reqDoc.data();
       
-      // Check ownership - users can only update their own requisitions
-      // But procurement and admin can update any (checked at component level)
       if (reqData['user_id'] !== userId && reqData['table_id'] !== tableId) {
         console.error('Unauthorized status update attempt');
         return false;
       }
       
-      // Prepare update data based on status
       const updateData: any = {
         status,
         updated_at: new Date().toISOString(),
         ...additionalData
       };
 
-      // Add specific timestamps based on status
       switch(status) {
         case 'Submitted':
           updateData.submitted_at = new Date().toISOString();
@@ -795,12 +756,6 @@ export class DatabaseService {
     }
   }
 
-  /**
-   * Get requisitions by status for a specific table
-   * @param tableId - Table ID
-   * @param userId - User ID
-   * @param status - Status to filter by (optional)
-   */
   async getRequisitionsByStatus(tableId: string, userId: string, status?: string): Promise<any[]> {
     try {
       if (!tableId || !userId) return [];
@@ -831,55 +786,26 @@ export class DatabaseService {
     }
   }
 
-  /**
-   * Get pending requisitions that need submission
-   * @param tableId - Table ID
-   * @param userId - User ID
-   */
   async getPendingRequisitions(tableId: string, userId: string): Promise<any[]> {
     return this.getRequisitionsByStatus(tableId, userId, 'Pending');
   }
 
-  /**
-   * Get submitted requisitions that need scheduling (for procurement)
-   * @param tableId - Table ID
-   * @param userId - User ID
-   */
   async getSubmittedRequisitions(tableId: string, userId: string): Promise<any[]> {
     return this.getRequisitionsByStatus(tableId, userId, 'Submitted');
   }
 
-  /**
-   * Get scheduled requisitions that need approval (for admin)
-   * @param tableId - Table ID
-   * @param userId - User ID
-   */
   async getScheduledRequisitions(tableId: string, userId: string): Promise<any[]> {
     return this.getRequisitionsByStatus(tableId, userId, 'Scheduled');
   }
 
-  /**
-   * Get approved requisitions
-   * @param tableId - Table ID
-   * @param userId - User ID
-   */
   async getApprovedRequisitions(tableId: string, userId: string): Promise<any[]> {
     return this.getRequisitionsByStatus(tableId, userId, 'Approved');
   }
 
-  /**
-   * Get rejected requisitions
-   * @param tableId - Table ID
-   * @param userId - User ID
-   */
   async getRejectedRequisitions(tableId: string, userId: string): Promise<any[]> {
     return this.getRequisitionsByStatus(tableId, userId, 'Rejected');
   }
 
-  /**
-   * Get all requisitions by status across all tables (for production/procurement workflow)
-   * Used when production needs to see all Submitted from store/users, or procurement sees all Production_Accepted
-   */
   async getAllRequisitionsByStatus(status: string): Promise<any[]> {
     try {
       const q = query(
@@ -895,15 +821,6 @@ export class DatabaseService {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Workflow Statistics
-  // ────────────────────────────────────────────────
-
-  /**
-   * Get workflow statistics for a table
-   * @param tableId - Table ID
-   * @param userId - User ID
-   */
   async getWorkflowStats(tableId: string, userId: string): Promise<any> {
     try {
       if (!tableId || !userId) return null;
@@ -920,7 +837,6 @@ export class DatabaseService {
         approvalRate: 0
       };
       
-      // Calculate approval rate
       const totalProcessed = stats.approved + stats.rejected;
       stats.approvalRate = totalProcessed > 0 
         ? Math.round((stats.approved / totalProcessed) * 100) 
@@ -933,16 +849,10 @@ export class DatabaseService {
     }
   }
 
-  /**
-   * Get requisitions that need action based on user role
-   * @param userId - User ID
-   * @param role - User role
-   */
   async getRequisitionsNeedingAction(userId: string, role: string): Promise<any[]> {
     try {
       if (!userId) return [];
       
-      // Get all tables for the user
       const tables = await this.getUserTables(userId);
       
       let allRequisitions: any[] = [];
@@ -950,9 +860,7 @@ export class DatabaseService {
       for (const table of tables) {
         let q;
         
-        // Different queries based on role
         if (role === 'user') {
-          // Users need to submit their pending requisitions
           q = query(
             collection(this.firestore, 'requisitions'),
             where('user_id', '==', userId),
@@ -961,14 +869,12 @@ export class DatabaseService {
             where('submitted_at', '==', null)
           );
         } else if (role === 'procurement') {
-          // Procurement needs to schedule submitted requisitions
           q = query(
             collection(this.firestore, 'requisitions'),
             where('table_id', '==', table.id),
             where('status', '==', 'Submitted')
           );
         } else if (role === 'admin') {
-          // Admin needs to approve scheduled requisitions
           q = query(
             collection(this.firestore, 'requisitions'),
             where('table_id', '==', table.id),
@@ -989,22 +895,15 @@ export class DatabaseService {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Analytics & Reports (with user isolation)
-  // ────────────────────────────────────────────────
-
   async getTableSummary(tableId: string, userId: string): Promise<any> {
     try {
       if (!tableId || !userId) return null;
       
-      // Get all inventory items for this table
       const inventoryItems = await this.getInventoryItemsByTable(tableId, userId);
       
-      // Calculate summary statistics
       const totalItems = inventoryItems.length;
       const totalQuantity = inventoryItems.reduce((sum, item) => sum + (item.qty || 0), 0);
       
-      // Get category breakdown
       const categoryBreakdown: { [key: string]: number } = {};
       inventoryItems.forEach(item => {
         categoryBreakdown[item.category] = (categoryBreakdown[item.category] || 0) + 1;
@@ -1026,10 +925,8 @@ export class DatabaseService {
     try {
       if (!userId) return null;
       
-      // Get all tables for user
       const tables = await this.getUserTables(userId);
       
-      // Get all inventory items for user
       const tablesPromises = tables.map(table => 
         this.getInventoryItemsByTable(table.id, userId)
       );
