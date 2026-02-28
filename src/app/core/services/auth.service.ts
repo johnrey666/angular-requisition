@@ -1,44 +1,104 @@
 // src/app/core/services/auth.service.ts
-import { Injectable } from '@angular/core';
+import { Injectable, Injector, runInInjectionContext, Inject, PLATFORM_ID } from '@angular/core';
 import { Auth, authState, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, User } from '@angular/fire/auth';
-import { BehaviorSubject, Observable, firstValueFrom, timeout, catchError, of } from 'rxjs';
+import { Observable, firstValueFrom, timeout, catchError, of, BehaviorSubject } from 'rxjs';
 import { map, take, filter } from 'rxjs/operators';
+import { isPlatformBrowser } from '@angular/common';
 
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  user$: BehaviorSubject<User | null> = new BehaviorSubject<User | null>(null);
+  private authState$: Observable<User | null>;
+  private authReady = new BehaviorSubject<boolean>(false);
+  private isBrowser: boolean;
 
-  constructor(private auth: Auth) {
-    // Subscribe to auth state changes
-    authState(this.auth).subscribe((user) => {
-      console.log('Auth state changed:', user?.email);
-      this.user$.next(user);
+  constructor(
+    private auth: Auth, 
+    private injector: Injector,
+    @Inject(PLATFORM_ID) private platformId: Object
+  ) {
+    this.isBrowser = isPlatformBrowser(this.platformId);
+    
+    this.authState$ = new Observable(subscriber => {
+      // Only subscribe to auth state in browser
+      if (this.isBrowser) {
+        runInInjectionContext(this.injector, () => {
+          authState(this.auth).subscribe({
+            next: (user) => {
+              console.log('Auth state changed:', user?.email);
+              subscriber.next(user);
+              this.authReady.next(true);
+            },
+            error: (err) => {
+              console.error('Auth state error:', err);
+              subscriber.error(err);
+              this.authReady.next(true);
+            }
+          });
+        });
+      } else {
+        // On server, just emit null and mark as ready
+        subscriber.next(null);
+        this.authReady.next(true);
+      }
     });
+  }
+
+  // Wait for auth to be ready
+  async waitForAuth(timeoutMs: number = 3000): Promise<boolean> {
+    // On server, just return true immediately
+    if (!this.isBrowser) {
+      return true;
+    }
+    
+    if (this.auth.currentUser) {
+      return true;
+    }
+    
+    try {
+      await firstValueFrom(
+        this.authReady.pipe(
+          filter(ready => ready === true),
+          take(1),
+          timeout(timeoutMs)
+        )
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // Get current user as observable
   getCurrentUserObservable(): Observable<User | null> {
-    return authState(this.auth);
+    return this.authState$;
   }
 
-  // Get current user as promise - waits for Firebase to restore session on reload
-  async getCurrentUserPromise(): Promise<User | null> {
+  // Get current user as promise - improved with better error handling
+  async getCurrentUserPromise(timeoutMs: number = 5000): Promise<User | null> {
+    // On server, always return null
+    if (!this.isBrowser) {
+      return null;
+    }
+    
     // First check if we already have a user synchronously
     if (this.auth.currentUser) {
       console.log('Found current user synchronously:', this.auth.currentUser.email);
       return this.auth.currentUser;
     }
     
-    // Otherwise wait for auth state to resolve (with timeout)
+    // Wait for auth to be ready first
+    await this.waitForAuth(3000);
+    
+    // Then get the user
     try {
       const user = await firstValueFrom(
-        authState(this.auth).pipe(
-          // Wait for first emission (could be null or user)
+        this.authState$.pipe(
           take(1),
-          // Add timeout to prevent hanging forever
-          timeout(3000),
-          // Handle timeout gracefully
-          catchError(() => of(null))
+          timeout(timeoutMs),
+          catchError((error) => {
+            console.log('Timeout or error waiting for auth state:', error);
+            return of(null);
+          })
         )
       );
       console.log('Auth state resolved:', user?.email);
@@ -51,6 +111,9 @@ export class AuthService {
 
   // Get current user synchronously
   getCurrentUser() {
+    if (!this.isBrowser) {
+      return null;
+    }
     return this.auth.currentUser;
   }
 
@@ -63,30 +126,38 @@ export class AuthService {
   // Sign out
   signOut(): Promise<void> {
     console.log('Signing out');
-    // Clear stored admin password on logout
-    sessionStorage.removeItem('adminPassword');
+    if (this.isBrowser) {
+      sessionStorage.removeItem('adminPassword');
+    }
+    this.authReady.next(false);
     return signOut(this.auth);
   }
 
-  // Create new user (admin only) - This will be used by UserService
+  // Create new user (admin only)
   createUser(email: string, password: string): Promise<any> {
     return createUserWithEmailAndPassword(this.auth, email, password);
   }
 
   // Check if user is authenticated
   isAuthenticated(): Observable<boolean> {
-    return authState(this.auth).pipe(
+    return this.authState$.pipe(
       map(user => !!user)
     );
   }
 
   // Get user ID
   getUserId(): string | null {
-    return this.user$.value?.uid || null;
+    if (!this.isBrowser) {
+      return null;
+    }
+    return this.auth.currentUser?.uid || null;
   }
 
   // Get user email
   getUserEmail(): string | null {
-    return this.user$.value?.email || null;
+    if (!this.isBrowser) {
+      return null;
+    }
+    return this.auth.currentUser?.email || null;
   }
 }

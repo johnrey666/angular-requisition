@@ -43,8 +43,8 @@ export class UserService {
       // Create user document in Firestore
       const userRef = doc(this.firestore, 'users', uid);
       await setDoc(userRef, {
-        email,
-        role,
+        email: email,
+        role: role,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });

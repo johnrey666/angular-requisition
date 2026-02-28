@@ -8,6 +8,7 @@ import { AuthService } from '../core/services/auth.service';
 import { UserService } from '../core/services/user.service';
 import { Observable, firstValueFrom, Subscription } from 'rxjs';
 import { Firestore, collection, getDocs, doc, setDoc, query, orderBy, getDoc, serverTimestamp } from '@angular/fire/firestore';
+import { User } from '@angular/fire/auth';
 
 interface NavItem {
   label: string;
@@ -16,7 +17,7 @@ interface NavItem {
   roles: string[];
 }
 
-interface User {
+interface UserData {
   uid?: string;
   email: string;
   role: string;
@@ -45,7 +46,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   filteredNavItems: NavItem[] = [];
 
-  user$: Observable<any>;
+  // Updated to use the observable from the service
+  user$: Observable<User | null>;
 
   // Settings & modal state
   showSettings = false;
@@ -55,7 +57,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   logoutSource: 'header' | 'sidebar' | null = null;
 
   // User list state
-  users: User[] = [];
+  users: UserData[] = [];
   loadingUsers = false;
   userListError: string | null = null;
 
@@ -74,7 +76,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private isCreatingUser = false;
 
   // Subscriptions
-  private userSubscription?: Subscription;
+  private authSubscription?: Subscription;
+  private currentUser: User | null = null;
 
   constructor(
     public themeService: ThemeService,
@@ -84,7 +87,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private firestore: Firestore,
     private router: Router
   ) {
-    this.user$ = this.authService.user$;
+    // Get the observable from the auth service
+    this.user$ = this.authService.getCurrentUserObservable();
     
     // Initialize form with updated roles
     this.createUserForm = this.fb.nonNullable.group({
@@ -104,16 +108,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   async ngOnInit() {
     console.log('Dashboard ngOnInit - Starting');
-    // Load user role immediately
-    await this.loadUserRole();
     
     // Subscribe to auth state changes (skip during user creation - auth temporarily switches)
-    this.userSubscription = this.user$.subscribe(async (user) => {
+    this.authSubscription = this.user$.subscribe(async (user) => {
       console.log('Dashboard - Auth state changed:', user?.email);
+      this.currentUser = user;
+      
       if (this.isCreatingUser) {
         console.log('Dashboard - Skipping role load during user creation');
         return;
       }
+      
       if (user?.uid) {
         console.log('Dashboard - User authenticated, loading role for:', user.uid);
         await this.loadUserRole(user.uid);
@@ -128,8 +133,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     // Clean up subscription
-    if (this.userSubscription) {
-      this.userSubscription.unsubscribe();
+    if (this.authSubscription) {
+      this.authSubscription.unsubscribe();
     }
   }
 
@@ -163,11 +168,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
       } else {
         console.log('loadUserRole - No user document found, creating one');
         // Create user document if it doesn't exist
-        const currentUser = await firstValueFrom(this.user$);
-        if (currentUser) {
-          const userRef = doc(this.firestore, 'users', currentUser.uid);
+        if (this.currentUser) {
+          const userRef = doc(this.firestore, 'users', this.currentUser.uid);
           await setDoc(userRef, {
-            email: currentUser.email,
+            email: this.currentUser.email,
             role: 'user',
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp()
@@ -208,7 +212,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return this.filteredNavItems.includes(item);
   }
 
-  getUserInitials(user: any): string {
+  getUserInitials(user: User | null): string {
     if (!user) return 'U';
     if (user.email) {
       return user.email.charAt(0).toUpperCase();
@@ -219,7 +223,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return 'U';
   }
 
-  getUserDisplayName(user: any): string {
+  getUserDisplayName(user: User | null): string {
     if (!user) return 'User';
     if (user.displayName) return user.displayName;
     if (user.email) {
@@ -300,7 +304,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       console.log('Found users count:', querySnapshot.size);
       
       // Map documents to User objects
-      const loadedUsers: User[] = [];
+      const loadedUsers: UserData[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
         loadedUsers.push({
@@ -422,7 +426,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       this.userService.clearAdminPassword();
       
       await this.authService.signOut();
-      this.router.navigate(['/login']);
+      await this.router.navigate(['/login']);
       this.showLogoutConfirm = false;
       this.logoutSource = null;
     } catch (err) {

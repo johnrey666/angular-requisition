@@ -1,9 +1,14 @@
-import { Component, OnInit, HostListener } from '@angular/core';
+// src/app/pages/dashboard/page3/page3.component.ts
+import { Component, OnInit, HostListener, Injector } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { runInInjectionContext } from '@angular/core';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { Firestore, doc, collection, query, where, getDocs } from '@angular/fire/firestore';
+import {
+  Firestore, doc, collection, query, where, getDocs,
+  orderBy, writeBatch
+} from '@angular/fire/firestore';
 import { getDoc } from 'firebase/firestore';
 import { Router } from '@angular/router';
 
@@ -31,12 +36,22 @@ interface Requisition {
   created_at?: string;
   user_id?: string;
   table_id?: string;
+  table_name?: string;
   submitted_at?: string;
   scheduled_date?: string;
+  scheduled_at?: string;
   scheduled_by?: string;
   approved_at?: string;
   approved_by?: string;
   rejection_reason?: string;
+  production_action?: 'confirmed' | 'removed';
+  production_action_at?: string;
+  production_action_by?: string;
+  production_action_notes?: string;
+  procurement_action?: 'reviewed' | 'pending';
+  procurement_action_at?: string;
+  procurement_action_by?: string;
+  procurement_notes?: string;
   materials?: Material[];
   [key: string]: any;
 }
@@ -45,10 +60,12 @@ interface Table {
   id: string;
   name: string;
   user_id: string;
-  type: 'inventory' | 'requisition';
+  type: 'inventory' | 'requisition' | 'production';
   item_count?: number;
   created_at?: string;
   updated_at?: string;
+  submitted?: boolean;
+  submitted_at?: string;
 }
 
 interface SkuOption {
@@ -64,11 +81,12 @@ interface SkuOption {
   styleUrls: ['./page3.component.css']
 })
 export class Page3Component implements OnInit {
+
   // Master Data
   categories: string[] = [];
   availableSkus: SkuOption[] = [];
 
-  // Tables - Only requisition type
+  // Tables
   tables: Table[] = [];
   selectedTableId: string = '';
   selectedTable: Table | null = null;
@@ -78,6 +96,14 @@ export class Page3Component implements OnInit {
   requisitions: Requisition[] = [];
   filteredRequisitions: Requisition[] = [];
   paginatedRequisitions: Requisition[] = [];
+
+  // Production views
+  productionSubmissions: Requisition[] = [];
+  productionReviewed: Requisition[] = [];
+  selectedProductionView: 'submissions' | 'reviewed' = 'submissions';
+
+  // Procurement view
+  procurementReviewed: Requisition[] = [];
 
   // Expanded rows for materials
   expandedRows: { [id: string]: boolean } = {};
@@ -91,7 +117,8 @@ export class Page3Component implements OnInit {
   showRejectModal = false;
   showDeliveryModal = false;
   showMissingNotesModal = false;
-  viewMode: 'my_tables' | 'store_submissions' | 'for_delivery' = 'my_tables';
+  showProductionActionModal = false;
+  viewMode: 'my_tables' | 'store_submissions' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
   showAllPending = false;
   submitted = false;
   isLoading = false;
@@ -122,6 +149,10 @@ export class Page3Component implements OnInit {
   approvalNotes: string = '';
   rejectionReason: string = '';
   missingMaterialsNotes: string = '';
+
+  // Production Action Data
+  productionActionType: 'confirm' | 'remove' = 'confirm';
+  productionActionNotes: string = '';
 
   // Editing
   editingRequisition: Requisition | null = null;
@@ -163,24 +194,38 @@ export class Page3Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private router: Router
+    private router: Router,
+    private injector: Injector
   ) {}
+
+  // ────────────────────────────────────────────────
+  //  PRIVATE HELPER — run any Firestore call safely
+  // ────────────────────────────────────────────────
+
+  private run<T>(fn: () => Promise<T>): Promise<T> {
+    return runInInjectionContext(this.injector, fn);
+  }
+
+  // ────────────────────────────────────────────────
+  //  Init
+  // ────────────────────────────────────────────────
 
   async ngOnInit() {
     console.log('Page3Component initialized');
     const user = await this.auth.getCurrentUserPromise();
     console.log('Current user:', user);
-    
+
     if (user) {
       this.userId = user.uid;
       console.log('User ID set:', this.userId);
-      
+
       await this.loadUserRole();
       console.log('User role loaded:', this.userRole);
-      
+
       await this.loadCategories();
       console.log('Categories loaded:', this.categories);
-      
+
+      this.setViewModeByRole();
       await this.loadTablesDirectly();
     } else {
       console.log('No user found, redirecting to login');
@@ -189,64 +234,114 @@ export class Page3Component implements OnInit {
     }
   }
 
-  // Direct Firestore query to load tables
+  setViewModeByRole() {
+    if (this.userRole === 'production') {
+      this.viewMode = 'store_submissions';
+    } else if (this.userRole === 'procurement') {
+      this.viewMode = 'for_delivery';
+    } else {
+      this.viewMode = 'my_tables';
+    }
+  }
+
+  // ────────────────────────────────────────────────
+  //  Load Tables
+  // ────────────────────────────────────────────────
+
   async loadTablesDirectly() {
     console.log('Loading tables directly from Firestore for user:', this.userId);
-    
+
     try {
       this.isLoading = true;
-      
       const tablesRef = collection(this.firestore, 'tables');
-      const q = query(
-        tablesRef, 
-        where('user_id', '==', this.userId),
-        where('type', '==', 'requisition')
-      );
-      
-      const querySnapshot = await getDocs(q);
-      console.log('Direct query found', querySnapshot.size, 'tables');
-      
-      const loadedTables: Table[] = [];
-      querySnapshot.forEach(doc => {
-        const data = doc.data();
-        console.log('Table document:', { id: doc.id, ...data });
-        
-        loadedTables.push({
-          id: doc.id,
-          name: data['name'] || 'Untitled',
-          user_id: data['user_id'] || this.userId,
-          type: data['type'] || 'requisition',
-          item_count: data['item_count'] || 0,
-          created_at: data['created_at'],
-          updated_at: data['updated_at']
+
+      if (this.userRole === 'production' || this.userRole === 'procurement') {
+        const querySnapshot = await this.run(() => {
+          const q = query(
+            tablesRef,
+            where('type', '==', 'requisition'),
+            where('submitted', '==', true),
+            orderBy('submitted_at', 'desc')
+          );
+          return getDocs(q);
         });
-      });
-      
-      console.log('Loaded requisition tables:', loadedTables);
-      this.tables = loadedTables;
-      
-      if (this.tables.length > 0) {
-        const lastTableId = localStorage.getItem(`lastSelectedRequisitionTable_${this.userId}`);
-        console.log('Last selected table from localStorage:', lastTableId);
-        
-        if (lastTableId && this.tables.some(t => t.id === lastTableId)) {
-          this.selectedTableId = lastTableId;
-          console.log('Restored last selected table:', lastTableId);
-        } else {
+
+        console.log('Found', querySnapshot.size, 'submitted tables');
+
+        const loadedTables: Table[] = [];
+        querySnapshot.forEach(doc => {
+          const data = doc.data();
+          loadedTables.push({
+            id: doc.id,
+            name: data['name'] || 'Untitled',
+            user_id: data['user_id'] || '',
+            type: data['type'] || 'requisition',
+            item_count: data['item_count'] || 0,
+            submitted: data['submitted'] || false,
+            submitted_at: data['submitted_at'],
+            created_at: data['created_at'],
+            updated_at: data['updated_at']
+          });
+        });
+
+        this.tables = loadedTables;
+
+        if (this.tables.length > 0) {
           this.selectedTableId = this.tables[0].id;
-          console.log('Defaulting to first table:', this.selectedTableId);
+          this.selectedTable = this.tables[0];
+
+          if (this.userRole === 'production') {
+            await this.loadProductionSubmissions();
+          } else if (this.userRole === 'procurement') {
+            await this.loadProcurementReviewed();
+          }
         }
-        
-        this.selectedTable = this.tables.find(t => t.id === this.selectedTableId) || null;
-        console.log('Selected table:', this.selectedTable);
-        
-        await this.loadRequisitionsDirectly();
+
       } else {
-        console.log('No requisition tables found for user');
-        this.selectedTableId = '';
-        this.selectedTable = null;
+        // Regular users / store / admin
+        const querySnapshot = await this.run(() => {
+          const q = query(
+            tablesRef,
+            where('user_id', '==', this.userId),
+            where('type', '==', 'requisition')
+          );
+          return getDocs(q);
+        });
+
+        console.log('Found', querySnapshot.size, 'tables');
+
+        const loadedTables: Table[] = [];
+        querySnapshot.forEach(doc => {
+          const data = doc.data();
+          loadedTables.push({
+            id: doc.id,
+            name: data['name'] || 'Untitled',
+            user_id: data['user_id'] || this.userId,
+            type: data['type'] || 'requisition',
+            item_count: data['item_count'] || 0,
+            submitted: data['submitted'] || false,
+            submitted_at: data['submitted_at'],
+            created_at: data['created_at'],
+            updated_at: data['updated_at']
+          });
+        });
+
+        this.tables = loadedTables;
+
+        if (this.tables.length > 0) {
+          const lastTableId = localStorage.getItem(`lastSelectedRequisitionTable_${this.userId}`);
+
+          if (lastTableId && this.tables.some(t => t.id === lastTableId)) {
+            this.selectedTableId = lastTableId;
+          } else {
+            this.selectedTableId = this.tables[0].id;
+          }
+
+          this.selectedTable = this.tables.find(t => t.id === this.selectedTableId) || null;
+          await this.loadRequisitionsDirectly();
+        }
       }
-      
+
     } catch (err) {
       console.error('Error loading tables directly:', err);
       this.showToast('Failed to load tables', 'error');
@@ -255,41 +350,58 @@ export class Page3Component implements OnInit {
     }
   }
 
-  // Direct Firestore query to load requisitions
+  // ────────────────────────────────────────────────
+  //  Load Requisitions
+  // ────────────────────────────────────────────────
+
   async loadRequisitionsDirectly() {
-    if (!this.selectedTableId || !this.userId) {
-      console.log('Missing tableId or userId for loading requisitions');
+    if (!this.selectedTableId) {
+      console.log('Missing tableId for loading requisitions');
       return;
     }
 
     console.log('Loading requisitions directly for table:', this.selectedTableId);
-    
+
     try {
       this.isLoading = true;
-      
-      const requisitionsRef = collection(this.firestore, 'requisitions');
-      const q = query(
-        requisitionsRef,
-        where('table_id', '==', this.selectedTableId),
-        where('user_id', '==', this.userId)
-      );
-      
-      const querySnapshot = await getDocs(q);
+
+      const querySnapshot = await this.run(() => {
+        const requisitionsRef = collection(this.firestore, 'requisitions');
+        const q = query(
+          requisitionsRef,
+          where('table_id', '==', this.selectedTableId),
+          orderBy('created_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
       console.log('Found', querySnapshot.size, 'requisitions');
-      
+
       const loadedRequisitions: Requisition[] = [];
       querySnapshot.forEach(doc => {
         const data = doc.data();
+
+        let scheduledDate = null;
+        if (data['scheduled_date']) {
+          scheduledDate = data['scheduled_date'];
+        } else if (data['scheduled_at']) {
+          scheduledDate = data['scheduled_at'];
+        }
+
+        if (scheduledDate && typeof scheduledDate === 'object' && scheduledDate.toDate) {
+          scheduledDate = scheduledDate.toDate().toISOString();
+        }
+
         loadedRequisitions.push({
           id: doc.id,
-          ...data
+          ...data,
+          scheduled_date: scheduledDate
         } as Requisition);
       });
-      
-      console.log('Loaded requisitions:', loadedRequisitions);
+
       this.requisitions = loadedRequisitions;
       this.applyFilter();
-      
+
     } catch (err) {
       console.error('Error loading requisitions:', err);
       this.showToast('Failed to load requisitions', 'error');
@@ -298,9 +410,99 @@ export class Page3Component implements OnInit {
     }
   }
 
+  async loadProductionSubmissions() {
+    this.isLoading = true;
+    try {
+      const requisitionsRef = collection(this.firestore, 'requisitions');
+
+      const submissionsSnapshot = await this.run(() => {
+        const q = query(
+          requisitionsRef,
+          where('status', '==', 'Submitted'),
+          orderBy('submitted_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      const submissions: Requisition[] = [];
+      submissionsSnapshot.forEach(doc => {
+        const data = doc.data();
+        submissions.push({ id: doc.id, ...data } as Requisition);
+      });
+
+      const reviewedSnapshot = await this.run(() => {
+        const q = query(
+          requisitionsRef,
+          where('production_action', 'in', ['confirmed', 'removed']),
+          orderBy('production_action_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      const reviewed: Requisition[] = [];
+      reviewedSnapshot.forEach(doc => {
+        const data = doc.data();
+        reviewed.push({ id: doc.id, ...data } as Requisition);
+      });
+
+      this.productionSubmissions = submissions;
+      this.productionReviewed = reviewed;
+
+      await this.loadTableNamesForRequisitions([...submissions, ...reviewed]);
+
+      this.filteredRequisitions = this.selectedProductionView === 'submissions'
+        ? this.productionSubmissions
+        : this.productionReviewed;
+
+      this.updatePagination();
+
+    } catch (err) {
+      console.error('Failed to load production submissions', err);
+      this.showToast('Failed to load submissions', 'error');
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  async loadProcurementReviewed() {
+    this.isLoading = true;
+    try {
+      const snapshot = await this.run(() => {
+        const requisitionsRef = collection(this.firestore, 'requisitions');
+        const q = query(
+          requisitionsRef,
+          where('production_action', '==', 'confirmed'),
+          orderBy('production_action_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      const reviewed: Requisition[] = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        reviewed.push({ id: doc.id, ...data } as Requisition);
+      });
+
+      this.procurementReviewed = reviewed;
+      await this.loadTableNamesForRequisitions(reviewed);
+
+      this.filteredRequisitions = this.procurementReviewed;
+      this.updatePagination();
+
+    } catch (err) {
+      console.error('Failed to load procurement reviewed', err);
+      this.showToast('Failed to load reviewed requisitions', 'error');
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
   async loadUserRole() {
     try {
-      const userDoc = await getDoc(doc(this.firestore, 'users', this.userId));
+      const userDoc = await this.run(() =>
+        getDoc(doc(this.firestore, 'users', this.userId))
+      );
+
       if (userDoc.exists()) {
         const data = userDoc.data() as any;
         this.userRole = data['role'] || 'user';
@@ -323,34 +525,6 @@ export class Page3Component implements OnInit {
     }
   }
 
-  async loadStoreSubmissions() {
-    this.isLoading = true;
-    try {
-      this.requisitions = await this.db.getAllRequisitionsByStatus('Submitted');
-      await this.loadTableNamesForRequisitions(this.requisitions);
-      this.applyFilter();
-    } catch (err) {
-      console.error('Failed to load store submissions', err);
-      this.showToast('Failed to load store submissions', 'error');
-    } finally {
-      this.isLoading = false;
-    }
-  }
-
-  async loadForDelivery() {
-    this.isLoading = true;
-    try {
-      this.requisitions = await this.db.getAllRequisitionsByStatus('Production_Accepted');
-      await this.loadTableNamesForRequisitions(this.requisitions);
-      this.applyFilter();
-    } catch (err) {
-      console.error('Failed to load for delivery', err);
-      this.showToast('Failed to load for delivery', 'error');
-    } finally {
-      this.isLoading = false;
-    }
-  }
-
   private async loadTableNamesForRequisitions(reqs: Requisition[]) {
     const tableIds = [...new Set(reqs.map(r => r.table_id).filter(Boolean))] as string[];
     for (const tid of tableIds) {
@@ -361,9 +535,12 @@ export class Page3Component implements OnInit {
     }
   }
 
+  // ────────────────────────────────────────────────
+  //  Table Selection & CRUD
+  // ────────────────────────────────────────────────
+
   async onTableChange() {
     if (!this.selectedTableId) {
-      console.log('No table selected');
       this.requisitions = [];
       this.filteredRequisitions = [];
       this.selectedTable = null;
@@ -371,136 +548,274 @@ export class Page3Component implements OnInit {
     }
 
     console.log('Table changed to:', this.selectedTableId);
-    
-    localStorage.setItem(`lastSelectedRequisitionTable_${this.userId}`, this.selectedTableId);
-    
+
+    if (this.userRole !== 'production' && this.userRole !== 'procurement') {
+      localStorage.setItem(`lastSelectedRequisitionTable_${this.userId}`, this.selectedTableId);
+    }
+
     this.selectedTable = this.tables.find(t => t.id === this.selectedTableId) || null;
     console.log('Selected table:', this.selectedTable);
-    
-    if (!this.selectedTable) {
-      console.warn('Selected table not found in tables list');
+
+    if (this.userRole === 'production') {
+      await this.loadProductionSubmissions();
+    } else if (this.userRole === 'procurement') {
+      await this.loadProcurementReviewed();
+    } else {
+      await this.loadRequisitionsDirectly();
     }
-    
-    await this.loadRequisitionsDirectly();
   }
 
-  async toggleRow(req: Requisition) {
-    if (!req.id) return;
-    
-    this.expandedRows[req.id] = !this.expandedRows[req.id];
-
-    if (this.expandedRows[req.id] && !req.materials) {
-      this.loadingMaterials[req.id] = true;
-      try {
-        // Get the SKU code from either camelCase or snake_case
-        const skuCode = req.skuCode || req['sku_code'];
-        console.log('========== MATERIALS DEBUG ==========');
-        console.log('Toggling row for requisition:', req.id);
-        console.log('Requisition data:', req);
-        console.log('SKU Code found:', skuCode);
-        console.log('SKU Name:', req.skuName || req['sku_name']);
-        
-        if (!skuCode) {
-          console.error('No SKU code found in requisition');
-          this.showToast('No SKU code found for this requisition', 'error');
-          req.materials = [];
-          return;
-        }
-
-        console.log('Calling getMaterialsForSku with SKU:', skuCode);
-        const materials = await this.db.getMaterialsForSku(skuCode);
-        console.log('Materials received from database:', materials);
-        
-        if (materials && materials.length > 0) {
-          console.log(`Found ${materials.length} materials for SKU ${skuCode}:`, materials);
-          req.materials = materials;
-        } else {
-          console.log(`No materials found for SKU ${skuCode} in master data`);
-          console.log('This could mean:');
-          console.log('1. The SKU exists but has no raw materials defined');
-          console.log('2. The SKU code in requisition does not match master data');
-          console.log('3. The master data collection is empty or not accessible');
-          req.materials = [];
-          
-          // Optional: Show a more specific message
-          // this.showToast(`No materials defined for SKU: ${skuCode}`, 'info');
-        }
-      } catch (err) {
-        console.error('Error loading materials:', err);
-        req.materials = [];
-        this.showToast('Failed to load materials', 'error');
-      } finally {
-        this.loadingMaterials[req.id] = false;
-        console.log('========== END MATERIALS DEBUG ==========');
+  async selectTable(table: Table) {
+    if (this.userRole === 'production' || this.userRole === 'procurement') {
+      this.selectedTableId = table.id;
+      this.selectedTable = table;
+      this.showTableDropdown = false;
+    } else {
+      if (table.user_id !== this.userId) {
+        this.showToast('You can only access your own tables', 'error');
+        return;
       }
+
+      if (table.type !== 'requisition') {
+        this.showToast('Invalid table type', 'error');
+        return;
+      }
+
+      this.selectedTableId = table.id;
+      this.selectedTable = table;
+      this.showTableDropdown = false;
+      this.showAllPending = false;
+      this.searchQuery = '';
+      this.filterStatus = '';
+
+      localStorage.setItem(`lastSelectedRequisitionTable_${this.userId}`, this.selectedTableId);
     }
+
+    await this.onTableChange();
+    this.showToast(`Switched to table: ${table.name}`, 'success');
   }
 
-  calculateMaterialTotal(quantity: number, qtyPerBatch: number | null): number {
-    const qty = quantity || 0;
-    const batchQty = qtyPerBatch || 0;
-    return batchQty * qty;
+  openTableModal() {
+    this.showTableModal = true;
+    this.newTableName = '';
+    this.editingTable = null;
+    this.editTableName = '';
+    this.showTableDropdown = false;
   }
 
-  async onCategoryChange() {
-    if (!this.formData.category) {
-      this.availableSkus = [];
-      this.formData.skuName = '';
-      this.selectedSkuCode = '';
+  closeTableModal() {
+    this.showTableModal = false;
+    this.editingTable = null;
+  }
+
+  async createTable() {
+    if (!this.newTableName.trim()) {
+      this.showToast('Please enter a table name', 'error');
       return;
     }
 
-    try {
-      this.availableSkus = await this.db.getSkusByCategory(this.formData.category);
-      console.log('Available SKUs:', this.availableSkus);
-      this.formData.skuName = '';
-      this.selectedSkuCode = '';
-    } catch (err) {
-      console.error('Failed to load SKUs:', err);
-      this.showToast('Could not load SKUs', 'error');
-    }
-  }
-
-  onSkuNameSelect() {
-    if (!this.formData.skuName) {
-      this.selectedSkuCode = '';
+    if (!this.userId) {
+      this.showToast('You must be logged in', 'error');
       return;
     }
 
-    const selectedItem = this.availableSkus.find(item => item.sku_name === this.formData.skuName);
-    this.selectedSkuCode = selectedItem ? selectedItem.sku_code : '';
-    console.log('Selected SKU code:', this.selectedSkuCode);
-  }
-
-  async onFileSelected(event: any) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    this.selectedFileName = file.name;
-    this.importStatus = 'loading';
-    this.importMessage = 'Uploading...';
+    this.isSubmitting = true;
 
     try {
-      const result = await this.db.uploadMasterData(file);
-      if (result.success) {
-        this.importStatus = 'success';
-        this.importMessage = `Imported ${result.count} rows`;
-        await this.loadCategories();
-        this.showToast('Master data imported successfully', 'success');
+      const result = await this.db.createUserTable({
+        name: this.newTableName.trim(),
+        user_id: this.userId
+      }, 'requisition');
+
+      if (result.success && result.tableId) {
+        const newTable: Table = {
+          id: result.tableId,
+          name: this.newTableName.trim(),
+          user_id: this.userId,
+          type: 'requisition',
+          item_count: 0,
+          submitted: false,
+          created_at: new Date().toISOString()
+        };
+
+        this.tables.push(newTable);
+        this.selectedTableId = result.tableId;
+        this.selectedTable = newTable;
+
+        localStorage.setItem(`lastSelectedRequisitionTable_${this.userId}`, this.selectedTableId);
+
+        this.newTableName = '';
+        this.closeTableModal();
+        this.showToast('Table created successfully', 'success');
+
+        await this.loadRequisitionsDirectly();
       } else {
-        this.importStatus = 'error';
-        this.importMessage = result.error || 'Upload failed';
-        this.showToast(result.error || 'Upload failed', 'error');
+        this.showToast('Failed to create table', 'error');
       }
     } catch (err) {
-      this.importStatus = 'error';
-      this.importMessage = 'Upload error';
-      this.showToast('Upload error: ' + (err as Error).message, 'error');
+      console.error('Create table error:', err);
+      this.showToast('Failed to create table: ' + (err as Error).message, 'error');
+    } finally {
+      this.isSubmitting = false;
+    }
+  }
+
+  editTable(table: Table) {
+    if (table.user_id !== this.userId) {
+      this.showToast('You can only edit your own tables', 'error');
+      return;
+    }
+    if (table.type !== 'requisition') {
+      this.showToast('Invalid table type', 'error');
+      return;
+    }
+    this.editingTable = table;
+    this.editTableName = table.name;
+    this.openTableModal();
+  }
+
+  async updateTableName() {
+    if (!this.editingTable || !this.editTableName.trim()) return;
+
+    try {
+      const success = await this.db.updateTableName(
+        this.editingTable.id,
+        this.editTableName.trim(),
+        this.userId
+      );
+
+      if (success) {
+        const index = this.tables.findIndex(t => t.id === this.editingTable!.id);
+        if (index !== -1) {
+          this.tables[index].name = this.editTableName.trim();
+        }
+
+        if (this.selectedTable?.id === this.editingTable.id) {
+          this.selectedTable.name = this.editTableName.trim();
+        }
+
+        this.closeTableModal();
+        this.showToast('Table renamed successfully', 'success');
+      } else {
+        this.showToast('Failed to rename table', 'error');
+      }
+    } catch (err) {
+      console.error('Rename table error:', err);
+      this.showToast('Failed to rename table', 'error');
+    }
+  }
+
+  async deleteTable(table: Table) {
+    if (this.tables.length <= 1) {
+      this.showToast('Cannot delete the last table', 'error');
+      return;
+    }
+
+    if (table.user_id !== this.userId) {
+      this.showToast('You can only delete your own tables', 'error');
+      return;
+    }
+
+    if (table.type !== 'requisition') {
+      this.showToast('Invalid table type', 'error');
+      return;
+    }
+
+    if (!confirm(`Delete table "${table.name}" and all its requisitions? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const success = await this.db.deleteTable(table.id, this.userId);
+
+      if (success) {
+        this.tables = this.tables.filter(t => t.id !== table.id);
+
+        if (this.selectedTableId === table.id) {
+          this.selectedTableId = this.tables[0]?.id || '';
+          await this.onTableChange();
+        }
+
+        this.showToast('Table deleted successfully', 'success');
+
+        if (this.showTableModal) {
+          this.closeTableModal();
+        }
+      } else {
+        this.showToast('Failed to delete table', 'error');
+      }
+    } catch (err) {
+      console.error('Delete table error:', err);
+      this.showToast('Failed to delete table', 'error');
+    }
+  }
+
+  // ────────────────────────────────────────────────
+  //  Requisition CRUD
+  // ────────────────────────────────────────────────
+
+  openModal() {
+    if (!this.selectedTableId && this.viewMode === 'my_tables') {
+      this.showToast('Please select a table first', 'error');
+      this.openTableModal();
+      return;
+    }
+
+    this.showModal = true;
+    this.submitted = false;
+    this.editingRequisition = null;
+    this.resetForm();
+  }
+
+  openEditModal(req: Requisition) {
+    console.log('Opening edit modal for requisition:', req);
+
+    if (!this.selectedTableId && this.viewMode === 'my_tables') {
+      this.showToast('Please select a table first', 'error');
+      return;
+    }
+
+    this.editingRequisition = req;
+    this.showModal = true;
+    this.submitted = false;
+
+    this.resetForm();
+
+    this.formData = {
+      type: req.type || '',
+      category: req.category || '',
+      skuName: req.skuName || '',
+      quantity: req.quantity || null,
+      unit: req.unit || '',
+      dateNeeded: req.dateNeeded || '',
+      supplier: req.supplier || '',
+      customSupplier: '',
+      brand: req.brand || '',
+      customBrand: '',
+      remarks: req.remarks || ''
+    };
+
+    const predefinedSuppliers = ['Supplier A', 'Supplier B', 'Supplier C'];
+    if (this.formData.supplier && !predefinedSuppliers.includes(this.formData.supplier)) {
+      this.formData.customSupplier = this.formData.supplier;
+      this.formData.supplier = '__other__';
+    }
+
+    const predefinedBrands = ['Brand X', 'Brand Y', 'Brand Z'];
+    if (this.formData.brand && !predefinedBrands.includes(this.formData.brand)) {
+      this.formData.customBrand = this.formData.brand;
+      this.formData.brand = '__other__';
+    }
+
+    this.selectedSkuCode = req.skuCode || '';
+
+    if (this.formData.category) {
+      this.onCategoryChange();
     }
   }
 
   async onSubmit() {
-    if (!this.selectedTableId) {
+    if (!this.selectedTableId && this.viewMode === 'my_tables') {
       this.showToast('Please select a table first', 'error');
       return;
     }
@@ -511,7 +826,7 @@ export class Page3Component implements OnInit {
     }
 
     this.submitted = true;
-    
+
     if (!this.validateForm()) {
       this.showToast('Please complete all required fields', 'error');
       return;
@@ -522,7 +837,7 @@ export class Page3Component implements OnInit {
     try {
       const skuName = this.formData.skuName;
       const selectedItem = this.availableSkus.find(item => item.sku_name === skuName);
-      const skuCode = selectedItem ? selectedItem.sku_code : '';
+      const skuCode = selectedItem ? selectedItem.sku_code : this.selectedSkuCode;
 
       const finalSupplier = this.formData.supplier === '__other__'
         ? this.formData.customSupplier?.trim()
@@ -541,7 +856,7 @@ export class Page3Component implements OnInit {
         reqNumber = `MR-${year}-${random}`;
       }
 
-      const requisitionData = {
+      const requisitionData: any = {
         reqNumber,
         type: this.formData.type,
         dateNeeded: this.formData.dateNeeded || 'ASAP',
@@ -551,38 +866,42 @@ export class Page3Component implements OnInit {
         unit: this.formData.unit,
         supplier: finalSupplier,
         brand: finalBrand,
-        status: 'Pending',
+        status: this.editingRequisition ? this.editingRequisition.status : 'Pending',
         category: this.formData.category,
         remarks: this.formData.remarks?.trim() || '',
         user_id: this.userId,
-        table_id: this.selectedTableId,
-        materials: []
+        table_id: this.selectedTableId || this.editingRequisition?.table_id || '',
+        updated_at: new Date().toISOString()
       };
+
+      if (this.editingRequisition && this.editingRequisition.created_at) {
+        requisitionData.created_at = this.editingRequisition.created_at;
+      }
 
       console.log('Submitting requisition data:', requisitionData);
 
       let result;
-      
+
       if (this.editingRequisition) {
         result = await this.db.updateRequisition(
           this.editingRequisition.id,
           requisitionData,
           this.userId,
-          this.selectedTableId
+          this.selectedTableId || this.editingRequisition.table_id || ''
         );
-        
+
         if (result) {
           this.showToast('Requisition updated successfully', 'success');
         }
       } else {
         result = await this.db.createRequisition(requisitionData, []);
-        
+
         if (result.success) {
           console.log('Requisition created with ID:', result.id);
           this.showToast('Requisition created successfully', 'success');
         }
       }
-      
+
       if (result && (result === true || result.success)) {
         await this.loadRequisitionsDirectly();
         await this.updateTableItemCount();
@@ -598,8 +917,97 @@ export class Page3Component implements OnInit {
     }
   }
 
+  async deleteRequisition(req: Requisition) {
+    if (!this.selectedTableId || !this.userId) return;
+
+    if (this.userRole !== 'admin' && req.user_id !== this.userId) {
+      this.showToast('You can only delete your own requisitions', 'error');
+      return;
+    }
+
+    if (req.status === 'Approved' || req.status === 'Delivered' || req.status === 'Production_Confirmed') {
+      this.showToast('Approved or confirmed requisitions cannot be deleted', 'error');
+      return;
+    }
+
+    if (!confirm(`Delete requisition ${req.reqNumber || 'Unknown'}?`)) return;
+
+    try {
+      const success = await this.db.deleteRequisition(req.id, this.userId, this.selectedTableId);
+      if (success) {
+        this.requisitions = this.requisitions.filter(r => r.id !== req.id);
+        this.applyFilter();
+        await this.updateTableItemCount();
+        this.showToast('Requisition deleted', 'success');
+      } else {
+        this.showToast('Could not delete requisition', 'error');
+      }
+    } catch (err) {
+      console.error('Delete error:', err);
+      this.showToast('Delete failed', 'error');
+    }
+  }
+
+  // ────────────────────────────────────────────────
+  //  Submit Table
+  // ────────────────────────────────────────────────
+
+  async submitTable(table: Table) {
+    if (this.userRole !== 'user' && this.userRole !== 'store' && this.userRole !== 'admin') {
+      this.showToast('Only store/user can submit tables', 'error');
+      return;
+    }
+
+    if (!confirm(`Submit table "${table.name}" and all its requisitions for approval?`)) return;
+
+    try {
+      const snapshot = await this.run(() => {
+        const requisitionsRef = collection(this.firestore, 'requisitions');
+        const q = query(
+          requisitionsRef,
+          where('table_id', '==', table.id),
+          where('user_id', '==', this.userId)
+        );
+        return getDocs(q);
+      });
+
+      await this.run(async () => {
+        const batch = writeBatch(this.firestore);
+
+        snapshot.forEach(d => {
+          batch.update(d.ref, {
+            status: 'Submitted',
+            submitted_at: new Date().toISOString()
+          });
+        });
+
+        const tableRef = doc(this.firestore, 'tables', table.id);
+        batch.update(tableRef, {
+          submitted: true,
+          submitted_at: new Date().toISOString()
+        });
+
+        await batch.commit();
+      });
+
+      table.submitted = true;
+      table.submitted_at = new Date().toISOString();
+
+      this.showToast(`Table "${table.name}" submitted successfully`, 'success');
+      await this.loadRequisitionsDirectly();
+
+    } catch (err) {
+      console.error('Submit table error:', err);
+      this.showToast('Failed to submit table', 'error');
+    }
+  }
+
+  // ────────────────────────────────────────────────
+  //  Individual Requisition Actions
+  // ────────────────────────────────────────────────
+
   async submitRequisition(req: Requisition) {
-    if (this.userRole !== 'user' && this.userRole !== 'store') {
+    if (this.userRole !== 'user' && this.userRole !== 'store' && this.userRole !== 'admin') {
       this.showToast('Only store/user can submit requisitions', 'error');
       return;
     }
@@ -627,64 +1035,70 @@ export class Page3Component implements OnInit {
     }
   }
 
-  async acceptByProduction(req: Requisition) {
-    if (this.userRole !== 'production' && this.userRole !== 'admin') {
-      this.showToast('Only production can accept requisitions', 'error');
-      return;
-    }
-    if (!confirm(`Accept requisition ${req.reqNumber || req.id} and send to procurement?`)) return;
+  // ────────────────────────────────────────────────
+  //  Production Actions
+  // ────────────────────────────────────────────────
 
-    try {
-      const success = await this.db.updateRequisitionStatus(
-        req.id,
-        'Production_Accepted',
-        this.userId,
-        req.table_id || '',
-        {}
-      );
-      if (success) {
-        await this.loadStoreSubmissions();
-        this.showToast('Requisition accepted and sent to procurement', 'success');
-      } else {
-        this.showToast('Failed to accept requisition', 'error');
-      }
-    } catch (err) {
-      console.error('Accept error:', err);
-      this.showToast('Failed to accept requisition', 'error');
-    }
-  }
-
-  openRejectModalProduction(req: Requisition) {
+  openProductionActionModal(req: Requisition, action: 'confirm' | 'remove') {
     this.selectedRequisition = req;
-    this.rejectionReason = '';
-    this.showRejectModal = true;
+    this.productionActionType = action;
+    this.productionActionNotes = '';
+    this.showProductionActionModal = true;
   }
 
-  async rejectByProduction() {
-    if (!this.selectedRequisition || !this.rejectionReason.trim()) {
-      this.showToast('Please provide a rejection reason', 'error');
-      return;
-    }
+  async confirmProductionAction() {
+    if (!this.selectedRequisition) return;
+
     try {
+      const updateData: any = {
+        production_action: this.productionActionType,
+        production_action_at: new Date().toISOString(),
+        production_action_by: this.userId
+      };
+
+      if (this.productionActionNotes) {
+        updateData.production_action_notes = this.productionActionNotes;
+      }
+
+      if (this.productionActionType === 'confirm') {
+        updateData.status = 'Production_Confirmed';
+      } else {
+        updateData.status = 'Removed';
+      }
+
       const success = await this.db.updateRequisitionStatus(
         this.selectedRequisition.id,
-        'Rejected',
+        updateData.status,
         this.userId,
         this.selectedRequisition.table_id || '',
-        { rejected_by: this.userId, rejection_reason: this.rejectionReason }
+        updateData
       );
+
       if (success) {
-        await this.loadStoreSubmissions();
-        this.closeRejectModal();
-        this.showToast('Requisition declined', 'success');
+        await this.loadProductionSubmissions();
+        this.closeProductionActionModal();
+        this.showToast(
+          `Requisition ${this.productionActionType === 'confirm' ? 'confirmed' : 'removed'} successfully`,
+          'success'
+        );
       } else {
-        this.showToast('Failed to decline requisition', 'error');
+        this.showToast('Failed to update requisition', 'error');
       }
     } catch (err) {
-      console.error('Reject error:', err);
-      this.showToast('Failed to decline requisition', 'error');
+      console.error('Production action error:', err);
+      this.showToast('Failed to update requisition', 'error');
     }
   }
+
+  closeProductionActionModal() {
+    this.showProductionActionModal = false;
+    this.selectedRequisition = null;
+    this.productionActionNotes = '';
+  }
+
+  // ────────────────────────────────────────────────
+  //  Procurement Actions
+  // ────────────────────────────────────────────────
 
   async markDelivered(req: Requisition) {
     if (this.userRole !== 'procurement' && this.userRole !== 'admin') {
@@ -702,7 +1116,7 @@ export class Page3Component implements OnInit {
         {}
       );
       if (success) {
-        await this.loadForDelivery();
+        await this.loadProcurementReviewed();
         this.showToast('Requisition marked as delivered', 'success');
       } else {
         this.showToast('Failed to update', 'error');
@@ -733,7 +1147,7 @@ export class Page3Component implements OnInit {
         { missing_materials_notes: this.missingMaterialsNotes }
       );
       if (success) {
-        await this.loadForDelivery();
+        await this.loadProcurementReviewed();
         this.closeMissingNotesModal();
         this.showToast('Notes saved - requisition marked as partially delivered', 'success');
       } else {
@@ -757,14 +1171,27 @@ export class Page3Component implements OnInit {
       return;
     }
 
-    if (req.status !== 'Submitted') {
-      this.showToast('Only submitted requisitions can be scheduled', 'error');
+    if (req.status !== 'Production_Confirmed') {
+      this.showToast('Only confirmed requisitions can be scheduled', 'error');
       return;
     }
 
     this.selectedRequisition = req;
-    this.scheduledDate = '';
-    this.scheduledTime = '';
+
+    if (req.scheduled_date) {
+      try {
+        const date = new Date(req.scheduled_date);
+        this.scheduledDate = date.toISOString().split('T')[0];
+        this.scheduledTime = date.toTimeString().split(' ')[0].substring(0, 5);
+      } catch (e) {
+        this.scheduledDate = '';
+        this.scheduledTime = '';
+      }
+    } else {
+      this.scheduledDate = '';
+      this.scheduledTime = '';
+    }
+
     this.showScheduleModal = true;
   }
 
@@ -775,15 +1202,17 @@ export class Page3Component implements OnInit {
     }
 
     try {
-      const scheduledDateTime = this.scheduledTime 
+      const scheduledDateTime = this.scheduledTime
         ? `${this.scheduledDate}T${this.scheduledTime}`
-        : this.scheduledDate;
+        : `${this.scheduledDate}T00:00:00`;
+
+      console.log('Scheduling requisition with date:', scheduledDateTime);
 
       const success = await this.db.updateRequisitionStatus(
         this.selectedRequisition.id,
         'Scheduled',
         this.userId,
-        this.selectedTableId || '',
+        this.selectedRequisition.table_id || this.selectedTableId || '',
         {
           scheduled_date: scheduledDateTime,
           scheduled_by: this.userId
@@ -791,7 +1220,7 @@ export class Page3Component implements OnInit {
       );
 
       if (success) {
-        await this.loadRequisitionsDirectly();
+        await this.loadProcurementReviewed();
         this.closeScheduleModal();
         this.showToast('Requisition scheduled successfully', 'success');
       } else {
@@ -802,6 +1231,17 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to schedule requisition', 'error');
     }
   }
+
+  closeScheduleModal() {
+    this.showScheduleModal = false;
+    this.selectedRequisition = null;
+    this.scheduledDate = '';
+    this.scheduledTime = '';
+  }
+
+  // ────────────────────────────────────────────────
+  //  Admin Actions
+  // ────────────────────────────────────────────────
 
   openApproveModal(req: Requisition) {
     if (this.userRole !== 'admin') {
@@ -830,7 +1270,8 @@ export class Page3Component implements OnInit {
         this.selectedTableId || '',
         {
           approved_by: this.userId,
-          approval_notes: this.approvalNotes || null
+          approval_notes: this.approvalNotes || null,
+          approved_at: new Date().toISOString()
         }
       );
 
@@ -847,6 +1288,12 @@ export class Page3Component implements OnInit {
     }
   }
 
+  closeApproveModal() {
+    this.showApproveModal = false;
+    this.selectedRequisition = null;
+    this.approvalNotes = '';
+  }
+
   openRejectModal(req: Requisition) {
     const canReject = this.userRole === 'production' || this.userRole === 'admin' || this.userRole === 'procurement';
     if (!canReject) {
@@ -860,17 +1307,7 @@ export class Page3Component implements OnInit {
   }
 
   async confirmReject() {
-    if (this.viewMode === 'store_submissions' && (this.userRole === 'production' || this.userRole === 'admin')) {
-      await this.rejectByProduction();
-    } else {
-      await this.rejectRequisition();
-    }
-  }
-
-  async rejectRequisition() {
-    if (!this.selectedRequisition) return;
-
-    if (!this.rejectionReason.trim()) {
+    if (!this.selectedRequisition || !this.rejectionReason.trim()) {
       this.showToast('Please provide a rejection reason', 'error');
       return;
     }
@@ -880,15 +1317,20 @@ export class Page3Component implements OnInit {
         this.selectedRequisition.id,
         'Rejected',
         this.userId,
-        this.selectedTableId || '',
+        this.selectedRequisition.table_id || '',
         {
           rejected_by: this.userId,
-          rejection_reason: this.rejectionReason
+          rejection_reason: this.rejectionReason,
+          rejected_at: new Date().toISOString()
         }
       );
 
       if (success) {
-        await this.loadRequisitionsDirectly();
+        if (this.userRole === 'production') {
+          await this.loadProductionSubmissions();
+        } else {
+          await this.loadRequisitionsDirectly();
+        }
         this.closeRejectModal();
         this.showToast('Requisition rejected', 'success');
       } else {
@@ -900,90 +1342,199 @@ export class Page3Component implements OnInit {
     }
   }
 
-  async deleteRequisition(req: Requisition) {
-    if (!this.selectedTableId || !this.userId) return;
-    
-    if (this.userRole !== 'admin' && req.user_id !== this.userId) {
-      this.showToast('You can only delete your own requisitions', 'error');
-      return;
-    }
+  closeRejectModal() {
+    this.showRejectModal = false;
+    this.selectedRequisition = null;
+    this.rejectionReason = '';
+  }
 
-    if (req.status === 'Approved') {
-      this.showToast('Approved requisitions cannot be deleted', 'error');
-      return;
-    }
-    
-    if (!confirm(`Delete requisition ${req.reqNumber || 'Unknown'}?`)) return;
+  // ────────────────────────────────────────────────
+  //  Materials Expand
+  // ────────────────────────────────────────────────
 
-    try {
-      const success = await this.db.deleteRequisition(req.id, this.userId, this.selectedTableId);
-      if (success) {
-        this.requisitions = this.requisitions.filter(r => r.id !== req.id);
-        this.applyFilter();
-        await this.updateTableItemCount();
-        this.showToast('Requisition deleted', 'success');
-      } else {
-        this.showToast('Could not delete requisition', 'error');
+  async toggleRow(req: Requisition) {
+    if (!req.id) return;
+
+    this.expandedRows[req.id] = !this.expandedRows[req.id];
+
+    if (this.expandedRows[req.id] && !req.materials) {
+      this.loadingMaterials[req.id] = true;
+      try {
+        let skuCode = (req.skuCode || req['sku_code'] || '').toString().trim();
+
+        if (!skuCode) {
+          console.error('No usable SKU code found in requisition');
+          this.showToast('No SKU code found for this requisition', 'error');
+          req.materials = [];
+          return;
+        }
+
+        const materials = await this.db.getMaterialsForSku(skuCode);
+
+        if (materials && materials.length > 0) {
+          req.materials = materials;
+        } else {
+          req.materials = [];
+        }
+      } catch (err) {
+        console.error('Error loading materials:', err);
+        req.materials = [];
+        this.showToast('Failed to load materials', 'error');
+      } finally {
+        this.loadingMaterials[req.id] = false;
       }
-    } catch (err) {
-      console.error('Delete error:', err);
-      this.showToast('Delete failed', 'error');
     }
   }
 
+  calculateMaterialTotal(quantity: number, qtyPerBatch: number | null): number {
+    const qty = quantity || 0;
+    const batchQty = qtyPerBatch || 0;
+    return batchQty * qty;
+  }
+
+  // ────────────────────────────────────────────────
+  //  SKU / Category Selection
+  // ────────────────────────────────────────────────
+
+  async onCategoryChange() {
+    if (!this.formData.category) {
+      this.availableSkus = [];
+      this.formData.skuName = '';
+      this.selectedSkuCode = '';
+      return;
+    }
+
+    try {
+      this.availableSkus = await this.db.getSkusByCategory(this.formData.category);
+
+      if (this.editingRequisition && this.formData.skuName) {
+        const skuExists = this.availableSkus.some(s => s.sku_name === this.formData.skuName);
+        if (!skuExists) {
+          this.formData.skuName = '';
+          this.selectedSkuCode = '';
+        } else {
+          const selectedItem = this.availableSkus.find(s => s.sku_name === this.formData.skuName);
+          this.selectedSkuCode = selectedItem ? selectedItem.sku_code : '';
+        }
+      } else {
+        this.formData.skuName = '';
+        this.selectedSkuCode = '';
+      }
+    } catch (err) {
+      console.error('Failed to load SKUs:', err);
+      this.showToast('Could not load SKUs', 'error');
+    }
+  }
+
+  onSkuNameSelect() {
+    if (!this.formData.skuName) {
+      this.selectedSkuCode = '';
+      return;
+    }
+
+    const selectedItem = this.availableSkus.find(item => item.sku_name === this.formData.skuName);
+    this.selectedSkuCode = selectedItem ? selectedItem.sku_code : '';
+    console.log('Selected SKU code:', this.selectedSkuCode);
+  }
+
+  // ────────────────────────────────────────────────
+  //  File Import
+  // ────────────────────────────────────────────────
+
+  async onFileSelected(event: any) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    this.selectedFileName = file.name;
+    this.importStatus = 'loading';
+    this.importMessage = 'Uploading...';
+
+    try {
+      const result = await this.db.uploadMasterData(file);
+      if (result.success) {
+        this.importStatus = 'success';
+        this.importMessage = `Imported ${result.count} rows`;
+        await this.loadCategories();
+        this.showToast('Master data imported successfully', 'success');
+      } else {
+        this.importStatus = 'error';
+        this.importMessage = result.error || 'Upload failed';
+        this.showToast(result.error || 'Upload failed', 'error');
+      }
+    } catch (err) {
+      this.importStatus = 'error';
+      this.importMessage = 'Upload error';
+      this.showToast('Upload error: ' + (err as Error).message, 'error');
+    }
+  }
+
+  // ────────────────────────────────────────────────
+  //  Production View Toggle
+  // ────────────────────────────────────────────────
+
+  switchProductionView(view: 'submissions' | 'reviewed') {
+    this.selectedProductionView = view;
+    this.filteredRequisitions = view === 'submissions'
+      ? this.productionSubmissions
+      : this.productionReviewed;
+    this.currentPage = 1;
+    this.updatePagination();
+  }
+
+  // ────────────────────────────────────────────────
+  //  Table Item Count
+  // ────────────────────────────────────────────────
+
+  async updateTableItemCount() {
+    if (!this.selectedTableId || !this.userId) return;
+
+    try {
+      await this.db.updateTableItemCount(
+        this.selectedTableId,
+        this.requisitions.length,
+        this.userId
+      );
+
+      if (this.selectedTable) {
+        this.selectedTable.item_count = this.requisitions.length;
+      }
+
+      const tableIndex = this.tables.findIndex(t => t.id === this.selectedTableId);
+      if (tableIndex !== -1) {
+        this.tables[tableIndex].item_count = this.requisitions.length;
+      }
+    } catch (err) {
+      console.error('Failed to update table item count:', err);
+    }
+  }
+
+  // ────────────────────────────────────────────────
+  //  Helpers & Permissions
+  // ────────────────────────────────────────────────
+
   validateForm(): boolean {
-    if (!this.formData.type || 
-        !this.formData.category || 
-        !this.formData.skuName ||
-        !this.formData.quantity || 
-        this.formData.quantity <= 0 ||
-        !this.formData.unit || 
-        !this.formData.supplier) {
+    if (
+      !this.formData.type ||
+      !this.formData.category ||
+      !this.formData.skuName ||
+      !this.formData.quantity ||
+      this.formData.quantity <= 0 ||
+      !this.formData.unit ||
+      !this.formData.supplier
+    ) {
       return false;
     }
-    
+
     if (this.formData.supplier === '__other__' && !this.formData.customSupplier?.trim()) {
       return false;
     }
-    
-    return true;
-  }
 
-  openModal() {
-    if (!this.selectedTableId) {
-      this.showToast('Please select a table first', 'error');
-      this.openTableModal();
-      return;
-    }
-    
-    this.showModal = true;
-    this.submitted = false;
-    this.editingRequisition = null;
-    this.resetForm();
+    return true;
   }
 
   closeModal() {
     this.showModal = false;
     this.editingRequisition = null;
-  }
-
-  closeScheduleModal() {
-    this.showScheduleModal = false;
-    this.selectedRequisition = null;
-    this.scheduledDate = '';
-    this.scheduledTime = '';
-  }
-
-  closeApproveModal() {
-    this.showApproveModal = false;
-    this.selectedRequisition = null;
-    this.approvalNotes = '';
-  }
-
-  closeRejectModal() {
-    this.showRejectModal = false;
-    this.selectedRequisition = null;
-    this.rejectionReason = '';
   }
 
   resetForm() {
@@ -1027,233 +1578,119 @@ export class Page3Component implements OnInit {
     }
   }
 
-  openTableModal() {
-    this.showTableModal = true;
-    this.newTableName = '';
-    this.editingTable = null;
-    this.editTableName = '';
-    this.showTableDropdown = false;
+  canCreateRequisition(): boolean {
+    return (
+      (this.userRole === 'user' || this.userRole === 'store' || this.userRole === 'admin') &&
+      this.viewMode === 'my_tables' &&
+      (!this.selectedTable || !this.selectedTable.submitted)
+    );
   }
 
-  closeTableModal() {
-    this.showTableModal = false;
-    this.editingTable = null;
+  canSubmitTable(): boolean {
+    return (
+      (this.userRole === 'user' || this.userRole === 'store' || this.userRole === 'admin') &&
+      this.viewMode === 'my_tables' &&
+      this.selectedTable !== null &&
+      !this.selectedTable.submitted &&
+      this.requisitions.length > 0
+    );
   }
 
-  async createTable() {
-    if (!this.newTableName.trim()) {
-      this.showToast('Please enter a table name', 'error');
-      return;
-    }
-    
-    if (!this.userId) {
-      this.showToast('You must be logged in', 'error');
-      return;
-    }
-
-    this.isSubmitting = true;
-    console.log('Creating table with name:', this.newTableName.trim(), 'for user:', this.userId);
-
-    try {
-      const result = await this.db.createUserTable({
-        name: this.newTableName.trim(),
-        user_id: this.userId
-      }, 'requisition');
-
-      console.log('Create table result:', result);
-
-      if (result.success && result.tableId) {
-        const newTable: Table = {
-          id: result.tableId,
-          name: this.newTableName.trim(),
-          user_id: this.userId,
-          type: 'requisition',
-          item_count: 0,
-          created_at: new Date().toISOString()
-        };
-        
-        this.tables.push(newTable);
-        this.selectedTableId = result.tableId;
-        this.selectedTable = newTable;
-        
-        localStorage.setItem(`lastSelectedRequisitionTable_${this.userId}`, this.selectedTableId);
-        
-        this.newTableName = '';
-        this.closeTableModal();
-        this.showToast('Table created successfully', 'success');
-        
-        await this.loadRequisitionsDirectly();
-      } else {
-        this.showToast('Failed to create table - no table ID returned', 'error');
-      }
-    } catch (err) {
-      console.error('Create table error:', err);
-      this.showToast('Failed to create table: ' + (err as Error).message, 'error');
-    } finally {
-      this.isSubmitting = false;
-    }
+  canSubmitRequisition(req: Requisition): boolean {
+    return (
+      (this.userRole === 'user' || this.userRole === 'store' || this.userRole === 'admin') &&
+      req.status === 'Pending' &&
+      req.user_id === this.userId &&
+      this.selectedTable !== null &&
+      !this.selectedTable.submitted
+    );
   }
 
-  editTable(table: Table) {
-    if (table.user_id !== this.userId) {
-      this.showToast('You can only edit your own tables', 'error');
-      return;
-    }
-    if (table.type !== 'requisition') {
-      this.showToast('Invalid table type', 'error');
-      return;
-    }
-    this.editingTable = table;
-    this.editTableName = table.name;
-    this.openTableModal();
+  canProductionAction(req: Requisition): boolean {
+    return this.userRole === 'production' && req.status === 'Submitted';
   }
 
-  async updateTableName() {
-    if (!this.editingTable || !this.editTableName.trim()) return;
-
-    try {
-      const success = await this.db.updateTableName(
-        this.editingTable.id,
-        this.editTableName.trim(),
-        this.userId
-      );
-
-      if (success) {
-        const index = this.tables.findIndex(t => t.id === this.editingTable!.id);
-        if (index !== -1) {
-          this.tables[index].name = this.editTableName.trim();
-        }
-        
-        if (this.selectedTable?.id === this.editingTable.id) {
-          this.selectedTable.name = this.editTableName.trim();
-        }
-        
-        this.closeTableModal();
-        this.showToast('Table renamed successfully', 'success');
-      } else {
-        this.showToast('Failed to rename table', 'error');
-      }
-    } catch (err) {
-      console.error('Rename table error:', err);
-      this.showToast('Failed to rename table', 'error');
-    }
+  canMarkDelivered(req: Requisition): boolean {
+    return (
+      (this.userRole === 'procurement' || this.userRole === 'admin') &&
+      req.status === 'Production_Confirmed'
+    );
   }
 
-  async selectTable(table: Table) {
-    if (table.user_id !== this.userId) {
-      this.showToast('You can only access your own tables', 'error');
-      return;
-    }
-    
-    if (table.type !== 'requisition') {
-      this.showToast('Invalid table type', 'error');
-      return;
-    }
-    
-    this.selectedTableId = table.id;
-    this.selectedTable = table;
-    this.showTableDropdown = false;
-    this.showAllPending = false;
-    
-    this.searchQuery = '';
-    this.filterStatus = '';
-    
-    localStorage.setItem(`lastSelectedRequisitionTable_${this.userId}`, this.selectedTableId);
-    
-    await this.loadRequisitionsDirectly();
-    
-    this.showToast(`Switched to table: ${table.name}`, 'success');
+  canAddMissingNotes(req: Requisition): boolean {
+    return (
+      (this.userRole === 'procurement' || this.userRole === 'admin') &&
+      req.status === 'Production_Confirmed'
+    );
   }
 
-  async deleteTable(table: Table) {
-    if (this.tables.length <= 1) {
-      this.showToast('Cannot delete the last table', 'error');
-      return;
-    }
+  canScheduleRequisition(req: Requisition): boolean {
+    return (
+      (this.userRole === 'procurement' || this.userRole === 'admin') &&
+      req.status === 'Production_Confirmed'
+    );
+  }
 
-    if (table.user_id !== this.userId) {
-      this.showToast('You can only delete your own tables', 'error');
-      return;
-    }
+  canApproveRequisition(req: Requisition): boolean {
+    return this.userRole === 'admin' && req.status === 'Scheduled';
+  }
 
-    if (table.type !== 'requisition') {
-      this.showToast('Invalid table type', 'error');
-      return;
-    }
+  canRejectRequisition(req: Requisition): boolean {
+    return (
+      (this.userRole === 'production' || this.userRole === 'admin') &&
+      (req.status === 'Submitted' || req.status === 'Production_Confirmed')
+    ) || (
+      this.userRole === 'procurement' && req.status === 'Production_Confirmed'
+    );
+  }
 
-    if (!confirm(`Delete table "${table.name}" and all its requisitions? This cannot be undone.`)) {
-      return;
-    }
+  canEditRequisition(req: Requisition): boolean {
+    return (
+      this.viewMode === 'my_tables' &&
+      (this.userRole === 'admin' || req.user_id === this.userId) &&
+      req.status !== 'Submitted' &&
+      req.status !== 'Approved' &&
+      req.status !== 'Rejected' &&
+      req.status !== 'Delivered' &&
+      req.status !== 'Partially_Delivered' &&
+      this.selectedTable !== null &&
+      !this.selectedTable.submitted
+    );
+  }
 
-    try {
-      const success = await this.db.deleteTable(table.id, this.userId);
+  canDeleteRequisition(req: Requisition): boolean {
+    return (
+      this.viewMode === 'my_tables' &&
+      (
+        this.userRole === 'admin' ||
+        ((this.userRole === 'user' || this.userRole === 'store') && req.user_id === this.userId)
+      ) &&
+      req.status !== 'Submitted' &&
+      req.status !== 'Approved' &&
+      req.status !== 'Delivered' &&
+      this.selectedTable !== null &&
+      !this.selectedTable.submitted
+    );
+  }
 
-      if (success) {
-        this.tables = this.tables.filter(t => t.id !== table.id);
-        
-        if (this.selectedTableId === table.id) {
-          this.selectedTableId = this.tables[0]?.id || '';
-          await this.onTableChange();
-        }
-        
-        this.showToast('Table deleted successfully', 'success');
-        
-        if (this.showTableModal) {
-          this.closeTableModal();
-        }
-      } else {
-        this.showToast('Failed to delete table', 'error');
-      }
-    } catch (err) {
-      console.error('Delete table error:', err);
-      this.showToast('Failed to delete table', 'error');
+  getStatusBadgeClass(status: string): string {
+    switch (status) {
+      case 'Pending': return 'status-pending';
+      case 'Submitted': return 'status-submitted';
+      case 'Scheduled': return 'status-scheduled';
+      case 'Approved': return 'status-approved';
+      case 'Rejected': return 'status-rejected';
+      case 'Production_Confirmed': return 'status-scheduled';
+      case 'Removed': return 'status-rejected';
+      case 'Delivered': return 'status-approved';
+      case 'Partially_Delivered': return 'status-pending';
+      default: return 'status-pending';
     }
   }
 
-  async updateTableItemCount() {
-    if (!this.selectedTableId || !this.userId) return;
-    
-    try {
-      await this.db.updateTableItemCount(
-        this.selectedTableId,
-        this.requisitions.length,
-        this.userId
-      );
-      
-      if (this.selectedTable) {
-        this.selectedTable.item_count = this.requisitions.length;
-      }
-      
-      const tableIndex = this.tables.findIndex(t => t.id === this.selectedTableId);
-      if (tableIndex !== -1) {
-        this.tables[tableIndex].item_count = this.requisitions.length;
-      }
-    } catch (err) {
-      console.error('Failed to update table item count:', err);
-    }
-  }
-
-  showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
-    this.snackbarMessage = message;
-    this.snackbarType = type;
-    this.showSnackbar = true;
-    
-    if (this.snackbarTimeout) {
-      clearTimeout(this.snackbarTimeout);
-    }
-    
-    this.snackbarTimeout = setTimeout(() => {
-      this.hideSnackbar();
-    }, 3000);
-  }
-
-  hideSnackbar() {
-    this.showSnackbar = false;
-    if (this.snackbarTimeout) {
-      clearTimeout(this.snackbarTimeout);
-      this.snackbarTimeout = null;
-    }
-  }
+  // ────────────────────────────────────────────────
+  //  Filter & Pagination
+  // ────────────────────────────────────────────────
 
   applyFilter() {
     let filtered = [...this.requisitions];
@@ -1273,7 +1710,6 @@ export class Page3Component implements OnInit {
     }
 
     this.filteredRequisitions = filtered;
-    console.log('Filtered requisitions:', this.filteredRequisitions);
     this.currentPage = 1;
     this.updatePagination();
   }
@@ -1282,7 +1718,6 @@ export class Page3Component implements OnInit {
     this.totalPages = Math.max(1, Math.ceil(this.filteredRequisitions.length / this.pageSize));
     const start = (this.currentPage - 1) * this.pageSize;
     this.paginatedRequisitions = this.filteredRequisitions.slice(start, start + this.pageSize);
-    console.log('Paginated requisitions:', this.paginatedRequisitions);
   }
 
   goToPage(page: number) {
@@ -1297,65 +1732,29 @@ export class Page3Component implements OnInit {
     this.updatePagination();
   }
 
-  canCreateRequisition(): boolean {
-    return (this.userRole === 'user' || this.userRole === 'store') && this.viewMode === 'my_tables';
+  // ────────────────────────────────────────────────
+  //  Toast
+  // ────────────────────────────────────────────────
+
+  showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
+    this.snackbarMessage = message;
+    this.snackbarType = type;
+    this.showSnackbar = true;
+
+    if (this.snackbarTimeout) {
+      clearTimeout(this.snackbarTimeout);
+    }
+
+    this.snackbarTimeout = setTimeout(() => {
+      this.hideSnackbar();
+    }, 3000);
   }
 
-  canSubmitRequisition(req: Requisition): boolean {
-    return (this.userRole === 'user' || this.userRole === 'store') && req.status === 'Pending' && req.user_id === this.userId;
-  }
-
-  canAcceptByProduction(req: Requisition): boolean {
-    return (this.userRole === 'production' || this.userRole === 'admin') && req.status === 'Submitted';
-  }
-
-  canDeclineByProduction(req: Requisition): boolean {
-    return (this.userRole === 'production' || this.userRole === 'admin') && req.status === 'Submitted';
-  }
-
-  canMarkDelivered(req: Requisition): boolean {
-    return (this.userRole === 'procurement' || this.userRole === 'admin') && req.status === 'Production_Accepted';
-  }
-
-  canAddMissingNotes(req: Requisition): boolean {
-    return (this.userRole === 'procurement' || this.userRole === 'admin') && req.status === 'Production_Accepted';
-  }
-
-  canScheduleRequisition(req: Requisition): boolean {
-    return (this.userRole === 'procurement' || this.userRole === 'admin') && req.status === 'Submitted';
-  }
-
-  canApproveRequisition(req: Requisition): boolean {
-    return this.userRole === 'admin' && req.status === 'Scheduled';
-  }
-
-  canRejectRequisition(req: Requisition): boolean {
-    return (this.userRole === 'production' || this.userRole === 'admin') && req.status === 'Submitted' ||
-           (this.userRole === 'admin' || this.userRole === 'procurement') && 
-           (req.status === 'Submitted' || req.status === 'Scheduled');
-  }
-
-  canEditRequisition(req: Requisition): boolean {
-    return this.viewMode === 'my_tables' && (this.userRole === 'admin' || req.user_id === this.userId) && 
-           req.status !== 'Approved' && req.status !== 'Rejected' && req.status !== 'Delivered' && req.status !== 'Partially_Delivered';
-  }
-
-  canDeleteRequisition(req: Requisition): boolean {
-    return this.viewMode === 'my_tables' && (this.userRole === 'admin' || ((this.userRole === 'user' || this.userRole === 'store') && req.user_id === this.userId)) && 
-           req.status !== 'Approved' && req.status !== 'Delivered';
-  }
-
-  getStatusBadgeClass(status: string): string {
-    switch(status) {
-      case 'Pending': return 'status-pending';
-      case 'Submitted': return 'status-submitted';
-      case 'Scheduled': return 'status-scheduled';
-      case 'Approved': return 'status-approved';
-      case 'Rejected': return 'status-rejected';
-      case 'Production_Accepted': return 'status-scheduled';
-      case 'Delivered': return 'status-approved';
-      case 'Partially_Delivered': return 'status-pending';
-      default: return 'status-pending';
+  hideSnackbar() {
+    this.showSnackbar = false;
+    if (this.snackbarTimeout) {
+      clearTimeout(this.snackbarTimeout);
+      this.snackbarTimeout = null;
     }
   }
 }

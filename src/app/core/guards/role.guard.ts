@@ -1,8 +1,9 @@
 // src/app/core/guards/role.guard.ts
-import { Injectable } from '@angular/core';
-import { CanActivate, ActivatedRouteSnapshot, Router } from '@angular/router';
+import { Injectable, Inject, PLATFORM_ID } from '@angular/core';
+import { CanActivate, ActivatedRouteSnapshot, Router, RouterStateSnapshot } from '@angular/router';
 import { AuthService } from '../services/auth.service';
-import { Firestore, doc, getDoc } from '@angular/fire/firestore'; // Import getDoc from @angular/fire/firestore
+import { Firestore, doc, getDoc } from '@angular/fire/firestore';
+import { isPlatformBrowser } from '@angular/common';
 
 @Injectable({
   providedIn: 'root'
@@ -11,15 +12,19 @@ export class RoleGuard implements CanActivate {
   constructor(
     private authService: AuthService,
     private firestore: Firestore,
-    private router: Router
+    private router: Router,
+    @Inject(PLATFORM_ID) private platformId: Object
   ) {}
 
-  async canActivate(route: ActivatedRouteSnapshot): Promise<boolean> {
-    const user = await this.authService.getCurrentUserPromise();
+  async canActivate(route: ActivatedRouteSnapshot, state: RouterStateSnapshot): Promise<boolean> {
+    console.log('RoleGuard: Checking role for route:', state.url);
+    
+    // Wait for auth to be ready and get user
+    const user = await this.authService.getCurrentUserPromise(8000);
     
     if (!user) {
       console.log('RoleGuard: No user found, redirecting to landing');
-      this.router.navigate(['/']);
+      await this.router.navigate(['/']);
       return false;
     }
 
@@ -45,14 +50,12 @@ export class RoleGuard implements CanActivate {
         return true;
       }
 
-      // If user doesn't have required role, redirect to dashboard
-      console.log('RoleGuard: User role', userRole, 'not allowed for route:', route.url);
-      this.router.navigate(['/dashboard']);
+      console.log('RoleGuard: User role', userRole, 'not allowed for route:', state.url);
+      await this.router.navigate(['/dashboard']);
       return false;
     } catch (err) {
       console.error('RoleGuard: Error checking role:', err);
-      // Redirect to landing (NOT /dashboard) to avoid loop - /dashboard children also use RoleGuard
-      this.router.navigate(['/']);
+      await this.router.navigate(['/']);
       return false;
     }
   }
