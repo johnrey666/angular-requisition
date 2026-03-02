@@ -6,8 +6,9 @@ import { ThemeService } from '../core/services/theme.service';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../core/services/auth.service';
 import { UserService } from '../core/services/user.service';
-import { Observable, firstValueFrom, Subscription } from 'rxjs';
-import { Firestore, collection, getDocs, doc, setDoc, query, orderBy, getDoc, serverTimestamp } from '@angular/fire/firestore';
+import { NotificationService, Notification } from '../core/services/notification.service';
+import { Observable, Subscription } from 'rxjs';
+import { Firestore, collection, getDocs, doc, setDoc, query, orderBy, getDoc as getFirestoreDoc, serverTimestamp } from '@angular/fire/firestore';
 import { User } from '@angular/fire/auth';
 
 interface NavItem {
@@ -34,6 +35,7 @@ interface UserData {
 })
 export class DashboardComponent implements OnInit, OnDestroy {
   @ViewChild('settingsContainer') settingsContainer!: ElementRef;
+  @ViewChild('notificationsContainer') notificationsContainer!: ElementRef;
   
   collapsed = signal(false);
 
@@ -51,6 +53,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   // Settings & modal state
   showSettings = false;
+  showNotifications = false;
   showUserListModal = false;
   showCreateUserModal = false;
   showLogoutConfirm = false;
@@ -72,6 +75,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   createError: string | null = null;
   createSuccess: string | null = null;
 
+  // Notifications
+  notifications: Notification[] = [];
+  unreadCount = 0;
+  loadingNotifications = false;
+  private notificationsUnsubscribe: (() => void) | null = null;
+
   // During user creation, auth temporarily switches to new user - ignore that to stay as admin
   private isCreatingUser = false;
 
@@ -85,7 +94,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private userService: UserService,
     private firestore: Firestore,
-    private router: Router
+    private router: Router,
+    private notificationService: NotificationService
   ) {
     // Get the observable from the auth service
     this.user$ = this.authService.getCurrentUserObservable();
@@ -103,6 +113,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (this.showSettings && this.settingsContainer && 
         !this.settingsContainer.nativeElement.contains(event.target)) {
       this.showSettings = false;
+    }
+    
+    if (this.showNotifications && this.notificationsContainer && 
+        !this.notificationsContainer.nativeElement.contains(event.target)) {
+      this.showNotifications = false;
     }
   }
 
@@ -122,11 +137,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
       if (user?.uid) {
         console.log('Dashboard - User authenticated, loading role for:', user.uid);
         await this.loadUserRole(user.uid);
+        
+        // Subscribe to notifications for production users
+        if (this.userRole === 'production') {
+          this.subscribeToNotifications();
+        }
       } else {
         console.log('Dashboard - No user, clearing role');
         this.userRole = null;
         this.isAdmin = false;
         this.filteredNavItems = [];
+        this.unsubscribeFromNotifications();
       }
     });
   }
@@ -135,6 +156,25 @@ export class DashboardComponent implements OnInit, OnDestroy {
     // Clean up subscription
     if (this.authSubscription) {
       this.authSubscription.unsubscribe();
+    }
+    this.unsubscribeFromNotifications();
+  }
+
+  private subscribeToNotifications() {
+    this.unsubscribeFromNotifications();
+    
+    this.notificationsUnsubscribe = this.notificationService.subscribeToNotifications(
+      (notifications) => {
+        this.notifications = notifications;
+        this.unreadCount = notifications.length;
+      }
+    );
+  }
+
+  private unsubscribeFromNotifications() {
+    if (this.notificationsUnsubscribe) {
+      this.notificationsUnsubscribe();
+      this.notificationsUnsubscribe = null;
     }
   }
 
@@ -153,7 +193,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       console.log('loadUserRole - Fetching user doc for:', userId);
       const userDocRef = doc(this.firestore, 'users', userId);
-      const userDoc = await getDoc(userDocRef);
+      const userDoc = await getFirestoreDoc(userDocRef);
       
       if (userDoc.exists()) {
         const data = userDoc.data();
@@ -242,6 +282,17 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   toggleSettings() {
     this.showSettings = !this.showSettings;
+    if (this.showSettings) {
+      this.showNotifications = false;
+    }
+  }
+
+  toggleNotifications() {
+    this.showNotifications = !this.showNotifications;
+    if (this.showNotifications) {
+      this.showSettings = false;
+      this.loadNotifications();
+    }
   }
 
   // Open user list modal first
@@ -437,5 +488,53 @@ export class DashboardComponent implements OnInit, OnDestroy {
   // Helper method to check if current route is active
   isRouteActive(route: string): boolean {
     return this.router.url === route;
+  }
+
+  // Notification methods
+  async loadNotifications() {
+    this.loadingNotifications = true;
+    try {
+      this.notifications = await this.notificationService.getAllNotifications();
+      this.unreadCount = this.notifications.filter(n => !n.read).length;
+    } catch (err) {
+      console.error('Failed to load notifications:', err);
+    } finally {
+      this.loadingNotifications = false;
+    }
+  }
+
+  async handleNotificationClick(notification: Notification) {
+    // Mark as read
+    if (!notification.read) {
+      await this.notificationService.markAsRead(notification.id!);
+    }
+    
+    // Navigate to production page with the table selected
+    if (notification.type === 'table_submitted') {
+      this.router.navigate(['/dashboard/production'], {
+        queryParams: { tableId: notification.tableId }
+      });
+    }
+    
+    this.showNotifications = false;
+  }
+
+  async dismissNotification(notification: Notification, event: Event) {
+    event.stopPropagation();
+    await this.notificationService.deleteNotification(notification.id!);
+    this.notifications = this.notifications.filter(n => n.id !== notification.id);
+    this.unreadCount = this.notifications.filter(n => !n.read).length;
+  }
+
+  async markAllNotificationsRead() {
+    await this.notificationService.markAllAsRead();
+    this.notifications.forEach(n => n.read = true);
+    this.unreadCount = 0;
+  }
+
+  viewAllNotifications() {
+    // Navigate to notifications page (you can create this later)
+    this.showNotifications = false;
+    // this.router.navigate(['/dashboard/notifications']);
   }
 }

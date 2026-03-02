@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { runInInjectionContext } from '@angular/core';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { NotificationService } from '../../../core/services/notification.service';
 import {
   Firestore, doc, collection, query, where, getDocs,
   orderBy, writeBatch
@@ -195,7 +196,8 @@ export class Page3Component implements OnInit {
     private auth: AuthService,
     private firestore: Firestore,
     private router: Router,
-    private injector: Injector
+    private injector: Injector,
+    private notificationService: NotificationService
   ) {}
 
   // ────────────────────────────────────────────────
@@ -950,7 +952,7 @@ export class Page3Component implements OnInit {
   }
 
   // ────────────────────────────────────────────────
-  //  Submit Table
+  //  Submit Table - UPDATED to notify production
   // ────────────────────────────────────────────────
 
   async submitTable(table: Table) {
@@ -994,7 +996,14 @@ export class Page3Component implements OnInit {
       table.submitted = true;
       table.submitted_at = new Date().toISOString();
 
-      this.showToast(`Table "${table.name}" submitted successfully`, 'success');
+      // Send notification to all production users
+      await this.notificationService.sendTableSubmittedNotification(
+        table.id,
+        table.name,
+        this.userId
+      );
+
+      this.showToast(`Table "${table.name}" submitted successfully and production has been notified`, 'success');
       await this.loadRequisitionsDirectly();
 
     } catch (err) {
