@@ -11,7 +11,7 @@ import {
   orderBy, writeBatch
 } from '@angular/fire/firestore';
 import { getDoc } from 'firebase/firestore';
-import { Router } from '@angular/router';
+import { Router, ActivatedRoute } from '@angular/router';
 
 interface Material {
   raw_material: string;
@@ -196,21 +196,14 @@ export class Page3Component implements OnInit {
     private auth: AuthService,
     private firestore: Firestore,
     private router: Router,
+    private route: ActivatedRoute,
     private injector: Injector,
     private notificationService: NotificationService
   ) {}
 
-  // ────────────────────────────────────────────────
-  //  PRIVATE HELPER — run any Firestore call safely
-  // ────────────────────────────────────────────────
-
   private run<T>(fn: () => Promise<T>): Promise<T> {
     return runInInjectionContext(this.injector, fn);
   }
-
-  // ────────────────────────────────────────────────
-  //  Init
-  // ────────────────────────────────────────────────
 
   async ngOnInit() {
     console.log('Page3Component initialized');
@@ -229,6 +222,18 @@ export class Page3Component implements OnInit {
 
       this.setViewModeByRole();
       await this.loadTablesDirectly();
+      
+      this.route.queryParams.subscribe(async params => {
+        if (params['tableId']) {
+          console.log('Opening table from notification:', params['tableId']);
+          setTimeout(async () => {
+            const tableToSelect = this.tables.find(t => t.id === params['tableId']);
+            if (tableToSelect) {
+              await this.selectTable(tableToSelect);
+            }
+          }, 1000);
+        }
+      });
     } else {
       console.log('No user found, redirecting to login');
       this.showToast('Please log in to continue', 'error');
@@ -246,10 +251,6 @@ export class Page3Component implements OnInit {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Load Tables
-  // ────────────────────────────────────────────────
-
   async loadTablesDirectly() {
     console.log('Loading tables directly from Firestore for user:', this.userId);
 
@@ -258,7 +259,6 @@ export class Page3Component implements OnInit {
       const tablesRef = collection(this.firestore, 'tables');
 
       if (this.userRole === 'production' || this.userRole === 'procurement') {
-        // For production/procurement, load ALL submitted tables
         const querySnapshot = await this.run(() => {
           const q = query(
             tablesRef,
@@ -289,39 +289,26 @@ export class Page3Component implements OnInit {
 
         this.tables = loadedTables;
 
-        // Set the view mode correctly
         if (this.userRole === 'production') {
           this.viewMode = 'store_submissions';
           this.selectedProductionView = 'submissions';
+          await this.loadProductionSubmissions();
           
-          // Select the first table if available
           if (this.tables.length > 0) {
             this.selectedTableId = this.tables[0].id;
             this.selectedTable = this.tables[0];
-            // Load requisitions for the selected table
-            await this.loadProductionSubmissions();
-          } else {
-            // No tables found
-            this.productionSubmissions = [];
-            this.productionReviewed = [];
-            this.filteredRequisitions = [];
-            this.isLoading = false;
           }
         } else if (this.userRole === 'procurement') {
           this.viewMode = 'for_delivery';
+          await this.loadProcurementReviewed();
+          
           if (this.tables.length > 0) {
             this.selectedTableId = this.tables[0].id;
             this.selectedTable = this.tables[0];
-            await this.loadProcurementReviewed();
-          } else {
-            this.procurementReviewed = [];
-            this.filteredRequisitions = [];
-            this.isLoading = false;
           }
         }
 
       } else {
-        // Regular users / store / admin
         const querySnapshot = await this.run(() => {
           const q = query(
             tablesRef,
@@ -372,10 +359,6 @@ export class Page3Component implements OnInit {
       this.isLoading = false;
     }
   }
-
-  // ────────────────────────────────────────────────
-  //  Load Requisitions
-  // ────────────────────────────────────────────────
 
   async loadRequisitionsDirectly() {
     if (!this.selectedTableId) {
@@ -434,21 +417,15 @@ export class Page3Component implements OnInit {
     }
   }
 
+  // FIXED: Load ALL production submissions without table filter
   async loadProductionSubmissions() {
-    if (!this.selectedTableId) {
-      console.log('No table selected for production view');
-      return;
-    }
-
     this.isLoading = true;
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
-      // Load submitted requisitions for the selected table
       const submissionsSnapshot = await this.run(() => {
         const q = query(
           requisitionsRef,
-          where('table_id', '==', this.selectedTableId),
           where('status', '==', 'Submitted'),
           orderBy('submitted_at', 'desc')
         );
@@ -461,11 +438,9 @@ export class Page3Component implements OnInit {
         submissions.push({ id: doc.id, ...data } as Requisition);
       });
 
-      // Load reviewed requisitions for the selected table
       const reviewedSnapshot = await this.run(() => {
         const q = query(
           requisitionsRef,
-          where('table_id', '==', this.selectedTableId),
           where('production_action', 'in', ['confirmed', 'removed']),
           orderBy('production_action_at', 'desc')
         );
@@ -481,18 +456,16 @@ export class Page3Component implements OnInit {
       this.productionSubmissions = submissions;
       this.productionReviewed = reviewed;
 
-      // Load table names for all requisitions
       await this.loadTableNamesForRequisitions([...submissions, ...reviewed]);
 
-      // Set the filtered requisitions based on current view
       if (this.selectedProductionView === 'submissions') {
         this.filteredRequisitions = [...this.productionSubmissions];
       } else {
         this.filteredRequisitions = [...this.productionReviewed];
       }
 
-      console.log('Loaded production submissions for table', this.selectedTableId, ':', this.productionSubmissions.length);
-      console.log('Loaded production reviewed for table', this.selectedTableId, ':', this.productionReviewed.length);
+      console.log('PRODUCTION SUBMISSIONS LOADED:', this.productionSubmissions.length);
+      console.log('PRODUCTION REVIEWED LOADED:', this.productionReviewed.length);
       console.log('Current filtered requisitions:', this.filteredRequisitions.length);
 
       this.updatePagination();
@@ -505,21 +478,15 @@ export class Page3Component implements OnInit {
     }
   }
 
+  // FIXED: Load ALL procurement items without table filter
   async loadProcurementReviewed() {
-    if (!this.selectedTableId) {
-      console.log('No table selected for procurement view');
-      return;
-    }
-
     this.isLoading = true;
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
       
-      // Load confirmed requisitions for the selected table
       const snapshot = await this.run(() => {
         const q = query(
           requisitionsRef,
-          where('table_id', '==', this.selectedTableId),
           where('production_action', '==', 'confirmed'),
           orderBy('production_action_at', 'desc')
         );
@@ -536,12 +503,105 @@ export class Page3Component implements OnInit {
       await this.loadTableNamesForRequisitions(reviewed);
 
       this.filteredRequisitions = [...this.procurementReviewed];
-      console.log('Loaded procurement reviewed for table', this.selectedTableId, ':', this.filteredRequisitions.length);
+      console.log('PROCUREMENT REVIEWED LOADED:', this.filteredRequisitions.length);
       this.updatePagination();
 
     } catch (err) {
       console.error('Failed to load procurement reviewed', err);
       this.showToast('Failed to load reviewed requisitions', 'error');
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  // Load production submissions for a specific table (when table is selected)
+  async loadProductionSubmissionsForTable(tableId: string) {
+    this.isLoading = true;
+    try {
+      const requisitionsRef = collection(this.firestore, 'requisitions');
+
+      const submissionsSnapshot = await this.run(() => {
+        const q = query(
+          requisitionsRef,
+          where('table_id', '==', tableId),
+          where('status', '==', 'Submitted'),
+          orderBy('submitted_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      const submissions: Requisition[] = [];
+      submissionsSnapshot.forEach(doc => {
+        const data = doc.data();
+        submissions.push({ id: doc.id, ...data } as Requisition);
+      });
+
+      const reviewedSnapshot = await this.run(() => {
+        const q = query(
+          requisitionsRef,
+          where('table_id', '==', tableId),
+          where('production_action', 'in', ['confirmed', 'removed']),
+          orderBy('production_action_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      const reviewed: Requisition[] = [];
+      reviewedSnapshot.forEach(doc => {
+        const data = doc.data();
+        reviewed.push({ id: doc.id, ...data } as Requisition);
+      });
+
+      this.productionSubmissions = submissions;
+      this.productionReviewed = reviewed;
+
+      await this.loadTableNamesForRequisitions([...submissions, ...reviewed]);
+
+      if (this.selectedProductionView === 'submissions') {
+        this.filteredRequisitions = [...this.productionSubmissions];
+      } else {
+        this.filteredRequisitions = [...this.productionReviewed];
+      }
+
+      this.updatePagination();
+
+    } catch (err) {
+      console.error('Failed to load production submissions for table', err);
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  // Load procurement items for a specific table (when table is selected)
+  async loadProcurementReviewedForTable(tableId: string) {
+    this.isLoading = true;
+    try {
+      const requisitionsRef = collection(this.firestore, 'requisitions');
+      
+      const snapshot = await this.run(() => {
+        const q = query(
+          requisitionsRef,
+          where('table_id', '==', tableId),
+          where('production_action', '==', 'confirmed'),
+          orderBy('production_action_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      const reviewed: Requisition[] = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        reviewed.push({ id: doc.id, ...data } as Requisition);
+      });
+
+      this.procurementReviewed = reviewed;
+      await this.loadTableNamesForRequisitions(reviewed);
+
+      this.filteredRequisitions = [...this.procurementReviewed];
+      this.updatePagination();
+
+    } catch (err) {
+      console.error('Failed to load procurement reviewed for table', err);
     } finally {
       this.isLoading = false;
     }
@@ -585,10 +645,6 @@ export class Page3Component implements OnInit {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Table Selection & CRUD
-  // ────────────────────────────────────────────────
-
   async onTableChange() {
     if (!this.selectedTableId) {
       this.requisitions = [];
@@ -607,9 +663,9 @@ export class Page3Component implements OnInit {
     console.log('Selected table:', this.selectedTable);
 
     if (this.userRole === 'production') {
-      await this.loadProductionSubmissions();
+      await this.loadProductionSubmissionsForTable(this.selectedTableId);
     } else if (this.userRole === 'procurement') {
-      await this.loadProcurementReviewed();
+      await this.loadProcurementReviewedForTable(this.selectedTableId);
     } else {
       await this.loadRequisitionsDirectly();
     }
@@ -621,11 +677,10 @@ export class Page3Component implements OnInit {
       this.selectedTable = table;
       this.showTableDropdown = false;
       
-      // Reload data for the selected table
       if (this.userRole === 'production') {
-        await this.loadProductionSubmissions();
+        await this.loadProductionSubmissionsForTable(table.id);
       } else if (this.userRole === 'procurement') {
-        await this.loadProcurementReviewed();
+        await this.loadProcurementReviewedForTable(table.id);
       }
     } else {
       if (table.user_id !== this.userId) {
@@ -806,10 +861,6 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to delete table', 'error');
     }
   }
-
-  // ────────────────────────────────────────────────
-  //  Requisition CRUD
-  // ────────────────────────────────────────────────
 
   openModal() {
     if (!this.selectedTableId && this.viewMode === 'my_tables') {
@@ -1005,10 +1056,6 @@ export class Page3Component implements OnInit {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Submit Table - UPDATED to notify production
-  // ────────────────────────────────────────────────
-
   async submitTable(table: Table) {
     if (this.userRole !== 'user' && this.userRole !== 'store' && this.userRole !== 'admin') {
       this.showToast('Only store/user can submit tables', 'error');
@@ -1050,7 +1097,6 @@ export class Page3Component implements OnInit {
       table.submitted = true;
       table.submitted_at = new Date().toISOString();
 
-      // Send notification to all production users
       await this.notificationService.sendTableSubmittedNotification(
         table.id,
         table.name,
@@ -1065,10 +1111,6 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to submit table', 'error');
     }
   }
-
-  // ────────────────────────────────────────────────
-  //  Individual Requisition Actions
-  // ────────────────────────────────────────────────
 
   async submitRequisition(req: Requisition) {
     if (this.userRole !== 'user' && this.userRole !== 'store' && this.userRole !== 'admin') {
@@ -1098,10 +1140,6 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to submit requisition', 'error');
     }
   }
-
-  // ────────────────────────────────────────────────
-  //  Production Actions
-  // ────────────────────────────────────────────────
 
   openProductionActionModal(req: Requisition, action: 'confirm' | 'remove') {
     this.selectedRequisition = req;
@@ -1159,10 +1197,6 @@ export class Page3Component implements OnInit {
     this.selectedRequisition = null;
     this.productionActionNotes = '';
   }
-
-  // ────────────────────────────────────────────────
-  //  Procurement Actions
-  // ────────────────────────────────────────────────
 
   async markDelivered(req: Requisition) {
     if (this.userRole !== 'procurement' && this.userRole !== 'admin') {
@@ -1303,10 +1337,6 @@ export class Page3Component implements OnInit {
     this.scheduledTime = '';
   }
 
-  // ────────────────────────────────────────────────
-  //  Admin Actions
-  // ────────────────────────────────────────────────
-
   openApproveModal(req: Requisition) {
     if (this.userRole !== 'admin') {
       this.showToast('Only admins can approve requisitions', 'error');
@@ -1412,10 +1442,6 @@ export class Page3Component implements OnInit {
     this.rejectionReason = '';
   }
 
-  // ────────────────────────────────────────────────
-  //  Materials Expand
-  // ────────────────────────────────────────────────
-
   async toggleRow(req: Requisition) {
     if (!req.id) return;
 
@@ -1455,10 +1481,6 @@ export class Page3Component implements OnInit {
     const batchQty = qtyPerBatch || 0;
     return batchQty * qty;
   }
-
-  // ────────────────────────────────────────────────
-  //  SKU / Category Selection
-  // ────────────────────────────────────────────────
 
   async onCategoryChange() {
     if (!this.formData.category) {
@@ -1501,10 +1523,6 @@ export class Page3Component implements OnInit {
     console.log('Selected SKU code:', this.selectedSkuCode);
   }
 
-  // ────────────────────────────────────────────────
-  //  File Import
-  // ────────────────────────────────────────────────
-
   async onFileSelected(event: any) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1532,14 +1550,9 @@ export class Page3Component implements OnInit {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Production View Toggle - UPDATED
-  // ────────────────────────────────────────────────
-
   switchProductionView(view: 'submissions' | 'reviewed') {
     this.selectedProductionView = view;
     
-    // Update filtered requisitions based on view
     if (view === 'submissions') {
       this.filteredRequisitions = [...this.productionSubmissions];
     } else {
@@ -1551,10 +1564,6 @@ export class Page3Component implements OnInit {
     
     console.log('Switched to view:', view, 'items:', this.filteredRequisitions.length);
   }
-
-  // ────────────────────────────────────────────────
-  //  Table Item Count
-  // ────────────────────────────────────────────────
 
   async updateTableItemCount() {
     if (!this.selectedTableId || !this.userId) return;
@@ -1578,10 +1587,6 @@ export class Page3Component implements OnInit {
       console.error('Failed to update table item count:', err);
     }
   }
-
-  // ────────────────────────────────────────────────
-  //  Helpers & Permissions
-  // ────────────────────────────────────────────────
 
   validateForm(): boolean {
     if (
@@ -1759,10 +1764,6 @@ export class Page3Component implements OnInit {
     }
   }
 
-  // ────────────────────────────────────────────────
-  //  Filter & Pagination
-  // ────────────────────────────────────────────────
-
   applyFilter() {
     let filtered = [...this.requisitions];
 
@@ -1802,10 +1803,6 @@ export class Page3Component implements OnInit {
     this.currentPage = 1;
     this.updatePagination();
   }
-
-  // ────────────────────────────────────────────────
-  //  Toast
-  // ────────────────────────────────────────────────
 
   showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
     this.snackbarMessage = message;

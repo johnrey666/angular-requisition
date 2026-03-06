@@ -48,10 +48,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   filteredNavItems: NavItem[] = [];
 
-  // Updated to use the observable from the service
   user$: Observable<User | null>;
 
-  // Settings & modal state
   showSettings = false;
   showNotifications = false;
   showUserListModal = false;
@@ -59,15 +57,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
   showLogoutConfirm = false;
   logoutSource: 'header' | 'sidebar' | null = null;
 
-  // User list state
   users: UserData[] = [];
   loadingUsers = false;
   userListError: string | null = null;
 
-  // Create user form
   createUserForm: any;
 
-  // Role info
   userRole: string | null = null;
   isAdmin = false;
 
@@ -75,16 +70,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
   createError: string | null = null;
   createSuccess: string | null = null;
 
-  // Notifications
   notifications: Notification[] = [];
   unreadCount = 0;
   loadingNotifications = false;
   private notificationsUnsubscribe: (() => void) | null = null;
 
-  // During user creation, auth temporarily switches to new user - ignore that to stay as admin
   private isCreatingUser = false;
 
-  // Subscriptions
   private authSubscription?: Subscription;
   private currentUser: User | null = null;
 
@@ -97,10 +89,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private router: Router,
     private notificationService: NotificationService
   ) {
-    // Get the observable from the auth service
     this.user$ = this.authService.getCurrentUserObservable();
     
-    // Initialize form with updated roles
     this.createUserForm = this.fb.nonNullable.group({
       email: ['', [Validators.required, Validators.email]],
       password: ['', [Validators.required, Validators.minLength(6)]],
@@ -124,7 +114,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
   async ngOnInit() {
     console.log('Dashboard ngOnInit - Starting');
     
-    // Subscribe to auth state changes (skip during user creation - auth temporarily switches)
     this.authSubscription = this.user$.subscribe(async (user) => {
       console.log('Dashboard - Auth state changed:', user?.email);
       this.currentUser = user;
@@ -137,11 +126,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
       if (user?.uid) {
         console.log('Dashboard - User authenticated, loading role for:', user.uid);
         await this.loadUserRole(user.uid);
-        
-        // Subscribe to notifications for production users
-        if (this.userRole === 'production') {
-          this.subscribeToNotifications();
-        }
       } else {
         console.log('Dashboard - No user, clearing role');
         this.userRole = null;
@@ -153,7 +137,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
-    // Clean up subscription
     if (this.authSubscription) {
       this.authSubscription.unsubscribe();
     }
@@ -163,8 +146,11 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private subscribeToNotifications() {
     this.unsubscribeFromNotifications();
     
+    console.log('Subscribing to notifications for production user');
+    
     this.notificationsUnsubscribe = this.notificationService.subscribeToNotifications(
       (notifications) => {
+        console.log('Received notifications:', notifications.length);
         this.notifications = notifications;
         this.unreadCount = notifications.length;
       }
@@ -202,12 +188,18 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.isAdmin = this.userRole === 'admin';
         console.log('User role loaded:', this.userRole, 'isAdmin:', this.isAdmin);
         
-        // Filter nav items based on user role
         this.filterNavItems();
         console.log('Filtered nav items:', this.filteredNavItems);
+        
+        // Subscribe to notifications for production users AFTER role is loaded
+        if (this.userRole === 'production') {
+          console.log('User is production, subscribing to notifications');
+          this.subscribeToNotifications();
+          // Also load initial notifications
+          await this.loadNotifications();
+        }
       } else {
         console.log('loadUserRole - No user document found, creating one');
-        // Create user document if it doesn't exist
         if (this.currentUser) {
           const userRef = doc(this.firestore, 'users', this.currentUser.uid);
           await setDoc(userRef, {
@@ -295,7 +287,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Open user list modal first
   openUserListModal() {
     this.showUserListModal = true;
     this.showSettings = false;
@@ -308,16 +299,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.userListError = null;
   }
 
-  // Open create user modal from the user list
   openCreateUserFromList() {
     this.showCreateUserModal = true;
-    // Don't close the user list modal yet - we'll handle it in create user flow
     this.createError = null;
     this.createSuccess = null;
     this.createUserForm.reset({ email: '', password: '', role: 'store' });
   }
 
-  // Original open create user modal (kept for backward compatibility)
   openCreateUserModal() {
     this.showCreateUserModal = true;
     this.showSettings = false;
@@ -330,31 +318,23 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.showCreateUserModal = false;
   }
 
-  // Load all users from Firestore
   async loadUsers() {
     this.loadingUsers = true;
     this.userListError = null;
 
     try {
-      // Check if user is admin
       if (!this.isAdmin) {
         throw new Error('You do not have permission to view users');
       }
 
       console.log('Loading users from Firestore...');
       
-      // Get reference to users collection
       const usersRef = collection(this.firestore, 'users');
-      
-      // Create query ordered by createdAt descending
       const q = query(usersRef, orderBy('createdAt', 'desc'));
-      
-      // Get documents using getDocs
       const querySnapshot = await getDocs(q);
       
       console.log('Found users count:', querySnapshot.size);
       
-      // Map documents to User objects
       const loadedUsers: UserData[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
@@ -373,7 +353,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
     } catch (err: any) {
       console.error('Error loading users:', err);
       
-      // Handle specific error cases
       if (err.code === 'permission-denied') {
         this.userListError = 'You do not have permission to view users. Please check your Firebase security rules.';
       } else if (err.code === 'failed-precondition') {
@@ -416,12 +395,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     const { email, password, role } = this.createUserForm.getRawValue();
 
     try {
-      // Check admin status again - only admin can create users
       if (!this.isAdmin) {
         throw new Error('You do not have permission to create users');
       }
 
-      // Get current admin user (auth will switch to new user during create, then back)
       const currentUser = this.authService.getCurrentUser();
       if (!currentUser) {
         throw new Error('You must be logged in as admin');
@@ -430,28 +407,23 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       console.log('Creating new user with email:', email, 'role:', role);
       
-      // createUserAccount signs in as new user, then signs back in as admin
       await this.userService.createUserAccount(email, password, role);
       
       this.createSuccess = 'User created successfully!';
       this.createUserForm.reset({ email: '', password: '', role: 'store' });
       
-      // Reload admin role (auth is back to admin, but we ignored the auth change)
       await this.loadUserRole(adminUid);
       
-      // Refresh the user list if it's open
       if (this.showUserListModal) {
         await this.loadUsers();
       }
       
-      // Auto close create modal after success
       setTimeout(() => {
         this.closeCreateUserModal();
       }, 1500);
     } catch (err: any) {
       console.error('Create user failed', err);
       
-      // Handle specific Firebase Auth errors
       if (err.code === 'auth/email-already-in-use') {
         this.createError = 'This email is already registered.';
       } else if (err.code === 'auth/operation-not-allowed') {
@@ -473,9 +445,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   async logout() {
     try {
-      // Clear stored admin password
       this.userService.clearAdminPassword();
-      
       await this.authService.signOut();
       await this.router.navigate(['/login']);
       this.showLogoutConfirm = false;
@@ -485,12 +455,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
   }
 
-  // Helper method to check if current route is active
   isRouteActive(route: string): boolean {
     return this.router.url === route;
   }
 
-  // Notification methods
   async loadNotifications() {
     this.loadingNotifications = true;
     try {
@@ -504,12 +472,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async handleNotificationClick(notification: Notification) {
-    // Mark as read
     if (!notification.read) {
       await this.notificationService.markAsRead(notification.id!);
     }
     
-    // Navigate to production page with the table selected
     if (notification.type === 'table_submitted') {
       this.router.navigate(['/dashboard/production'], {
         queryParams: { tableId: notification.tableId }
@@ -533,8 +499,6 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   viewAllNotifications() {
-    // Navigate to notifications page (you can create this later)
     this.showNotifications = false;
-    // this.router.navigate(['/dashboard/notifications']);
   }
 }

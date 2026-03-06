@@ -1,9 +1,9 @@
 // src/app/core/services/notification.service.ts
 import { Injectable, Injector, runInInjectionContext } from '@angular/core';
-import { getDoc } from '@angular/fire/firestore';
 import {
   Firestore, collection, addDoc, query, where, getDocs,
-  orderBy, doc, updateDoc, deleteDoc, Timestamp, writeBatch
+  orderBy, doc, updateDoc, deleteDoc, Timestamp, writeBatch,
+  getDoc, DocumentSnapshot
 } from '@angular/fire/firestore';
 import { AuthService } from './auth.service';
 import { Router } from '@angular/router';
@@ -48,12 +48,17 @@ export class NotificationService {
       const productionUsersQuery = query(usersRef, where('role', '==', 'production'));
       const productionUsersSnapshot = await this.run(() => getDocs(productionUsersQuery));
 
+      if (productionUsersSnapshot.empty) {
+        console.log('No production users found to notify');
+        return;
+      }
+
       // Get the name of the user who submitted the table
       const userDocRef = doc(this.firestore, 'users', submittedBy);
       const userDoc = await this.run(() => getDoc(userDocRef));
       let submittedByName = 'A user';
       if (userDoc.exists()) {
-        const userData = userDoc.data();
+        const userData = userDoc.data() as any;
         submittedByName = userData['email'] || userData['full_name'] || 'A user';
       }
 
@@ -108,7 +113,8 @@ export class NotificationService {
       
       const notifications: Notification[] = [];
       snapshot.forEach(doc => {
-        notifications.push({ id: doc.id, ...doc.data() } as Notification);
+        const data = doc.data() as Omit<Notification, 'id'>;
+        notifications.push({ id: doc.id, ...data } as Notification);
       });
 
       return notifications;
@@ -137,7 +143,8 @@ export class NotificationService {
       
       const notifications: Notification[] = [];
       snapshot.forEach(doc => {
-        notifications.push({ id: doc.id, ...doc.data() } as Notification);
+        const data = doc.data() as Omit<Notification, 'id'>;
+        notifications.push({ id: doc.id, ...data } as Notification);
       });
 
       return notifications;
@@ -181,7 +188,10 @@ export class NotificationService {
 
       const snapshot = await this.run(() => getDocs(q));
       
-      // Use writeBatch directly from @angular/fire/firestore
+      if (snapshot.empty) {
+        return true;
+      }
+      
       const batch = writeBatch(this.firestore);
 
       snapshot.forEach(doc => {
@@ -219,37 +229,47 @@ export class NotificationService {
   subscribeToNotifications(callback: (notifications: Notification[]) => void): () => void {
     let unsubscribe: (() => void) | null = null;
     
-    // Use runInInjectionContext to handle the async operation
-    runInInjectionContext(this.injector, async () => {
-      try {
-        const currentUser = await this.auth.getCurrentUserPromise();
-        if (!currentUser) return;
+    // Use setTimeout to avoid blocking
+    setTimeout(() => {
+      runInInjectionContext(this.injector, async () => {
+        try {
+          const currentUser = await this.auth.getCurrentUserPromise();
+          if (!currentUser) {
+            console.log('No current user for notification subscription');
+            return;
+          }
 
-        const notificationsRef = collection(this.firestore, 'notifications');
-        const q = query(
-          notificationsRef,
-          where('userId', '==', currentUser.uid),
-          where('read', '==', false),
-          orderBy('createdAt', 'desc')
-        );
+          console.log('Setting up notification subscription for user:', currentUser.uid);
 
-        // Dynamically import onSnapshot
-        const { onSnapshot } = await import('@angular/fire/firestore');
-        
-        unsubscribe = onSnapshot(q, (snapshot) => {
-          const notifications: Notification[] = [];
-          snapshot.forEach(doc => {
-            notifications.push({ id: doc.id, ...doc.data() } as Notification);
+          const notificationsRef = collection(this.firestore, 'notifications');
+          const q = query(
+            notificationsRef,
+            where('userId', '==', currentUser.uid),
+            where('read', '==', false),
+            orderBy('createdAt', 'desc')
+          );
+
+          const { onSnapshot } = await import('@angular/fire/firestore');
+          
+          unsubscribe = onSnapshot(q, (snapshot) => {
+            console.log('Notification snapshot received, size:', snapshot.size);
+            const notifications: Notification[] = [];
+            snapshot.forEach(doc => {
+              const data = doc.data() as Omit<Notification, 'id'>;
+              notifications.push({ id: doc.id, ...data } as Notification);
+            });
+            callback(notifications);
+          }, (error) => {
+            console.error('Error in notification snapshot:', error);
           });
-          callback(notifications);
-        });
-      } catch (err) {
-        console.error('Failed to subscribe to notifications:', err);
-      }
-    });
+        } catch (err) {
+          console.error('Failed to subscribe to notifications:', err);
+        }
+      });
+    }, 0);
 
-    // Return a function that will unsubscribe if available
     return () => {
+      console.log('Unsubscribing from notifications');
       if (unsubscribe) {
         unsubscribe();
       }
