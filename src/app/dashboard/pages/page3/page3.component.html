@@ -217,7 +217,7 @@
         Create Your First Table
       </button>
     </div>
-  </div>
+  </div> 
 
   <!-- No Data State for Production -->
   <div class="empty-card" *ngIf="userRole === 'production' && filteredRequisitions.length === 0 && !isLoading">
@@ -542,6 +542,27 @@
                 </td>
                 <td>
                   <div class="action-buttons">
+                    <!-- Production Action Buttons -->
+                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
+                            class="btn-icon success"
+                            (click)="openProductionActionModal(req, 'confirmed'); $event.stopPropagation()"
+                            title="Confirm requisition">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </button>
+
+                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
+                            class="btn-icon danger"
+                            (click)="openProductionActionModal(req, 'removed'); $event.stopPropagation()"
+                            title="Remove requisition">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+
+                    <!-- Status Indicators -->
                     <span *ngIf="req.production_action === 'confirmed'" class="action-marked confirmed" title="Confirmed by production">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                         <path d="M20 6L9 17l-5-5"/>
@@ -555,8 +576,8 @@
                       </svg>
                     </span>
 
-                    <button *ngIf="canMarkDelivered(req)" 
-                            class="btn-icon success" 
+                    <button *ngIf="canMarkDelivered(req)"
+                            class="btn-icon success"
                             (click)="markDelivered(req); $event.stopPropagation()"
                             title="Mark as fully delivered">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -564,8 +585,8 @@
                       </svg>
                     </button>
 
-                    <button *ngIf="canAddMissingNotes(req)" 
-                            class="btn-icon primary" 
+                    <button *ngIf="canAddMissingNotes(req)"
+                            class="btn-icon primary"
                             (click)="openMissingNotesModal(req); $event.stopPropagation()"
                             title="Add notes for missing materials">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
