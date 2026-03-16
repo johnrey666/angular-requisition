@@ -1680,14 +1680,18 @@ export class Page3Component implements OnInit {
         })
       );
 
-      // Remove the reviewed items from productionSubmissions
-      this.productionSubmissions = this.productionSubmissions.filter(r => r.table_id !== this.selectedTable!.id);
-      this.filteredRequisitions = this.productionSubmissions.filter(r => !this.selectedTableId || r.table_id === this.selectedTableId);
+      // Keep the reviewed items in productionSubmissions so they remain visible
+      // This allows production to see if procurement adds notes for missing materials
+      this.showToast(`Table "${this.selectedTable.name}" submitted to procurement successfully`, 'success');
       
-      // Remove from tables list
-      this.tables = this.tables.filter(t => t.id !== this.selectedTable!.id);
-      
-      // Reset selection
+      // Reload the data to reflect the status changes
+      await this.loadProductionSubmissions();
+      if (this.selectedTable) {
+        this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === this.selectedTable!.id);
+      } else {
+        this.filteredRequisitions = [...this.productionSubmissions];
+      }
+      this.updatePagination();
       const tableName = this.selectedTable.name;
       this.selectedTable = null;
       this.selectedTableId = '';
