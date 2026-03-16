@@ -9,6 +9,7 @@ import {
   Firestore, doc, collection, query, where, getDocs,
   orderBy, writeBatch, getDoc, updateDoc
 } from '@angular/fire/firestore';
+import { Storage, ref, uploadBytes, getDownloadURL } from '@angular/fire/storage';
 import { Router, ActivatedRoute } from '@angular/router';
 
 interface Material {
@@ -67,6 +68,8 @@ interface Table {
   updated_at?: string;
   submitted?: boolean;
   submitted_at?: string;
+  po_file_url?: string;
+  po_file_name?: string;
 }
 
 interface SkuOption {
@@ -175,6 +178,7 @@ export class Page3Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
+    private storage: Storage,
     private router: Router,
     private route: ActivatedRoute,
     private injector: Injector,
@@ -322,7 +326,9 @@ export class Page3Component implements OnInit {
           submitted: data['submitted'] || false,
           submitted_at: data['submitted_at'],
           created_at: data['created_at'],
-          updated_at: data['updated_at']
+          updated_at: data['updated_at'],
+          po_file_url: data['po_file_url'],
+          po_file_name: data['po_file_name']
         };
 
         if (table.user_id) {
@@ -726,7 +732,9 @@ export class Page3Component implements OnInit {
             type: (data['type'] as 'inventory' | 'requisition' | 'production') || 'requisition',
             item_count: data['item_count'] || 0,
             submitted: data['submitted'] || false,
-            submitted_at: data['submitted_at']
+            submitted_at: data['submitted_at'],
+            po_file_url: data['po_file_url'],
+            po_file_name: data['po_file_name']
           };
         }
       }
@@ -1476,6 +1484,77 @@ export class Page3Component implements OnInit {
 
     const selectedItem = this.availableSkus.find(item => item.sku_name === this.formData.skuName);
     this.selectedSkuCode = selectedItem ? selectedItem.sku_code : '';
+  }
+
+  async onPoFileSelected(event: any) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!this.selectedTable) {
+      this.showToast('Please select a table first', 'error');
+      return;
+    }
+
+    // Validate file type
+    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png'];
+    if (!allowedTypes.includes(file.type)) {
+      this.showToast('Please select a PDF or image file (JPG, PNG)', 'error');
+      return;
+    }
+
+    // Validate file size (max 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      this.showToast('File size must be less than 10MB', 'error');
+      return;
+    }
+
+    try {
+      this.isSubmitting = true;
+      this.showToast('Uploading P.O file...', 'info');
+
+      // Create storage reference
+      const fileName = `po_${this.selectedTable.id}_${Date.now()}_${file.name}`;
+      const storageRef = ref(this.storage, `po_files/${fileName}`);
+
+      // Upload file
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadURL = await getDownloadURL(snapshot.ref);
+
+      // Update table with P.O file info
+      const tableRef = doc(this.firestore, 'tables', this.selectedTable.id);
+      await this.run(() => 
+        updateDoc(tableRef, {
+          po_file_url: downloadURL,
+          po_file_name: file.name,
+          po_uploaded_at: new Date().toISOString(),
+          po_uploaded_by: this.userId,
+          updated_at: new Date().toISOString()
+        })
+      );
+
+      // Update local table object
+      this.selectedTable.po_file_url = downloadURL;
+      this.selectedTable.po_file_name = file.name;
+
+      // Update table in tables array
+      const tableIndex = this.tables.findIndex(t => t.id === this.selectedTable!.id);
+      if (tableIndex !== -1) {
+        this.tables[tableIndex].po_file_url = downloadURL;
+        this.tables[tableIndex].po_file_name = file.name;
+      }
+
+      this.showToast('P.O file uploaded successfully', 'success');
+
+      // Clear file input
+      event.target.value = '';
+
+    } catch (err) {
+      console.error('P.O upload failed', err);
+      this.showToast('Failed to upload P.O file', 'error');
+    } finally {
+      this.isSubmitting = false;
+    }
   }
 
   async onFileSelected(event: any) {

@@ -1299,7 +1299,124 @@ tr:hover td {
   gap: 8px;
   padding: 24px;
   color: #64748b;
+}
+
+/* ==========================================================================
+   P.O Upload Section
+   ========================================================================== */
+.po-upload-section {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 20px;
+}
+
+.po-upload-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.po-upload-header svg {
+  color: #64748b;
+}
+
+.po-upload-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.po-file-input {
+  flex: 1;
+  position: relative;
+}
+
+.po-file-input input[type="file"] {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 13px;
+  background: white;
+  cursor: pointer;
+}
+
+.po-file-input input[type="file"]:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+.po-file-input input[type="file"]::file-selector-button {
+  padding: 6px 12px;
+  border: none;
+  border-right: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
   font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px 0 0 4px;
+}
+
+.po-file-input input[type="file"]::file-selector-button:hover {
+  background: #f1f5f9;
+}
+
+.po-upload-btn {
+  padding: 8px 16px;
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.po-upload-btn:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.po-upload-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.po-view-link {
+  color: #2563eb;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.po-view-link:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.po-view-link svg {
+  width: 14px;
+  height: 14px;
+}
+
+.po-no-file {
+  color: #64748b;
+  font-size: 13px;
+  font-style: italic;
 }
 
 .empty-materials svg {
