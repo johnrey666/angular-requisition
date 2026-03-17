@@ -137,6 +137,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
+    if (typeof document !== 'undefined') {
+      document.body.classList.remove('sidebar-collapsed');
+    }
     if (this.authSubscription) {
       this.authSubscription.unsubscribe();
     }
@@ -191,11 +194,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.filterNavItems();
         console.log('Filtered nav items:', this.filteredNavItems);
         
-        // Subscribe to notifications for production users AFTER role is loaded
-        if (this.userRole === 'production') {
-          console.log('User is production, subscribing to notifications');
+        // Subscribe to notifications for production and procurement users
+        if (this.userRole === 'production' || this.userRole === 'procurement') {
           this.subscribeToNotifications();
-          // Also load initial notifications
           await this.loadNotifications();
         }
       } else {
@@ -265,7 +266,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   toggleSidebar() {
-    this.collapsed.update((c) => !c);
+    this.collapsed.update((c) => {
+      const next = !c;
+      if (typeof document !== 'undefined') {
+        document.body.classList.toggle('sidebar-collapsed', next);
+      }
+      return next;
+    });
   }
 
   toggleTheme() {
@@ -472,14 +479,14 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   async handleNotificationClick(notification: Notification) {
-    if (!notification.read) {
-      await this.notificationService.markAsRead(notification.id!);
+    if (!notification.read && notification.id) {
+      await this.notificationService.markAsRead(notification.id);
     }
     
     if (notification.type === 'table_submitted') {
-      this.router.navigate(['/dashboard/production'], {
-        queryParams: { tableId: notification.tableId }
-      });
+      this.router.navigate(['/dashboard/production'], { queryParams: { tableId: notification.tableId } });
+    } else if (notification.type === 'table_reviewed_by_production') {
+      this.router.navigate(['/dashboard/procurement'], { queryParams: { tableId: notification.tableId } });
     }
     
     this.showNotifications = false;

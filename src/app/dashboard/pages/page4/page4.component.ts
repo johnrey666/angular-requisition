@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { LoaderService } from '../../../core/services/loader.service';
 import { Firestore, doc, getDoc } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 import * as XLSX from 'xlsx';
@@ -80,7 +81,8 @@ export class Page4Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private router: Router
+    private router: Router,
+    private loader: LoaderService
   ) {}
 
   get Math() {
@@ -157,10 +159,12 @@ export class Page4Component implements OnInit {
 
   async loadUsageData(): Promise<void> {
     this.isLoading = true;
+    this.loader.show('Loading usage report...');
     try {
       if (!this.userId) {
         this.showMessage('Please login to view usage reports', 'error');
         this.isLoading = false;
+        this.loader.hide();
         return;
       }
 
@@ -196,13 +200,14 @@ export class Page4Component implements OnInit {
         console.log(`Found ${requisitions.length} requisitions for table:`, table.name);
         
         for (const req of requisitions) {
-          if (!req.sku_code) continue;
+          const skuCode = req.sku_code || req.skuCode || '';
+          if (!skuCode) continue;
           
           // Verify requisition belongs to correct user
           if (req.user_id !== this.userId) continue;
           
           // Get materials for this SKU
-          const materials = await this.db.getMaterialsForSku(req.sku_code);
+          const materials = await this.db.getMaterialsForSku(skuCode);
           
           for (const material of materials) {
             if (!material.raw_material) continue;
@@ -212,7 +217,7 @@ export class Page4Component implements OnInit {
             
             const key = `${material.raw_material}_${material.type || ''}_${material.unit || ''}`;
             const tableName = table.name || `Table ${table.id.substring(0, 8)}`;
-            const skuInfo = `${req.sku_code} (Qty: ${req.qty_needed || 0})`;
+            const skuInfo = `${skuCode} (Qty: ${req.qty_needed || req.quantity || 0})`;
             
             if (!materialMap.has(key)) {
               materialMap.set(key, {
@@ -275,6 +280,7 @@ export class Page4Component implements OnInit {
       this.paginatedData = [];
     } finally {
       this.isLoading = false;
+      this.loader.hide();
     }
   }
 

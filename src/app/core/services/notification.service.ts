@@ -10,7 +10,7 @@ import { Router } from '@angular/router';
 
 export interface Notification {
   id?: string;
-  type: 'table_submitted' | 'requisition_confirmed' | 'requisition_removed' | 'requisition_scheduled';
+  type: 'table_submitted' | 'table_reviewed_by_production' | 'requisition_confirmed' | 'requisition_removed' | 'requisition_scheduled';
   tableId: string;
   tableName: string;
   submittedBy: string;
@@ -90,6 +90,54 @@ export class NotificationService {
       console.log(`Notifications sent to ${productionUsersSnapshot.size} production users`);
     } catch (err) {
       console.error('Failed to send table submitted notification:', err);
+    }
+  }
+
+  /**
+   * Send notification to all procurement users when production submits reviewed table
+   */
+  async sendTableReviewedByProductionNotification(tableId: string, tableName: string, reviewedBy: string): Promise<void> {
+    try {
+      const usersRef = collection(this.firestore, 'users');
+      const procurementUsersQuery = query(usersRef, where('role', '==', 'procurement'));
+      const procurementUsersSnapshot = await this.run(() => getDocs(procurementUsersQuery));
+
+      if (procurementUsersSnapshot.empty) {
+        console.log('No procurement users found to notify');
+        return;
+      }
+
+      const userDocRef = doc(this.firestore, 'users', reviewedBy);
+      const userDoc = await this.run(() => getDoc(userDocRef));
+      let reviewedByName = 'Production';
+      if (userDoc.exists()) {
+        const userData = userDoc.data() as any;
+        reviewedByName = userData['email'] || userData['full_name'] || 'Production';
+      }
+
+      const notificationsRef = collection(this.firestore, 'notifications');
+      const now = Timestamp.now();
+      const promises: Promise<any>[] = [];
+
+      procurementUsersSnapshot.forEach((userDoc) => {
+        const notification: Omit<Notification, 'id'> = {
+          type: 'table_reviewed_by_production',
+          tableId,
+          tableName,
+          submittedBy: reviewedBy,
+          submittedByName: reviewedByName,
+          submittedAt: now,
+          read: false,
+          createdAt: now,
+          userId: userDoc.id
+        };
+        promises.push(this.run(() => addDoc(notificationsRef, notification)));
+      });
+
+      await Promise.all(promises);
+      console.log(`Notifications sent to ${procurementUsersSnapshot.size} procurement users`);
+    } catch (err) {
+      console.error('Failed to send table reviewed notification:', err);
     }
   }
 

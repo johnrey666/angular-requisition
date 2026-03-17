@@ -868,7 +868,7 @@
   align-items: center;
   justify-content: center;
   padding: 0 4px;
-  border: 2px solid var(--bg-primary);
+  border: 2px solid hsl(var(--card));
 }
 
 .notifications-dropdown {
@@ -877,10 +877,10 @@
   right: 0;
   width: 380px;
   max-width: 90vw;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
   border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 10px 25px hsl(var(--foreground) / 0.1);
   z-index: 1000;
   overflow: hidden;
 }
@@ -890,14 +890,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid hsl(var(--border));
 }
 
 .notifications-header h3 {
   font-size: 16px;
   font-weight: 600;
   margin: 0;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
 }
 
 .mark-all-read {
@@ -923,17 +923,17 @@
   display: flex;
   align-items: flex-start;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid hsl(var(--border));
   cursor: pointer;
   transition: background-color 0.2s;
 }
 
 .notification-item:hover {
-  background-color: var(--hover-bg);
+  background-color: hsl(var(--muted) / 0.5);
 }
 
 .notification-item.unread {
-  background-color: rgba(59, 130, 246, 0.05);
+  background-color: hsl(217 91% 60% / 0.08);
 }
 
 .notification-icon {
@@ -961,7 +961,7 @@
 
 .notification-message {
   font-size: 14px;
-  color: var(--text-primary);
+  color: hsl(var(--foreground));
   margin: 0 0 4px 0;
   line-height: 1.4;
 }
@@ -972,13 +972,13 @@
 
 .notification-time {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
 }
 
 .notification-dismiss {
   background: none;
   border: none;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
@@ -1003,7 +1003,7 @@
 
 .notifications-footer {
   padding: 12px 16px;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid hsl(var(--border));
   text-align: center;
 }
 
@@ -1025,7 +1025,7 @@
 .notifications-empty {
   padding: 48px 16px;
   text-align: center;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
 }
 
 .notifications-empty svg {
@@ -1041,13 +1041,13 @@
 .notification-loading {
   padding: 32px 16px;
   text-align: center;
-  color: var(--text-secondary);
+  color: hsl(var(--muted-foreground));
 }
 
 .spinner-small {
   width: 24px;
   height: 24px;
-  border: 2px solid var(--border-color);
+  border: 2px solid hsl(var(--border));
   border-top-color: #3b82f6;
   border-radius: 50%;
   animation: spin 0.6s linear infinite;

@@ -4,6 +4,7 @@ import { FormBuilder, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { Router } from '@angular/router';
 import { AuthService } from '../core/services/auth.service';
 import { UserService } from '../core/services/user.service';
+import { LoaderService } from '../core/services/loader.service';
 import { Firestore, doc, getDoc, setDoc } from '@angular/fire/firestore';
 
 @Component({
@@ -24,7 +25,8 @@ export class LoginComponent {
     private router: Router,
     private authService: AuthService,
     private userService: UserService,
-    private firestore: Firestore
+    private firestore: Firestore,
+    private loader: LoaderService
   ) {
     this.loginForm = this.fb.nonNullable.group({
       email: ['', [Validators.required, Validators.email]],
@@ -45,6 +47,7 @@ export class LoginComponent {
 
     this.isSubmitting = true;
     this.authError = null;
+    this.loader.show('Signing in...');
 
     const { email, password } = this.loginForm.getRawValue();
 
@@ -62,6 +65,7 @@ export class LoginComponent {
         }
 
         this.isSubmitting = false;
+        this.loader.hide();
 
         switch (role) {
           case 'store':
@@ -83,6 +87,7 @@ export class LoginComponent {
     } catch (err: any) {
       console.error('Sign in error', err);
       this.isSubmitting = false;
+      this.loader.hide();
       this.mapAuthError(err);
     }
   }

@@ -1,19 +1,30 @@
-import { Component, OnInit } from '@angular/core';
-import { RouterOutlet } from '@angular/router';
+import { Component, Inject, PLATFORM_ID } from '@angular/core';
+import { Router, RouterOutlet, NavigationEnd } from '@angular/router';
+import { filter, take } from 'rxjs/operators';
+import { isPlatformBrowser } from '@angular/common';
 import { ThemeService } from './core/services/theme.service';
+import { LoaderComponent } from './core/components/loader/loader.component';
+import { LoaderService } from './core/services/loader.service';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet],
+  imports: [RouterOutlet, LoaderComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css'
 })
-export class AppComponent implements OnInit {
-  title = 'daily-requisition';
-
-  constructor(private themeService: ThemeService) {}
-
-  ngOnInit(): void {
-    // Theme service initializes automatically via constructor
+export class AppComponent {
+  constructor(
+    private themeService: ThemeService,
+    private loader: LoaderService,
+    private router: Router,
+    @Inject(PLATFORM_ID) private platformId: Object
+  ) {
+    if (isPlatformBrowser(this.platformId)) {
+      this.loader.setBootstrapping(true);
+      this.router.events.pipe(
+        filter((e): e is NavigationEnd => e instanceof NavigationEnd),
+        take(1)
+      ).subscribe(() => this.loader.setBootstrapping(false));
+    }
   }
 }

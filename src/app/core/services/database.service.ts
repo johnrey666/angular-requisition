@@ -254,28 +254,19 @@ export class DatabaseService {
   }
 
   async getMaterialsForSku(skuCode: string): Promise<any[]> {
-    if (!skuCode?.toString().trim()) {
+    const raw = skuCode != null ? String(skuCode).trim() : '';
+    if (!raw) {
       return [];
     }
 
-    const cleanSku = this.normalizeSkuCode(skuCode);
-    console.log('getMaterialsForSku - Input:', skuCode, 'Normalized:', cleanSku);
+    const cleanSku = this.normalizeSkuCode(raw);
 
-    try {
-      // Try exact match first
-      const snapshot = await this.run(() => {
-        const q = query(
-          collection(this.firestore, 'masterData'),
-          where('sku_code', '==', cleanSku)
-        );
-        return getDocs(q);
-      });
-
-      const materials: any[] = [];
-      snapshot.forEach(d => {
+    const collectMaterials = (snap: { forEach: (fn: (d: any) => void) => void }): any[] => {
+      const mats: any[] = [];
+      snap.forEach((d: any) => {
         const data = d.data() as MasterData;
         if (data.raw_material?.trim()) {
-          materials.push({
+          mats.push({
             raw_material: data.raw_material.trim(),
             quantity_per_batch: data.qty_per_batch ?? null,
             unit: (data.batch_unit || '').trim(),
@@ -283,35 +274,26 @@ export class DatabaseService {
           });
         }
       });
+      return mats;
+    };
 
-      // If no materials found, try without normalization
-      if (materials.length === 0) {
-        console.log('No materials found with normalized SKU, trying original format');
-        const originalSnapshot = await this.run(() => {
-          const q = query(
-            collection(this.firestore, 'masterData'),
-            where('sku_code', '==', skuCode)
-          );
-          return getDocs(q);
-        });
-        
-        originalSnapshot.forEach(d => {
-          const data = d.data() as MasterData;
-          if (data.raw_material?.trim()) {
-            materials.push({
-              raw_material: data.raw_material.trim(),
-              quantity_per_batch: data.qty_per_batch ?? null,
-              unit: (data.batch_unit || '').trim(),
-              type: (data.type || '').trim()
-            });
-          }
-        });
+    try {
+      const masterRef = collection(this.firestore, 'masterData');
+      const variants: (string | number)[] = [cleanSku];
+      if (raw !== cleanSku) variants.push(raw);
+      if (/^\d+$/.test(raw)) variants.push(Number(raw));
+
+      for (const val of variants) {
+        const q = query(masterRef, where('sku_code', '==', val));
+        const snapshot = await getDocs(q);
+        const materials = collectMaterials(snapshot);
+        if (materials.length > 0) {
+          return materials;
+        }
       }
-
-      console.log(`Found ${materials.length} materials for SKU ${skuCode}`);
-      return materials;
+      return [];
     } catch (err) {
-      console.error('getMaterialsForSku failed', cleanSku, err);
+      console.error('getMaterialsForSku failed', raw, err);
       return [];
     }
   }

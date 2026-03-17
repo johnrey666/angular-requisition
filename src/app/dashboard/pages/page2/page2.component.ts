@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import * as ExcelJS from 'exceljs';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { LoaderService } from '../../../core/services/loader.service';
 import { Firestore, doc, getDoc, collection, query, where, getDocs } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 
@@ -100,7 +101,8 @@ export class Page2Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private router: Router
+    private router: Router,
+    private loader: LoaderService
   ) {}
 
   async ngOnInit() {
@@ -141,8 +143,10 @@ export class Page2Component implements OnInit {
   // Direct Firestore query to load production tables
   async loadProductionTablesDirectly() {
     try {
+      this.loader.show('Loading production lines...');
       if (!this.userId) {
         this.showToast('You must be logged in', 'error');
+        this.loader.hide();
         return;
       }
       
@@ -198,6 +202,8 @@ export class Page2Component implements OnInit {
       this.productionTables = [];
       this.currentTable = null;
       this.showToast('Failed to load production tables', 'error');
+    } finally {
+      this.loader.hide();
     }
   }
 
@@ -209,6 +215,7 @@ export class Page2Component implements OnInit {
     }
 
     try {
+      this.loader.show('Loading items...');
       console.log('Loading production items for table:', this.currentTable.id);
       
       const requisitionsRef = collection(this.firestore, 'requisitions');
@@ -249,6 +256,8 @@ export class Page2Component implements OnInit {
       this.filteredItems = [];
       this.updatePagination();
       this.showToast('Failed to load production items', 'error');
+    } finally {
+      this.loader.hide();
     }
   }
 
@@ -421,6 +430,7 @@ export class Page2Component implements OnInit {
     }
 
     this.addingItem = true;
+    this.loader.show('Adding item...');
     
     if (!this.userId) {
       this.showToast('You must be logged in', 'error');
@@ -477,6 +487,7 @@ export class Page2Component implements OnInit {
       this.showToast('Error adding item', 'error');
     } finally {
       this.addingItem = false;
+      this.loader.hide();
     }
   }
 
@@ -580,6 +591,7 @@ export class Page2Component implements OnInit {
     if (!tableName?.trim()) return;
 
     try {
+      this.loader.show('Creating production line...');
       if (!this.userId) {
         this.showToast('You must be logged in to create tables', 'error');
         return;
@@ -601,6 +613,8 @@ export class Page2Component implements OnInit {
     } catch (err) {
       console.error('Failed to create table', err);
       this.showToast('Error creating production line', 'error');
+    } finally {
+      this.loader.hide();
     }
   }
 

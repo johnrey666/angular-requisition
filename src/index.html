@@ -11,6 +11,10 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
+  <div id="app-loader" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#fafafa;z-index:99999">
+    <div style="width:20px;height:20px;border:2px solid #e5e7eb;border-top-color:#111;border-radius:50%;animation:appLoaderSpin .6s linear infinite"></div>
+  </div>
+  <style>@keyframes appLoaderSpin{to{transform:rotate(360deg)}}</style>
   <app-root></app-root>
 </body>
 </html>

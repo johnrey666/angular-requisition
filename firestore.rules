@@ -1,0 +1,177 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && getUserRole() == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isProduction() {
+      return hasRole('production');
+    }
+
+    function isProcurement() {
+      return hasRole('procurement');
+    }
+
+    function isStore() {
+      return hasRole('store') || hasRole('user');
+    }
+
+    function canViewAllSubmissions() {
+      return isProduction() || isProcurement() || isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+
+      allow write: if isAuthenticated() && (
+        (request.auth.uid == userId &&
+          !exists(/databases/$(database)/documents/users/$(userId))) ||
+        (request.auth.uid == userId &&
+          exists(/databases/$(database)/documents/users/$(userId)) &&
+          !('role' in request.resource.data.diff(resource.data).affectedKeys())) ||
+        isAdmin()
+      );
+    }
+
+    match /masterData/{document} {
+      allow read: if isAuthenticated();
+      allow write: if isStore() || isAdmin();
+    }
+
+    match /tables/{tableId} {
+      allow read: if isAuthenticated() && (
+        resource.data.user_id == request.auth.uid ||
+        (canViewAllSubmissions() && resource.data.submitted == true) ||
+        isAdmin()
+      );
+
+      allow create: if isAuthenticated() && (
+        (isStore() &&
+          request.resource.data.user_id == request.auth.uid &&
+          (request.resource.data.type == 'requisition' || request.resource.data.type == 'production')) ||
+        isAdmin()
+      );
+
+      allow update: if isAuthenticated() && (
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.submitted != true &&
+          request.resource.data.user_id == request.auth.uid) ||
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          request.resource.data.submitted == true) ||
+        (isProduction() &&
+          resource.data.submitted == true &&
+          'production_reviewed' in request.resource.data.diff(resource.data).affectedKeys()) ||
+        isAdmin()
+      );
+
+      allow delete: if isAuthenticated() && (
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.submitted != true) ||
+        isAdmin()
+      );
+    }
+
+    match /requisitions/{reqId} {
+      allow read: if isAuthenticated() && (
+        resource.data.user_id == request.auth.uid ||
+        (isProduction() && resource.data.status == 'Submitted') ||
+        (isProduction() && resource.data.production_action != null) ||
+        (isProcurement() && resource.data.production_action == 'confirmed') ||
+        (isProcurement() && resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||
+        isAdmin()
+      );
+
+      allow create: if isAuthenticated() && (
+        (isStore() &&
+          request.resource.data.user_id == request.auth.uid &&
+          request.resource.data.status == 'Pending' &&
+          request.resource.data.table_id != null) ||
+        isAdmin()
+      );
+
+      allow update: if isAuthenticated() && (
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.status == 'Pending' &&
+          request.resource.data.status == 'Pending') ||
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.status == 'Pending' &&
+          request.resource.data.status == 'Submitted') ||
+        (isProduction() &&
+          resource.data.status == 'Submitted' &&
+          (request.resource.data.status in ['Production_Confirmed', 'Removed'] ||
+           (request.resource.data.status == resource.data.status &&
+            'production_action' in request.resource.data.diff(resource.data).affectedKeys()))) ||
+        (isProcurement() &&
+          resource.data.production_action == 'confirmed' &&
+          request.resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||
+        (isProcurement() &&
+          resource.data.status == 'Scheduled' &&
+          request.resource.data.status in ['Delivered', 'Partially_Delivered']) ||
+        (isProcurement() &&
+          resource.data.status == 'Partially_Delivered' &&
+          request.resource.data.status == 'Delivered') ||
+        isAdmin()
+      );
+
+      allow delete: if isAuthenticated() && (
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.status == 'Pending') ||
+        isAdmin()
+      );
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && (
+        (isStore() || isProduction() || isProcurement() || isAdmin()) &&
+        request.resource.data.userId is string
+      );
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    match /inventory/{itemId} {
+      allow read: if isAuthenticated() && (
+        resource.data.user_id == request.auth.uid ||
+        isAdmin()
+      );
+
+      allow create: if isAuthenticated() && (
+        (isStore() && request.resource.data.user_id == request.auth.uid) ||
+        isAdmin()
+      );
+
+      allow update: if isAuthenticated() && (
+        (isStore() && resource.data.user_id == request.auth.uid) ||
+        isAdmin()
+      );
+
+      allow delete: if isAuthenticated() && (
+        (isStore() && resource.data.user_id == request.auth.uid) ||
+        isAdmin()
+      );
+    }
+  }
+}

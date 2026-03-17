@@ -1,9 +1,10 @@
-import { Component, OnInit, HostListener, Injector } from '@angular/core';
+import { Component, OnInit, HostListener, Injector, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { runInInjectionContext } from '@angular/core';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { LoaderService } from '../../../core/services/loader.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import {
   Firestore, doc, collection, query, where, getDocs,
@@ -182,7 +183,9 @@ export class Page3Component implements OnInit {
     private router: Router,
     private route: ActivatedRoute,
     private injector: Injector,
-    private notificationService: NotificationService
+    private cdr: ChangeDetectorRef,
+    private notificationService: NotificationService,
+    private loader: LoaderService
   ) {}
 
   private run<T>(fn: () => Promise<T>): Promise<T> {
@@ -281,6 +284,7 @@ export class Page3Component implements OnInit {
     try {
       console.log('Loading tables for user:', this.userId, 'role:', this.userRole);
       this.isLoading = true;
+      this.loader.show('Loading tables...');
       const tablesRef = collection(this.firestore, 'tables');
 
       let querySnapshot;
@@ -398,6 +402,7 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load tables', 'error');
     } finally {
       this.isLoading = false;
+      this.loader.hide();
     }
   }
 
@@ -406,6 +411,7 @@ export class Page3Component implements OnInit {
 
     try {
       this.isLoading = true;
+      this.loader.show('Loading requisitions...');
 
       const querySnapshot = await this.run(() => {
         const requisitionsRef = collection(this.firestore, 'requisitions');
@@ -447,11 +453,13 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load requisitions', 'error');
     } finally {
       this.isLoading = false;
+      this.loader.hide();
     }
   }
 
   async loadProductionSubmissions() {
     this.isLoading = true;
+    this.loader.show('Loading submissions...');
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
@@ -479,11 +487,13 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load submissions', 'error');
     } finally {
       this.isLoading = false;
+      this.loader.hide();
     }
   }
 
   async loadProductionReviewed() {
     this.isLoading = true;
+    this.loader.show('Loading reviewed items...');
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
@@ -511,11 +521,13 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load reviewed items', 'error');
     } finally {
       this.isLoading = false;
+      this.loader.hide();
     }
   }
 
   async loadProcurementReviewed() {
     this.isLoading = true;
+    this.loader.show('Loading requisitions...');
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
@@ -545,6 +557,7 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load reviewed requisitions', 'error');
     } finally {
       this.isLoading = false;
+      this.loader.hide();
     }
   }
 
@@ -1429,7 +1442,8 @@ export class Page3Component implements OnInit {
     if (this.expandedRows[req.id] && !req.materials) {
       this.loadingMaterials[req.id] = true;
       try {
-        const materials = await this.db.getMaterialsForSku(req.skuCode);
+        const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
+        const materials = await this.db.getMaterialsForSku(skuCode);
         req.materials = materials || [];
       } catch (err) {
         console.error('Failed to load materials', err);
@@ -1437,6 +1451,7 @@ export class Page3Component implements OnInit {
         this.showToast('Failed to load materials', 'error');
       } finally {
         this.loadingMaterials[req.id] = false;
+        this.cdr.detectChanges();
       }
     }
   }
@@ -1750,7 +1765,7 @@ export class Page3Component implements OnInit {
 
       // Update the table status to indicate it's been reviewed by production
       const tableRef = doc(this.firestore, 'tables', this.selectedTable.id);
-      await this.run(() => 
+      await this.run(() =>
         updateDoc(tableRef, {
           production_reviewed: true,
           production_reviewed_at: new Date().toISOString(),
@@ -1759,24 +1774,21 @@ export class Page3Component implements OnInit {
         })
       );
 
-      // Keep the reviewed items in productionSubmissions so they remain visible
-      // This allows production to see if procurement adds notes for missing materials
-      this.showToast(`Table "${this.selectedTable.name}" submitted to procurement successfully`, 'success');
-      
-      // Reload the data to reflect the status changes
-      await this.loadProductionSubmissions();
-      if (this.selectedTable) {
-        this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === this.selectedTable!.id);
-      } else {
-        this.filteredRequisitions = [...this.productionSubmissions];
-      }
-      this.updatePagination();
+      // Notify all procurement users
+      await this.notificationService.sendTableReviewedByProductionNotification(
+        this.selectedTable.id,
+        this.selectedTable.name,
+        this.userId
+      );
+
       const tableName = this.selectedTable.name;
-      this.selectedTable = null;
-      this.selectedTableId = '';
-      
+      this.showToast(`Table "${tableName}" submitted to procurement – they have been notified`, 'success');
+
+      // Keep table selected and switch to reviewed view so production can see procurement notes later
+      await this.loadProductionReviewed();
+      this.selectedProductionView = 'reviewed';
+      this.filteredRequisitions = this.productionReviewed.filter(r => r.table_id === this.selectedTable!.id);
       this.updatePagination();
-      this.showToast(`Table "${tableName}" submitted to procurement`, 'success');
       
     } catch (err) {
       this.showToast('Failed to submit table', 'error');
@@ -1800,7 +1812,7 @@ export class Page3Component implements OnInit {
   canMarkDelivered(req: Requisition): boolean {
     return (
       (this.userRole === 'procurement' || this.userRole === 'admin') &&
-      req.status === 'Production_Confirmed'
+      (req.status === 'Production_Confirmed' || req.status === 'Partially_Delivered')
     );
   }
 
@@ -1873,8 +1885,8 @@ export class Page3Component implements OnInit {
       const q = this.searchQuery.toLowerCase();
       filtered = filtered.filter(r =>
         (r.reqNumber || '').toLowerCase().includes(q) ||
-        (r.skuCode || '').toLowerCase().includes(q) ||
-        (r.skuName || '').toLowerCase().includes(q) ||
+        (r.skuCode || r['sku_code'] || '').toLowerCase().includes(q) ||
+        (r.skuName || r['sku_name'] || '').toLowerCase().includes(q) ||
         (r.supplier || '').toLowerCase().includes(q)
       );
     }
