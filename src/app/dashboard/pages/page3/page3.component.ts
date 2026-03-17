@@ -71,6 +71,9 @@ interface Table {
   submitted_at?: string;
   po_file_url?: string;
   po_file_name?: string;
+  production_reviewed?: boolean;
+  production_reviewed_at?: string;
+  production_reviewed_by?: string;
 }
 
 interface SkuOption {
@@ -207,8 +210,8 @@ export class Page3Component implements OnInit {
         await this.loadProductionSubmissions();
         this.filteredRequisitions = [...this.productionSubmissions];
       } else if (this.userRole === 'procurement') {
-        await this.loadProcurementReviewed();
-        this.filteredRequisitions = [...this.procurementReviewed];
+        // Load tables & reviewed requisitions so procurement can filter by table
+        await this.loadTablesDirectly();
       } else {
         // For user/store/admin roles
         await this.loadTablesDirectly();
@@ -300,9 +303,13 @@ export class Page3Component implements OnInit {
           return getDocs(q);
         });
       } else if (this.userRole === 'procurement') {
-        // For procurement, load all requisition tables (submitted or not)
+        // For procurement, only load submitted requisition tables
         querySnapshot = await this.run(() => {
-          const q = query(tablesRef, where('type', '==', 'requisition'));
+          const q = query(
+            tablesRef,
+            where('type', '==', 'requisition'),
+            where('submitted', '==', true)
+          );
           return getDocs(q);
         });
       } else {
@@ -332,7 +339,10 @@ export class Page3Component implements OnInit {
           created_at: data['created_at'],
           updated_at: data['updated_at'],
           po_file_url: data['po_file_url'],
-          po_file_name: data['po_file_name']
+          po_file_name: data['po_file_name'],
+          production_reviewed: data['production_reviewed'] || false,
+          production_reviewed_at: data['production_reviewed_at'],
+          production_reviewed_by: data['production_reviewed_by']
         };
 
         if (table.user_id) {
@@ -369,16 +379,38 @@ export class Page3Component implements OnInit {
         if (this.tables.length > 0 && !this.selectedTable) {
           this.selectedTable = this.tables[0];
           this.selectedTableId = this.tables[0].id;
-          // Filter submissions by selected table
-          this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === this.selectedTableId);
+
+          // If the table has already been reviewed by production, show reviewed items
+          if (this.selectedTable.production_reviewed) {
+            this.selectedProductionView = 'reviewed';
+            if (this.productionReviewed.length === 0) {
+              await this.loadProductionReviewed();
+            }
+            this.filteredRequisitions = this.productionReviewed.filter(r => r.table_id === this.selectedTableId);
+          } else {
+            this.selectedProductionView = 'submissions';
+            this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === this.selectedTableId);
+          }
+
           this.updatePagination();
         }
       } else if (this.userRole === 'procurement') {
-        this.selectedTableId = '';
-        this.selectedTable = null;
+        // For procurement, default to first table (if any) so items are shown per table
+        if (this.tables.length > 0) {
+          this.selectedTable = this.tables[0];
+          this.selectedTableId = this.tables[0].id;
+        } else {
+          this.selectedTable = null;
+          this.selectedTableId = '';
+        }
 
         await this.loadProcurementReviewed();
-        this.filteredRequisitions = [...this.procurementReviewed];
+
+        if (this.selectedTableId) {
+          this.filteredRequisitions = this.procurementReviewed.filter(r => r.table_id === this.selectedTableId);
+        } else {
+          this.filteredRequisitions = [...this.procurementReviewed];
+        }
         this.updatePagination();
       } else if (this.tables.length > 0) {
         const lastTableId = localStorage.getItem(`lastSelectedRequisitionTable_${this.userId}`);
@@ -497,20 +529,41 @@ export class Page3Component implements OnInit {
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
-      const reviewedSnapshot = await this.run(() => {
-        const q = query(
-          requisitionsRef,
-          where('production_action', 'in', ['confirmed', 'removed']),
-          orderBy('production_action_at', 'desc')
-        );
-        return getDocs(q);
-      });
-
+      // Load items that production has acted on (confirmed/removed).
+      // This avoids querying statuses production may not have permission to read.
       const reviewed: Requisition[] = [];
-      reviewedSnapshot.forEach(doc => {
-        const data = doc.data();
-        reviewed.push({ id: doc.id, ...data } as Requisition);
-      });
+      const queries: Array<Promise<any>> = [];
+
+      const addQuery = (q: any) => {
+        queries.push(this.run(() => getDocs(q)));
+      };
+
+      addQuery(query(
+        requisitionsRef,
+        where('production_action', '==', 'confirmed')
+      ));
+      addQuery(query(
+        requisitionsRef,
+        where('production_action', '==', 'removed')
+      ));
+
+      const seen = new Set<string>();
+
+      for (const queryPromise of queries) {
+        try {
+          const snapshot = await queryPromise;
+          snapshot.forEach((doc: { data: () => any; id: any; }) => {
+            const data = doc.data();
+            const id = doc.id;
+            if (!seen.has(id)) {
+              seen.add(id);
+              reviewed.push({ id, ...data } as Requisition);
+            }
+          });
+        } catch (queryErr) {
+          console.error('loadProductionReviewed query failed, skipping:', queryErr);
+        }
+      }
 
       await this.loadUserEmailsForRequisitions(reviewed);
       await this.loadTableNamesForRequisitions(reviewed);
@@ -518,6 +571,7 @@ export class Page3Component implements OnInit {
       this.productionReviewed = reviewed;
 
     } catch (err) {
+      console.error('loadProductionReviewed failed', err);
       this.showToast('Failed to load reviewed items', 'error');
     } finally {
       this.isLoading = false;
@@ -531,20 +585,51 @@ export class Page3Component implements OnInit {
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
-      const snapshot = await this.run(() => {
-        const q = query(
-          requisitionsRef,
-          where('production_action', '==', 'confirmed'),
-          orderBy('production_action_at', 'desc')
-        );
-        return getDocs(q);
-      });
+      let reviewed: Requisition[] = [];
 
-      const reviewed: Requisition[] = [];
-      snapshot.forEach(doc => {
-        const data = doc.data();
-        reviewed.push({ id: doc.id, ...data } as Requisition);
-      });
+      // Load items that are either production-confirmed or have production_action=confirmed
+      // This ensures production and procurement both see the items even if status wasn't updated.
+      const queries: Array<Promise<any>> = [];
+
+      const addQuery = (q: any) => {
+        queries.push(this.run(() => getDocs(q)));
+      };
+
+      try {
+        // Procurement can read items that were marked as confirmed, or have downstream statuses
+        addQuery(query(
+          requisitionsRef,
+          where('production_action', '==', 'confirmed')
+        ));
+        addQuery(query(
+          requisitionsRef,
+          where('status', '==', 'Partially_Delivered')
+        ));
+        addQuery(query(
+          requisitionsRef,
+          where('status', '==', 'Delivered')
+        ));
+        addQuery(query(
+          requisitionsRef,
+          where('status', '==', 'Scheduled')
+        ));
+
+        const snapshots = await Promise.all(queries);
+        const seen = new Set<string>();
+
+        snapshots.forEach(snapshot => {
+          snapshot.forEach((doc: { data: () => any; id: any; }) => {
+            const data = doc.data();
+            const id = doc.id;
+            if (!seen.has(id)) {
+              seen.add(id);
+              reviewed.push({ id, ...data } as Requisition);
+            }
+          });
+        });
+      } catch (err) {
+        console.error('loadProcurementReviewed fallback failed', err);
+      }
 
       await this.loadUserEmailsForRequisitions(reviewed);
       await this.loadTableNamesForRequisitions(reviewed);
@@ -554,6 +639,7 @@ export class Page3Component implements OnInit {
       this.updatePagination();
 
     } catch (err) {
+      console.error('loadProcurementReviewed failed', err);
       this.showToast('Failed to load reviewed requisitions', 'error');
     } finally {
       this.isLoading = false;
@@ -649,12 +735,22 @@ export class Page3Component implements OnInit {
       this.selectedTable = table;
       this.showTableDropdown = false;
 
-      // Filter submissions by selected table
-      this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === table.id);
+      // Automatically choose the correct view based on whether production has already reviewed this table
+      if (table.production_reviewed) {
+        this.selectedProductionView = 'reviewed';
+        if (this.productionReviewed.length === 0) {
+          await this.loadProductionReviewed();
+        }
+        this.filteredRequisitions = this.productionReviewed.filter(r => r.table_id === table.id);
+        this.showToast(`Showing reviewed items from table: ${table.name}`, 'info');
+      } else {
+        this.selectedProductionView = 'submissions';
+        this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === table.id);
+        this.showToast(`Showing submissions from table: ${table.name}`, 'info');
+      }
+
       this.currentPage = 1;
       this.updatePagination();
-
-      this.showToast(`Showing submissions from table: ${table.name}`, 'info');
 
     } else if (this.userRole === 'procurement') {
       this.selectedTableId = table.id;
@@ -1250,12 +1346,8 @@ export class Page3Component implements OnInit {
         {}
       );
       if (success) {
-        await this.loadProcurementReviewed();
-        if (this.selectedTable) {
-          this.filteredRequisitions = this.procurementReviewed.filter(r => r.table_id === this.selectedTable!.id);
-        } else {
-          this.filteredRequisitions = [...this.procurementReviewed];
-        }
+        // Update the local item status instead of reloading
+        req.status = 'Delivered';
         this.showToast('Requisition marked as delivered', 'success');
       } else {
         this.showToast('Failed to update', 'error');
@@ -1285,12 +1377,9 @@ export class Page3Component implements OnInit {
         { missing_materials_notes: this.missingMaterialsNotes }
       );
       if (success) {
-        await this.loadProcurementReviewed();
-        if (this.selectedTable) {
-          this.filteredRequisitions = this.procurementReviewed.filter(r => r.table_id === this.selectedTable!.id);
-        } else {
-          this.filteredRequisitions = [...this.procurementReviewed];
-        }
+        // Update the local item status instead of reloading
+        this.selectedRequisition.status = 'Partially_Delivered';
+        this.selectedRequisition.procurement_notes = this.missingMaterialsNotes;
         this.closeMissingNotesModal();
         this.showToast('Notes saved - requisition marked as partially delivered', 'success');
       } else {
@@ -1723,11 +1812,16 @@ export class Page3Component implements OnInit {
 
   canSubmitReviewedTable(): boolean {
     if (this.userRole !== 'production' || !this.selectedTable) return false;
-    
+
+    // Once production has submitted the table, they should not be able to resubmit
+    if (this.selectedTable.production_reviewed) {
+      return false;
+    }
+
     const tableSubmissions = this.productionSubmissions.filter(r => r.table_id === this.selectedTable!.id);
     if (tableSubmissions.length === 0) return false;
-    
-    // Check if all submissions in this table have been marked (confirmed or removed)
+
+    // Only allow submission once every item has a confirmed/removed action
     return tableSubmissions.every(r => r.production_action === 'confirmed' || r.production_action === 'removed');
   }
 
@@ -1742,23 +1836,33 @@ export class Page3Component implements OnInit {
       
       // Update each submission's status based on production_action
       const updatePromises = tableSubmissions.map(async (req) => {
-        let newStatus = req.status;
-        if (req.production_action === 'confirmed') {
-          newStatus = 'Production_Confirmed';
-        } else if (req.production_action === 'removed') {
-          newStatus = 'Removed';
+        // Treat any unmarked item as confirmed by default so production can submit the table
+        const action = req.production_action === 'removed' ? 'removed' : 'confirmed';
+        const newStatus = action === 'removed' ? 'Removed' : 'Production_Confirmed';
+
+        // Ensure the production_action flag is stored on the requisition as well
+        const updateData: any = {
+          production_action: action,
+          production_action_at: req.production_action_at || new Date().toISOString(),
+          production_action_by: req.production_action_by || this.userId
+        };
+
+        if (action === 'removed') {
+          updateData.production_action_notes = req.production_action_notes || '';
         }
-        
-        if (newStatus !== req.status) {
-          return this.db.updateRequisitionStatus(
-            req.id,
-            newStatus,
-            this.userId,
-            req.table_id || '',
-            {} // No additional data needed
-          );
-        }
-        return Promise.resolve(true);
+
+        // Only update when something changes to avoid unnecessary writes
+        const needsUpdate = req.status !== newStatus || req.production_action !== action;
+        if (!needsUpdate) return true;
+
+        const tableId = req.table_id || this.selectedTableId || '';
+        return this.db.updateRequisitionStatus(
+          req.id,
+          newStatus,
+          this.userId,
+          tableId,
+          updateData
+        );
       });
 
       await Promise.all(updatePromises);
@@ -1770,7 +1874,9 @@ export class Page3Component implements OnInit {
           production_reviewed: true,
           production_reviewed_at: new Date().toISOString(),
           production_reviewed_by: this.userId,
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
+          // Ensure submitted stays true so procurement can access this table
+          submitted: true
         })
       );
 
@@ -1784,8 +1890,16 @@ export class Page3Component implements OnInit {
       const tableName = this.selectedTable.name;
       this.showToast(`Table "${tableName}" submitted to procurement – they have been notified`, 'success');
 
-      // Keep table selected and switch to reviewed view so production can see procurement notes later
+      // Mark the table as reviewed so the submit button disappears
+      if (this.selectedTable) {
+        this.selectedTable.production_reviewed = true;
+      }
+
+      // Refresh local lists so production sees the updated status
+      await this.loadProductionSubmissions();
       await this.loadProductionReviewed();
+
+      // Keep table selected and switch to reviewed view so production can see procurement notes later
       this.selectedProductionView = 'reviewed';
       this.filteredRequisitions = this.productionReviewed.filter(r => r.table_id === this.selectedTable!.id);
       this.updatePagination();

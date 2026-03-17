@@ -58,14 +58,19 @@
       </button>
 
       <!-- Submit Reviewed Table Button for Production -->
-      <button *ngIf="canSubmitReviewedTable()" 
-              class="btn btn-success" 
-              (click)="submitReviewedTable()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path d="M20 6L9 17l-5-5"/>
-        </svg>
-        Submit to Procurement
-      </button>
+      <ng-container *ngIf="!selectedTable?.production_reviewed">
+        <button *ngIf="canSubmitReviewedTable()" 
+                class="btn btn-success" 
+                (click)="submitReviewedTable()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+          Submit to Procurement
+        </button>
+      </ng-container>
+      <span *ngIf="selectedTable?.production_reviewed && userRole === 'production'" class="badge badge-success">
+        Submitted to Procurement
+      </span>
 
       <!-- Tables Dropdown - Only for store/user with their tables -->
       <div class="dropdown" [class.open]="showTableDropdown" *ngIf="viewMode === 'my_tables'">
@@ -529,7 +534,7 @@
                 <td class="limit" title="{{ req.supplier || '' }}">{{ req.supplier }}</td>
                 <td class="limit" title="{{ req.brand || '—' }}">{{ req.brand || '—' }}</td>
                 <td>
-                  <span class="status" [class]="getStatusBadgeClass(req.status)">
+                  <span class="status" [class]="getStatusBadgeClass(req.status)" [title]="(req.status === 'Delivered' || req.status === 'Partially_Delivered') && req.procurement_notes ? req.procurement_notes : ''">
                     {{ req.status || 'Pending' }}
                   </span>
                 </td>
