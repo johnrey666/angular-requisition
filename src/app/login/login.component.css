@@ -8,7 +8,7 @@
 /* ========== Brand Panel ========== */
 .brand-panel {
   flex: 1;
-  background: linear-gradient(135deg, hsl(var(--card)) 0%, hsl(var(--background)) 100%);
+  background: linear-gradient(135deg, #203d5f 0%, #2e5a7f 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -27,7 +27,7 @@
 .logo-mark {
   width: 64px;
   height: 64px;
-  color: hsl(var(--primary));
+  color: #ffffff;
   margin-bottom: 2rem;
   animation: logoPulse 2s ease-in-out infinite;
 }
@@ -41,7 +41,7 @@
   font-family: 'Outfit', 'DM Sans', system-ui, sans-serif;
   font-size: 2.5rem;
   font-weight: 700;
-  color: hsl(var(--foreground));
+  color: #ffffff;
   letter-spacing: -0.02em;
   line-height: 1.2;
   margin: 0 0 1rem 0;
@@ -49,7 +49,7 @@
 
 .brand-subtitle {
   font-size: 1.125rem;
-  color: hsl(var(--muted-foreground));
+  color: #e0e7f0;
   line-height: 1.6;
   margin: 0;
 }
@@ -72,7 +72,7 @@
 .shape-1 {
   width: 400px;
   height: 400px;
-  background: linear-gradient(135deg, #f59e0b, #d97706);
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
   top: -150px;
   right: -100px;
   animation-delay: 0s;
@@ -81,7 +81,7 @@
 .shape-2 {
   width: 250px;
   height: 250px;
-  background: linear-gradient(135deg, hsl(142 76% 36%), hsl(142 76% 26%));
+  background: linear-gradient(135deg, #203d5f, #1a2942);
   bottom: -50px;
   left: -80px;
   animation-delay: -5s;
@@ -90,7 +90,7 @@
 .shape-3 {
   width: 150px;
   height: 150px;
-  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  background: linear-gradient(135deg, #fcd34d, #fbbf24);
   top: 40%;
   left: 20%;
   animation-delay: -10s;
@@ -99,7 +99,7 @@
 .shape-4 {
   width: 80px;
   height: 80px;
-  background: linear-gradient(135deg, hsl(142 76% 46%), hsl(142 76% 36%));
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
   top: 20%;
   right: 25%;
   animation-delay: -7s;
@@ -108,7 +108,7 @@
 .shape-5 {
   width: 120px;
   height: 120px;
-  background: linear-gradient(135deg, #f59e0b, #d97706);
+  background: linear-gradient(135deg, #fcd34d, #fbbf24);
   bottom: 25%;
   right: 15%;
   animation-delay: -12s;
@@ -324,8 +324,8 @@
   padding: 1rem 1.5rem;
   font-size: 1rem;
   font-weight: 600;
-  color: hsl(var(--primary-foreground));
-  background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--secondary)) 100%);
+  color: white;
+  background: linear-gradient(135deg, #203d5f 0%, #2e5a7f 100%);
   border: none;
   border-radius: 12px;
   cursor: pointer;
@@ -336,7 +336,7 @@
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
   overflow: hidden;
-  box-shadow: 0 4px 14px 0 hsla(var(--primary), 0.35);
+  box-shadow: 0 4px 14px 0 rgba(32, 61, 95, 0.35);
 }
 
 .submit-btn::before {
@@ -350,7 +350,7 @@
 
 .submit-btn:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px 0 rgba(30, 64, 175, 0.45);
+  box-shadow: 0 6px 20px 0 rgba(32, 61, 95, 0.45);
 }
 
 .submit-btn:hover:not(:disabled)::before {

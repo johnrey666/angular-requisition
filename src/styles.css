@@ -8,18 +8,18 @@
 :root {
   /* Light theme colors */
   --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
+  --foreground: 217 33% 16%;
   --muted: 210 40% 96.1%;
   --muted-foreground: 215.4 16.3% 46.9%;
   --border: 214.3 31.8% 91.4%;
   --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
-  --primary: 142 76% 36%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 142 76% 46%;
-  --secondary-foreground: 222.2 47.4% 11.2%;
-  --accent: 142 76% 46%;
-  --accent-foreground: 222.2 47.4% 11.2%;
+  --card-foreground: 217 33% 16%;
+  --primary: 217 67% 32%;
+  --primary-foreground: 45 100% 88%;
+  --secondary: 38 92% 50%;
+  --secondary-foreground: 217 33% 16%;
+  --accent: 38 92% 50%;
+  --accent-foreground: 217 33% 16%;
   --destructive: 0 84.2% 60.2%;
   --destructive-foreground: 210 40% 98%;
 
@@ -43,19 +43,19 @@
 
 .dark {
   /* Dark theme colors */
-  --background: 222.2 84% 4.9%;
-  --foreground: 210 40% 98%;
-  --muted: 217.2 32.6% 17.5%;
-  --muted-foreground: 215 20.2% 65.1%;
-  --border: 217.2 32.6% 17.5%;
-  --card: 222.2 84% 4.9%;
-  --card-foreground: 210 40% 98%;
-  --primary: 142 76% 56%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  --secondary: 142 76% 46%;
-  --secondary-foreground: 210 40% 98%;
-  --accent: 142 76% 46%;
-  --accent-foreground: 210 40% 98%;
+  --background: 217 33% 12%;
+  --foreground: 45 100% 88%;
+  --muted: 217 28% 20%;
+  --muted-foreground: 45 87% 70%;
+  --border: 217 28% 20%;
+  --card: 217 33% 16%;
+  --card-foreground: 45 100% 88%;
+  --primary: 217 67% 42%;
+  --primary-foreground: 45 100% 88%;
+  --secondary: 38 92% 50%;
+  --secondary-foreground: 217 33% 16%;
+  --accent: 38 92% 50%;
+  --accent-foreground: 217 33% 16%;
   --destructive: 0 62.8% 30.6%;
   --destructive-foreground: 210 40% 98%;
 
