@@ -17,7 +17,6 @@ export class AuthGuard implements CanActivate {
   async canActivate(route: ActivatedRouteSnapshot, state: RouterStateSnapshot): Promise<boolean> {
     console.log('AuthGuard: Checking authentication for route:', state.url);
     
-    // Wait for auth to be ready and get user
     const user = await this.authService.getCurrentUserPromise(8000);
     
     if (user) {
@@ -36,3 +35,5 @@ export class AuthGuard implements CanActivate {
     return false;
   }
 }
+
+ 
