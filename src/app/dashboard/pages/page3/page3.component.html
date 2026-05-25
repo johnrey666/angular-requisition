@@ -300,8 +300,8 @@
 
   <!-- Main Content Container -->
   <ng-container *ngIf="
-    (userRole === 'production' && filteredRequisitions.length > 0) || 
-    (userRole === 'procurement' && filteredRequisitions.length > 0) ||
+    userRole === 'production' ||
+    userRole === 'procurement' ||
     (selectedTable && viewMode === 'my_tables')
   ">
     <!-- Import Section - Only show for store/user/admin -->
@@ -455,7 +455,7 @@
     </div>
 
     <!-- Requisitions Card -->
-    <div class="card">
+    <div class="card" [class.card-loading]="isLoading">
       <div class="card-header">
         <div>
           <h2>Requisitions</h2>
@@ -497,7 +497,7 @@
           <p>Loading...</p>
         </div>
 
-        <table *ngIf="!isLoading">
+        <table [class.table-dimmed]="isLoading">
           <thead>
              <tr>
               <th></th>

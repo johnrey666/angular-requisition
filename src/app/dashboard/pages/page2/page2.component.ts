@@ -4,7 +4,6 @@ import { FormsModule } from '@angular/forms';
 import * as ExcelJS from 'exceljs';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { LoaderService } from '../../../core/services/loader.service';
 import { Firestore, doc, getDoc, collection, query, where, getDocs } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 
@@ -70,6 +69,7 @@ export class Page2Component implements OnInit {
   uploadingMaster = false;
   uploadStatus = '';
   addingItem = false;
+  isTableLoading = false;
   expandedRows: { [id: string]: boolean } = {};
   loadingMaterials: { [id: string]: boolean } = {};
 
@@ -101,8 +101,7 @@ export class Page2Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private router: Router,
-    private loader: LoaderService
+    private router: Router
   ) {}
 
   async ngOnInit() {
@@ -141,12 +140,13 @@ export class Page2Component implements OnInit {
   }
 
   // Direct Firestore query to load production tables
-  async loadProductionTablesDirectly() {
+  async loadProductionTablesDirectly(silent = false) {
     try {
-      this.loader.show('Loading production lines...');
+      if (!silent) {
+        this.isTableLoading = true;
+      }
       if (!this.userId) {
         this.showToast('You must be logged in', 'error');
-        this.loader.hide();
         return;
       }
       
@@ -203,7 +203,9 @@ export class Page2Component implements OnInit {
       this.currentTable = null;
       this.showToast('Failed to load production tables', 'error');
     } finally {
-      this.loader.hide();
+      if (!silent) {
+        this.isTableLoading = false;
+      }
     }
   }
 
@@ -215,7 +217,7 @@ export class Page2Component implements OnInit {
     }
 
     try {
-      this.loader.show('Loading items...');
+      this.isTableLoading = true;
       console.log('Loading production items for table:', this.currentTable.id);
       
       const requisitionsRef = collection(this.firestore, 'requisitions');
@@ -257,7 +259,7 @@ export class Page2Component implements OnInit {
       this.updatePagination();
       this.showToast('Failed to load production items', 'error');
     } finally {
-      this.loader.hide();
+      this.isTableLoading = false;
     }
   }
 
@@ -430,8 +432,7 @@ export class Page2Component implements OnInit {
     }
 
     this.addingItem = true;
-    this.loader.show('Adding item...');
-    
+
     if (!this.userId) {
       this.showToast('You must be logged in', 'error');
       this.addingItem = false;
@@ -471,8 +472,8 @@ export class Page2Component implements OnInit {
         await this.db.updateTableItemCount(this.currentTable.id, newCount, this.userId);
         this.currentTable.item_count = newCount;
         
-        await this.loadProductionTablesDirectly();
-        
+        await this.loadProductionTablesDirectly(true);
+
         this.newItem = { category: '', sku_code: '', sku_name: '', supplier: '', qty_needed: null };
         this.availableSkus = [];
         
@@ -487,7 +488,6 @@ export class Page2Component implements OnInit {
       this.showToast('Error adding item', 'error');
     } finally {
       this.addingItem = false;
-      this.loader.hide();
     }
   }
 
@@ -591,7 +591,7 @@ export class Page2Component implements OnInit {
     if (!tableName?.trim()) return;
 
     try {
-      this.loader.show('Creating production line...');
+      this.isTableLoading = true;
       if (!this.userId) {
         this.showToast('You must be logged in to create tables', 'error');
         return;
@@ -614,7 +614,7 @@ export class Page2Component implements OnInit {
       console.error('Failed to create table', err);
       this.showToast('Error creating production line', 'error');
     } finally {
-      this.loader.hide();
+      this.isTableLoading = false;
     }
   }
 

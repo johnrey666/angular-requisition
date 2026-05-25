@@ -1,6 +1,6 @@
 import { Component, inject, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router, NavigationStart, NavigationEnd } from '@angular/router';
+import { Router, NavigationEnd } from '@angular/router';
 import { LoaderService } from '../../services/loader.service';
 
 @Component({
@@ -9,7 +9,7 @@ import { LoaderService } from '../../services/loader.service';
   imports: [CommonModule],
   template: `
     @if (loader.visible()) {
-      <div class="loader-overlay" [class.content-only]="loader.contentOnly() && !loader.bootstrapping()" role="status" aria-live="polite" aria-label="Loading">
+      <div class="loader-overlay" role="status" aria-live="polite" aria-label="Loading">
         <div class="loader-content">
           <div class="loader-skeleton" aria-hidden="true">
             <div class="skeleton title"></div>
@@ -212,39 +212,20 @@ export class LoaderComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private bootstrapDone = false;
   private navSub: any;
-  private navTimer: ReturnType<typeof setTimeout> | null = null;
 
   ngOnInit() {
-    // Avoid showing the loader on fast navigations (prevents flicker and feels snappier).
+    // Only bootstrap loader on first app load — not on dashboard route changes.
     this.navSub = this.router.events.subscribe(e => {
-      if (e instanceof NavigationStart) {
-        if (this.bootstrapDone) {
-          this.navTimer = setTimeout(() => {
-            this.loader.show();
-          }, 120);
-        }
-      } else if (e instanceof NavigationEnd) {
+      if (e instanceof NavigationEnd) {
         if (!this.bootstrapDone) {
           this.bootstrapDone = true;
           this.loader.setBootstrapping(false);
-        }
-        this.loader.setContentOnly(e.urlAfterRedirects.startsWith('/dashboard'));
-        if (this.navTimer) {
-          clearTimeout(this.navTimer);
-          this.navTimer = null;
-        }
-        if (this.bootstrapDone) {
-          this.loader.hide();
         }
       }
     });
   }
 
   ngOnDestroy() {
-    if (this.navTimer) {
-      clearTimeout(this.navTimer);
-      this.navTimer = null;
-    }
     this.navSub?.unsubscribe();
   }
 }

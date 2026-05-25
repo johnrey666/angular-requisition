@@ -269,7 +269,33 @@ h3 {
    Table
    ========================================================================== */
 .table-wrapper {
+  position: relative;
   overflow-x: auto;
+  min-height: 200px;
+}
+
+.table-wrapper .table-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: hsl(var(--card) / 0.92);
+  backdrop-filter: blur(2px);
+}
+
+.table-wrapper .table-loading p {
+  margin: 0;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+
+.table-wrapper table.table-dimmed {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 table {

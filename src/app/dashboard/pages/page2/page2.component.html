@@ -262,7 +262,11 @@
     </div>
 
     <div class="table-wrapper">
-      <table>
+      <div *ngIf="isTableLoading" class="table-loading">
+        <div class="spinner-small"></div>
+        <p>Loading...</p>
+      </div>
+      <table [class.table-dimmed]="isTableLoading">
         <thead>
           <tr>
             <th></th>

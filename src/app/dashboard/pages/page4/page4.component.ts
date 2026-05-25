@@ -3,7 +3,6 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { LoaderService } from '../../../core/services/loader.service';
 import { Firestore, doc, getDoc } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 import * as XLSX from 'xlsx';
@@ -88,8 +87,7 @@ export class Page4Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private router: Router,
-    private loader: LoaderService
+    private router: Router
   ) {}
 
   get Math() {
@@ -184,9 +182,6 @@ export class Page4Component implements OnInit {
 
   async loadUsageData(showLoader: boolean = true): Promise<void> {
     this.isLoading = showLoader;
-    if (showLoader) {
-      this.loader.show('Loading usage report...');
-    }
 
     const skuCache = new Map<string, any[]>();
 
@@ -203,7 +198,6 @@ export class Page4Component implements OnInit {
       if (!this.userId) {
         this.showMessage('Please login to view usage reports', 'error');
         this.isLoading = false;
-        this.loader.hide();
         return;
       }
 
@@ -221,9 +215,6 @@ export class Page4Component implements OnInit {
       if (relevantTables.length === 0) {
         this.showMessage('No tables found for the selected filter.', 'info');
         this.isLoading = false;
-        if (showLoader) {
-          this.loader.hide();
-        }
         return;
       }
 
@@ -363,9 +354,6 @@ export class Page4Component implements OnInit {
       this.paginatedData = [];
     } finally {
       this.isLoading = false;
-      if (showLoader) {
-        this.loader.hide();
-      }
     }
   }
 

@@ -5,7 +5,6 @@ import { HttpClientModule } from '@angular/common/http';
 import { runInInjectionContext } from '@angular/core';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
-import { LoaderService } from '../../../core/services/loader.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import { EmailNotificationService } from '../../../core/services/email-notification.service';
 import {
@@ -198,7 +197,6 @@ export class Page3Component implements OnInit {
     private injector: Injector,
     private cdr: ChangeDetectorRef,
     private notificationService: NotificationService,
-    private loader: LoaderService,
     private emailNotificationService: EmailNotificationService
   ) {}
 
@@ -297,7 +295,6 @@ export class Page3Component implements OnInit {
     try {
       console.log('Loading tables for user:', this.userId, 'role:', this.userRole);
       this.isLoading = true;
-      this.loader.show('Loading tables...');
       const tablesRef = collection(this.firestore, 'tables');
 
       let querySnapshot;
@@ -438,7 +435,6 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load tables', 'error');
     } finally {
       this.isLoading = false;
-      this.loader.hide();
     }
   }
 
@@ -447,7 +443,6 @@ export class Page3Component implements OnInit {
 
     try {
       this.isLoading = true;
-      this.loader.show('Loading requisitions...');
 
       const querySnapshot = await this.run(() => {
         const requisitionsRef = collection(this.firestore, 'requisitions');
@@ -489,13 +484,11 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load requisitions', 'error');
     } finally {
       this.isLoading = false;
-      this.loader.hide();
     }
   }
 
   async loadProductionSubmissions() {
     this.isLoading = true;
-    this.loader.show('Loading submissions...');
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
@@ -523,13 +516,11 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load submissions', 'error');
     } finally {
       this.isLoading = false;
-      this.loader.hide();
     }
   }
 
   async loadProductionReviewed() {
     this.isLoading = true;
-    this.loader.show('Loading reviewed items...');
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
@@ -577,13 +568,11 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load reviewed items', 'error');
     } finally {
       this.isLoading = false;
-      this.loader.hide();
     }
   }
 
   async loadProcurementReviewed() {
     this.isLoading = true;
-    this.loader.show('Loading requisitions...');
     try {
       const requisitionsRef = collection(this.firestore, 'requisitions');
 
@@ -642,7 +631,6 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load reviewed requisitions', 'error');
     } finally {
       this.isLoading = false;
-      this.loader.hide();
     }
   }
 
@@ -1230,7 +1218,7 @@ export class Page3Component implements OnInit {
 
     try {
       this.isSubmitting = true;
-      this.loader.show('Submitting table...');
+      this.isLoading = true;
 
       const snapshot = await this.run(() => {
         const requisitionsRef = collection(this.firestore, 'requisitions');
@@ -1307,7 +1295,7 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to submit table', 'error');
     } finally {
       this.isSubmitting = false;
-      this.loader.hide();
+      this.isLoading = false;
     }
   }
 
@@ -1591,7 +1579,7 @@ export class Page3Component implements OnInit {
 
     try {
       this.isSubmitting = true;
-      this.loader.show('Submitting to procurement...');
+      this.isLoading = true;
 
       const tableSubmissions = this.productionSubmissions.filter(r => r.table_id === this.selectedTable!.id);
       
@@ -1681,7 +1669,7 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to submit table', 'error');
     } finally {
       this.isSubmitting = false;
-      this.loader.hide();
+      this.isLoading = false;
     }
   }
 

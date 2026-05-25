@@ -80,14 +80,6 @@
     </div>
   </div>
 
-  <!-- Loading State -->
-  <div *ngIf="isLoading" class="empty-card">
-    <div class="loading-state">
-      <div class="spinner"></div>
-      <p>Loading production data...</p>
-    </div>
-  </div>
-
   <!-- Empty State -->
   <div *ngIf="!isLoading && usageData.length === 0" class="empty-card">
     <div class="empty-state">
@@ -111,7 +103,7 @@
   </div>
 
   <!-- Content -->
-  <div *ngIf="!isLoading && usageData.length > 0">
+  <div *ngIf="isLoading || usageData.length > 0">
     <!-- Summary Cards -->
     <div class="summary-grid">
       <div class="summary-card">
@@ -180,7 +172,11 @@
       </div>
 
       <div class="table-wrapper">
-        <table>
+        <div *ngIf="isLoading" class="table-loading">
+          <div class="spinner"></div>
+          <p>Loading production data...</p>
+        </div>
+        <table [class.table-dimmed]="isLoading" *ngIf="usageData.length > 0">
           <thead>
             <tr>
               <th (click)="sortData('material_name')" class="sortable">

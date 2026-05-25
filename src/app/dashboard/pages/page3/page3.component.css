@@ -682,8 +682,36 @@ select:focus {
 /* ==========================================================================
    Table
    ========================================================================== */
+.card {
+  position: relative;
+}
+
+.card.card-loading .table-wrapper {
+  min-height: 220px;
+}
+
 .table-wrapper {
+  position: relative;
   overflow-x: auto;
+  min-height: 120px;
+}
+
+.table-wrapper .loading {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: hsl(var(--card) / 0.92);
+  backdrop-filter: blur(2px);
+}
+
+.table-wrapper table.table-dimmed {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 table {
@@ -1167,15 +1195,10 @@ tr:hover td {
 /* ==========================================================================
    Loading
    ========================================================================== */
-.loading {
-  padding: 48px 16px;
-  text-align: center;
-}
-
 .loading p {
   font-size: 13px;
-  color: #64748b;
-  margin-top: 8px;
+  color: hsl(var(--muted-foreground));
+  margin: 0;
 }
 
 .spinner {
