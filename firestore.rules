@@ -122,7 +122,8 @@ service cloud.firestore {
           resource.data.status == 'Submitted' &&
           (request.resource.data.status in ['Production_Confirmed', 'Removed'] ||
            (request.resource.data.status == resource.data.status &&
-            'production_action' in request.resource.data.diff(resource.data).affectedKeys()))) ||
+            ('production_action' in request.resource.data.diff(resource.data).affectedKeys() ||
+             'materials' in request.resource.data.diff(resource.data).affectedKeys())))) ||
         (isProcurement() &&
           resource.data.production_action == 'confirmed' &&
           request.resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||

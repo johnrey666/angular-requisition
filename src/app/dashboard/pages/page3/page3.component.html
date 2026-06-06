@@ -11,7 +11,7 @@
       Production Dashboard - Review submitted tables and manage requisitions
     </span>
     <span class="role-description" *ngIf="userRole === 'user' || userRole === 'store'">
-      Requisition Management - Create tables and add requisitions
+      Requisition Management - Create a table first, then add requisition items
     </span>
     <span class="role-description" *ngIf="userRole === 'admin'">
       Administrator - Full control over requisitions and workflow
@@ -57,7 +57,7 @@
         Show All Tables
       </button>
 
-      <!-- Submit Reviewed Table Button for Production -->
+      <!-- Transfer Reviewed Table Button for Production -->
       <ng-container *ngIf="!selectedTable?.production_reviewed">
         <button *ngIf="canSubmitReviewedTable()" 
                 class="btn btn-success" 
@@ -65,11 +65,11 @@
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M20 6L9 17l-5-5"/>
           </svg>
-          Submit to Procurement
+          Transfer to Procurement
         </button>
       </ng-container>
       <span *ngIf="selectedTable?.production_reviewed && userRole === 'production'" class="badge badge-success">
-        Submitted to Procurement
+        Transferred to Procurement
       </span>
 
       <!-- Tables Dropdown - Only for store/user with their tables -->
@@ -215,6 +215,13 @@
         {{ selectedTable.submitted ? 'Table Submitted' : 'Submit Table' }}
       </button>
       
+      <button class="btn btn-primary" (click)="openTableModal()" *ngIf="canManageTables() && !selectedTable && tables.length === 0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Create Table
+      </button>
+
       <button class="btn btn-primary" (click)="openModal()" *ngIf="canCreateRequisition()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M12 5v14M5 12h14"/>
@@ -232,8 +239,15 @@
         <line x1="3" y1="9" x2="21" y2="9"/>
         <line x1="9" y1="21" x2="9" y2="9"/>
       </svg>
-      <h3>No Table Selected</h3>
-      <p>You need to create or select a table before managing requisitions.</p>
+      <h3>{{ tables.length === 0 ? 'Create a Table First' : 'Select a Table' }}</h3>
+      <p>
+        <ng-container *ngIf="tables.length === 0">
+          Step 1: Create a requisition table. Step 2: Add requisition items to that table.
+        </ng-container>
+        <ng-container *ngIf="tables.length > 0">
+          Choose a table from the dropdown above, then add requisition items.
+        </ng-container>
+      </p>
       <button class="btn btn-primary" (click)="openTableModal()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M12 5v14M5 12h14"/>
@@ -299,13 +313,13 @@
   </div>
 
   <!-- Main Content Container -->
-  <ng-container *ngIf="
+  <div class="main-content" *ngIf="
     userRole === 'production' ||
     userRole === 'procurement' ||
     (selectedTable && viewMode === 'my_tables')
   ">
-    <!-- Import Section - Only show for store/user/admin -->
-    <div class="import-card" *ngIf="userRole === 'user' || userRole === 'store' || userRole === 'admin'">
+    <!-- Master Data Section -->
+    <div class="import-card" *ngIf="canViewMasterData()">
       <div class="import-header">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -316,16 +330,25 @@
         <span class="import-badge" *ngIf="categories.length">{{ categories.length }} categories</span>
       </div>
       <div class="import-body">
-        <input type="file" accept=".xlsx,.xls" (change)="onFileSelected($event)" hidden #fileInput>
-        <button class="btn btn-outline" (click)="fileInput.click()" [disabled]="importStatus === 'loading'">
+        <ng-container *ngIf="canUploadMasterData()">
+          <input type="file" accept=".xlsx,.xls" (change)="onFileSelected($event)" hidden #fileInput>
+          <button class="btn btn-outline" (click)="fileInput.click()" [disabled]="importStatus === 'loading'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+              <polyline points="8 12 12 16 16 12"/>
+              <line x1="12" y1="2" x2="12" y2="16"/>
+            </svg>
+            {{ importStatus === 'loading' ? 'Uploading...' : 'Upload Excel' }}
+          </button>
+        </ng-container>
+        <button class="btn btn-outline" (click)="openMasterDataModal()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
-            <polyline points="8 12 12 16 16 12"/>
-            <line x1="12" y1="2" x2="12" y2="16"/>
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
           </svg>
-          {{ importStatus === 'loading' ? 'Uploading...' : 'Upload Excel' }}
+          View Master Data
         </button>
-        <span class="import-status" [class.success]="importStatus === 'success'" [class.error]="importStatus === 'error'">
+        <span class="import-status" *ngIf="canUploadMasterData()" [class.success]="importStatus === 'success'" [class.error]="importStatus === 'error'">
           {{ importMessage || 'No file selected' }}
         </span>
       </div>
@@ -399,7 +422,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <path d="M20 6L9 17l-5-5"/>
             </svg>
-            Submit to Procurement
+            Transfer to Procurement
           </button>
         </div>
       </div>
@@ -491,7 +514,7 @@
       </div>
 
       <!-- Table -->
-      <div class="table-wrapper">
+      <div class="table-wrapper" *ngIf="userRole !== 'procurement'">
         <div *ngIf="isLoading" class="loading">
           <div class="spinner"></div>
           <p>Loading...</p>
@@ -517,8 +540,7 @@
               <th>Actions</th>
              </tr>
           </thead>
-          <tbody>
-            <ng-container *ngFor="let req of paginatedRequisitions">
+          <tbody *ngFor="let req of paginatedRequisitions">
               <tr class="parent-row" [class.expanded]="expandedRows[req.id]" (click)="toggleRow(req)">
                 <td class="expand-cell">
                   <div class="expand-icon" [class.expanded]="expandedRows[req.id]">
@@ -565,11 +587,11 @@
                 </td>
                 <td>
                   <div class="action-buttons">
-                    <!-- Production Action Buttons -->
+                    <!-- Production bulk material action buttons -->
                     <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
                             class="btn-icon success"
-                            (click)="openProductionActionModal(req, 'confirmed'); $event.stopPropagation()"
-                            title="Confirm requisition">
+                            (click)="confirmAllMaterials(req); $event.stopPropagation()"
+                            title="Accept all materials for this requisition">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                         <path d="M20 6L9 17l-5-5"/>
                       </svg>
@@ -577,8 +599,8 @@
 
                     <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
                             class="btn-icon danger"
-                            (click)="openProductionActionModal(req, 'removed'); $event.stopPropagation()"
-                            title="Remove requisition">
+                            (click)="rejectAllMaterials(req); $event.stopPropagation()"
+                            title="Reject all materials for this requisition">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                         <line x1="18" y1="6" x2="6" y2="18"/>
                         <line x1="6" y1="6" x2="18" y2="18"/>
@@ -633,9 +655,11 @@
                     <div *ngIf="!loadingMaterials[req.id] && req.materials?.length">
                       <div class="expanded-header">
                         <h4>Raw Materials for {{ req.skuCode || req.skuName || 'Unknown SKU' }}</h4>
-                        <span class="material-note">
-                          Based on requisition quantity: {{ (req.quantity || req['qty_needed'] || 0) | number }} {{ req.unit || '—' }}
-                        </span>
+                        <div class="expanded-header-actions">
+                          <span class="material-note">
+                            Based on requisition quantity: {{ (req.quantity || req['qty_needed'] || 0) | number }} {{ req.unit || '—' }}
+                          </span>
+                        </div>
                       </div>
                       
                       <div class="materials-grid">
@@ -647,16 +671,30 @@
                               <th>Unit</th>
                               <th>Type</th>
                               <th>Total Required</th>
+                              <th *ngIf="userRole === 'production' && req.status === 'Submitted'">Action</th>
                             </tr>
                           </thead>
                           <tbody>
-                            <tr *ngFor="let mat of req.materials">
+                            <tr *ngFor="let mat of req.materials" [class.material-confirmed]="mat.production_action === 'confirmed'" [class.material-removed]="mat.production_action === 'removed'">
                               <td>{{ mat.raw_material || '—' }}</td>
                               <td class="number">{{ (mat.quantity_per_batch ?? 0) | number:'1.2-2' }}</td>
                               <td><span class="badge">{{ mat.unit || '—' }}</span></td>
                               <td><span class="badge" [class.badge-material]="mat.type">{{ mat.type || 'N/A' }}</span></td>
                               <td class="number primary">
                                 {{ calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch) | number:'1.2-2' }}
+                              </td>
+                              <td class="material-action-cell" *ngIf="userRole === 'production' && req.status === 'Submitted'">
+                                <button class="btn btn-icon success" [class.active]="mat.production_action === 'confirmed'" aria-label="Accept material" (click)="setMaterialAction(req, mat, 'confirmed'); $event.stopPropagation()">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path d="M20 6L9 17l-5-5"/>
+                                  </svg>
+                                </button>
+                                <button class="btn btn-icon danger" [class.active]="mat.production_action === 'removed'" aria-label="Reject material" (click)="setMaterialAction(req, mat, 'removed'); $event.stopPropagation()">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <line x1="18" y1="6" x2="6" y2="18"/>
+                                    <line x1="6" y1="6" x2="18" y2="18"/>
+                                  </svg>
+                                </button>
                               </td>
                             </tr>
                           </tbody>
@@ -678,9 +716,9 @@
                   </div>
                 </td>
               </tr>
-            </ng-container>
-            
-            <tr *ngIf="filteredRequisitions.length === 0">
+          </tbody>
+          <tbody *ngIf="filteredRequisitions.length === 0">
+            <tr>
               <td [attr.colspan]="getColspan()" class="empty">
                 <div>
                   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -723,7 +761,194 @@
         </select>
       </div>
     </div>
-  </ng-container>
+
+  <div class="table-wrapper" *ngIf="userRole === 'procurement'">
+    <div *ngIf="isLoading" class="loading">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
+
+    <table class="procurement-summary-table" [class.table-dimmed]="isLoading">
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th>Unique Materials</th>
+          <th>Total Requested Qty</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <ng-container *ngFor="let summary of procurementTableSummaries">
+          <tr class="procurement-summary-row">
+            <td>{{ summary.table_name }}</td>
+            <td>{{ summary.uniqueMaterialsCount }}</td>
+            <td>{{ summary.totalRequestedQuantity | number:'1.2-2' }}</td>
+            <td>
+              <button class="btn btn-sm btn-outline" (click)="openProcurementOriginalItemsModal(summary)">
+                View Exact Requisition Items
+              </button>
+            </td>
+          </tr>
+          <tr class="procurement-detail-row">
+            <td colspan="4">
+              <div class="procurement-materials-block">
+                <h4>Requested Materials for {{ summary.table_name }}</h4>
+                <table class="materials-table procurement-modal-table">
+                  <thead>
+                    <tr>
+                      <th>Raw Material</th>
+                      <th>Type</th>
+                      <th>Total Requested Qty</th>
+                      <th>Unit</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let item of summary.materials" [class.material-approved]="item.procurement_action === 'approved'" [class.material-rejected]="item.procurement_action === 'rejected'">
+                      <td>{{ item.raw_material }}</td>
+                      <td>{{ item.type }}</td>
+                      <td class="number">{{ item.totalQuantity | number:'1.2-2' }}</td>
+                      <td>{{ item.unit }}</td>
+                      <td class="material-action-cell">
+                        <button class="btn btn-icon success" [class.active]="item.procurement_action === 'approved'" aria-label="Approve raw material" (click)="setProcurementMaterialAction(item, 'approved')">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M20 6L9 17l-5-5"/>
+                          </svg>
+                        </button>
+                        <button class="btn btn-icon danger" [class.active]="item.procurement_action === 'rejected'" aria-label="Reject raw material" (click)="setProcurementMaterialAction(item, 'rejected')">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                    <tr *ngIf="!summary.materials.length">
+                      <td colspan="5" class="empty">
+                        <div>
+                          <p>No requested materials available.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </td>
+          </tr>
+        </ng-container>
+        <tr *ngIf="!procurementTableSummaries.length && !isLoading">
+          <td colspan="4" class="empty">
+            <div>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="9" y1="21" x2="9" y2="9"/>
+              </svg>
+              <h3>No production-confirmed tables</h3>
+              <p>There are no tables transferred to procurement yet.</p>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Procurement Exact Requisition Items Modal -->
+  <div class="modal" [class.active]="showProcurementOriginalItemsModal">
+    <div class="backdrop" (click)="closeProcurementOriginalItemsModal()"></div>
+    <div class="modal-container modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>Exact Requisition Items</h3>
+          <p class="modal-subtitle">Original requisitions for {{ currentProcurementTableName || currentProcurementTableId }}.</p>
+        </div>
+        <button class="close" (click)="closeProcurementOriginalItemsModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="materials-grid">
+          <table class="materials-table procurement-modal-table">
+            <thead>
+              <tr>
+                <th>Req #</th>
+                <th>SKU</th>
+                <th>Qty</th>
+                <th>Unit</th>
+                <th>Status</th>
+                <th>Materials</th>
+              </tr>
+            </thead>
+            <tbody>
+              <ng-container *ngFor="let req of getProcurementOriginalRequisitions(currentProcurementTableId)">
+                <tr>
+                  <td>{{ req.reqNumber || req.id }}</td>
+                  <td>
+                    <strong>{{ req.skuCode || req['sku_code'] || '—' }}</strong>
+                    <div class="small">{{ req.skuName || req['sku_name'] || 'Unknown SKU' }}</div>
+                  </td>
+                  <td class="number">{{ (req.quantity || req['qty_needed'] || 0) | number:'1.0-0' }}</td>
+                  <td>{{ req.unit || req['batch_unit'] || '—' }}</td>
+                  <td>
+                    <span class="status" [class]="getStatusBadgeClass(req.status)">
+                      {{ req.status || 'Pending' }}
+                    </span>
+                  </td>
+                  <td>
+                    <button class="btn btn-sm btn-outline" (click)="toggleProcurementModalRow(req.id)">
+                      {{ expandedProcurementModalRows[req.id] ? 'Hide' : 'Show' }} Materials
+                    </button>
+                  </td>
+                </tr>
+                <tr *ngIf="expandedProcurementModalRows[req.id]">
+                  <td colspan="6">
+                    <table class="materials-table inner-table">
+                      <thead>
+                        <tr>
+                          <th>Raw Material</th>
+                          <th>Qty/Batch</th>
+                          <th>Unit</th>
+                          <th>Type</th>
+                          <th>Total Required</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr *ngFor="let mat of req.materials">
+                          <td>{{ mat.raw_material || '—' }}</td>
+                          <td class="number">{{ (mat.quantity_per_batch ?? 0) | number:'1.2-2' }}</td>
+                          <td>{{ mat.unit || '—' }}</td>
+                          <td>{{ mat.type || 'N/A' }}</td>
+                          <td class="number">
+                            {{ calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch) | number:'1.2-2' }}
+                          </td>
+                        </tr>
+                        <tr *ngIf="!req.materials?.length">
+                          <td colspan="5" class="empty">
+                            <div>
+                              <p>No raw materials available for this requisition.</p>
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              </ng-container>
+              <tr *ngIf="!getProcurementOriginalRequisitions(currentProcurementTableId).length">
+                <td colspan="6" class="empty">
+                  <div>
+                    <p>No exact requisition items are available for this table.</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeProcurementOriginalItemsModal()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
 
   <!-- Create/Edit Requisition Modal -->
   <div class="modal" [class.active]="showModal">
@@ -840,30 +1065,28 @@
             </div>
 
             <div class="field">
-              <label>Supplier *</label>
+              <label>Supplier</label>
               <select 
                 [(ngModel)]="formData.supplier" 
                 name="supplier" 
                 (change)="onSupplierChange()">
-                <option value="" disabled>Select supplier</option>
+                <option value="">Optional</option>
                 <option value="Supplier A">Supplier A</option>
                 <option value="Supplier B">Supplier B</option>
                 <option value="Supplier C">Supplier C</option>
                 <option value="__other__">Other</option>
               </select>
-              <span class="error" *ngIf="submitted && !formData.supplier">Required</span>
             </div>
           </div>
 
           <div class="row">
             <div class="field" *ngIf="formData.supplier === '__other__'">
-              <label>Supplier name *</label>
+              <label>Supplier name</label>
               <input 
                 type="text" 
                 [(ngModel)]="formData.customSupplier" 
                 name="customSupplier"
                 placeholder="Enter name">
-              <span class="error" *ngIf="submitted && !formData.customSupplier">Required</span>
             </div>
 
             <div class="field">
@@ -887,15 +1110,6 @@
             </div>
           </div>
 
-          <div class="field">
-            <label>Remarks</label>
-            <textarea 
-              [(ngModel)]="formData.remarks"
-              name="remarks"
-              rows="2"
-              placeholder="Add notes..."></textarea>
-            <span class="counter">{{ formData.remarks?.length || 0 }}/500</span>
-          </div>
         </form>
       </div>
 
@@ -1072,6 +1286,115 @@
         </button>
         <button *ngIf="editingTable" class="btn btn-primary" (click)="updateTableName()">
           Update
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Master Data Viewer Modal -->
+  <div class="modal" [class.active]="showMasterDataModal">
+    <div class="backdrop" (click)="closeMasterDataModal()"></div>
+    <div class="modal-container modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>Master Data</h3>
+          <p class="modal-subtitle-inline">{{ groupedMasterDataArray.length }} unique SKUs • {{ masterDataRows.length }} total materials</p>
+        </div>
+        <button class="close" (click)="closeMasterDataModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="master-data-toolbar">
+          <div class="search-field">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              type="text"
+              placeholder="Search SKU, category, material, supplier..."
+              [(ngModel)]="masterDataSearchQuery"
+              (input)="applyMasterDataFilter()">
+            <button *ngIf="masterDataSearchQuery" class="search-clear" (click)="masterDataSearchQuery = ''; applyMasterDataFilter()">✕</button>
+          </div>
+          <span class="master-data-count">{{ filteredGroupedMasterData.length }} SKUs</span>
+        </div>
+
+        <div *ngIf="loadingMasterDataView" class="loading-state">
+          <div class="spinner-small"></div>
+          <span>Loading master data...</span>
+        </div>
+
+        <!-- Collapsible Grouped Master Data View -->
+        <div *ngIf="!loadingMasterDataView && filteredGroupedMasterData.length" class="master-data-grouped">
+          <div class="master-data-group" *ngFor="let group of filteredGroupedMasterData">
+            <div class="group-header" (click)="toggleSkuExpand(group.skuKey)">
+              <button class="expand-toggle">
+                <svg [class.rotated]="expandedSkus[group.skuKey]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+              <div class="group-info">
+                <div class="sku-header">
+                  <strong>{{ group.sku.code }}</strong>
+                  <span class="sku-name">{{ group.sku.name }}</span>
+                </div>
+                <span class="material-badge">{{ group.materialCount }} material{{ group.materialCount !== 1 ? 's' : '' }}</span>
+              </div>
+            </div>
+
+            <!-- Expanded Materials -->
+            <div class="group-content" *ngIf="expandedSkus[group.skuKey]">
+              <table class="materials-nested-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Raw Material</th>
+                    <th>Qty/Batch</th>
+                    <th>Batch Unit</th>
+                    <th>Type</th>
+                    <th>Supplier</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let mat of group.materials" class="material-row">
+                    <td>{{ mat.category || '—' }}</td>
+                    <td><strong>{{ mat.raw_material || '—' }}</strong></td>
+                    <td class="number">{{ mat.qty_per_batch ?? '—' }}</td>
+                    <td>{{ mat.batch_unit || '—' }}</td>
+                    <td><span class="badge" [class.badge-material]="mat.type">{{ mat.type || 'N/A' }}</span></td>
+                    <td>{{ mat.supplier || '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div *ngIf="!loadingMasterDataView && !filteredGroupedMasterData.length" class="empty-materials">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          <p>
+            <ng-container *ngIf="masterDataRows.length === 0">
+              No master data uploaded yet.
+            </ng-container>
+            <ng-container *ngIf="masterDataRows.length > 0">
+              No SKUs match your search.
+            </ng-container>
+          </p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeMasterDataModal()">Close</button>
+        <button class="btn btn-primary" (click)="exportMasterDataToXlsx()" [disabled]="!masterDataRows.length">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+            <polyline points="8 12 12 16 16 12"/>
+            <line x1="12" y1="2" x2="12" y2="16"/>
+          </svg>
+          Export XLSX
         </button>
       </div>
     </div>

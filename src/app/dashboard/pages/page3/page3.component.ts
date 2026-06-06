@@ -13,12 +13,14 @@ import {
 } from '@angular/fire/firestore';
 import { Storage, ref, uploadBytes, getDownloadURL, deleteObject } from '@angular/fire/storage';
 import { Router, ActivatedRoute } from '@angular/router';
+import * as XLSX from 'xlsx';
 
 interface Material {
   raw_material: string;
   quantity_per_batch: number | null;
   unit: string;
   type: string;
+  production_action?: 'confirmed' | 'removed';
 }
 
 interface Requisition {
@@ -34,7 +36,6 @@ interface Requisition {
   brand?: string;
   status: string;
   category: string;
-  remarks?: string;
   created_at?: string;
   user_id?: string;
   user_email?: string;
@@ -84,6 +85,52 @@ interface SkuOption {
   sku_name: string;
 }
 
+interface MasterDataRow {
+  sku_code: string;
+  sku_name: string;
+  qty_per_unit?: number | null;
+  unit?: string;
+  qty_per_pack?: number | null;
+  pack_unit?: string;
+  projected_yield_per_batch?: number | null;
+  yield_unit?: string;
+  category: string;
+  raw_material: string;
+  qty_per_batch?: number | null;
+  batch_unit?: string;
+  type?: string;
+  supplier?: string | null;
+}
+
+interface ProcurementMaterialSummary {
+  raw_material: string;
+  unit: string;
+  type: string;
+  totalQuantity: number;
+  table_id: string;
+  table_name: string;
+  procurement_action?: 'approved' | 'rejected' | null;
+}
+
+interface ProcurementTableSummary {
+  table_id: string;
+  table_name: string;
+  uniqueMaterialsCount: number;
+  totalRequestedQuantity: number;
+  materials: ProcurementMaterialSummary[];
+}
+
+interface ProcurementOriginalItem {
+  reqNumber: string;
+  raw_material: string;
+  unit: string;
+  type: string;
+  quantity_per_batch: number | null;
+  totalQuantity: number;
+  table_id: string;
+  table_name: string;
+}
+
 @Component({
   selector: 'app-page3',
   standalone: true,
@@ -109,12 +156,30 @@ export class Page3Component implements OnInit {
   productionReviewed: Requisition[] = [];
 
   procurementReviewed: Requisition[] = [];
+  procurementTableSummaries: ProcurementTableSummary[] = [];
+  expandedProcurementOriginalItems: { [tableId: string]: boolean } = {};
+  showProcurementOriginalItemsModal = false;
+  currentProcurementTableId = '';
+  currentProcurementTableName = '';
+  expandedProcurementModalRows: { [reqId: string]: boolean } = {};
 
   expandedRows: { [id: string]: boolean } = {};
   loadingMaterials: { [id: string]: boolean } = {};
 
   showModal = false;
   showTableModal = false;
+  showMasterDataModal = false;
+  masterDataRows: MasterDataRow[] = [];
+  filteredMasterDataRows: MasterDataRow[] = [];
+  masterDataSearchQuery = '';
+  loadingMasterDataView = false;
+  
+  // Collapsible Master Data Properties
+  groupedMasterData: { [skuKey: string]: { sku: { code: string; name: string }; materials: MasterDataRow[] } } = {};
+  groupedMasterDataArray: Array<{ skuKey: string; sku: { code: string; name: string }; materials: MasterDataRow[]; materialCount: number }> = [];
+  filteredGroupedMasterData: Array<{ skuKey: string; sku: { code: string; name: string }; materials: MasterDataRow[]; materialCount: number }> = [];
+  expandedSkus: { [skuKey: string]: boolean } = {};
+  
   showScheduleModal = false;
   showApproveModal = false;
   showDeliveryModal = false;
@@ -144,8 +209,7 @@ export class Page3Component implements OnInit {
     supplier: '',
     customSupplier: '',
     brand: '',
-    customBrand: '',
-    remarks: ''
+    customBrand: ''
   };
 
   selectedRequisition: Requisition | null = null;
@@ -185,6 +249,8 @@ export class Page3Component implements OnInit {
 
   tableNameMap: { [tableId: string]: string } = {};
 
+  private pendingRouteTableId: string | null = null;
+
   Math = Math;
 
   constructor(
@@ -214,20 +280,27 @@ export class Page3Component implements OnInit {
 
     if (user) {
       this.userId = user.uid;
+      this.pendingRouteTableId = this.route.snapshot.queryParamMap.get('tableId');
       await this.loadUserRole();
       await this.loadCategories();
+      
+      // Load master data early so materials are available for requisitions
+      await this.loadMasterDataForMaterials();
+      
       this.setViewModeByRole();
 
       if (this.userRole === 'production') {
         await this.loadTablesDirectly();
         await this.loadProductionSubmissions();
-        this.filteredRequisitions = [...this.productionSubmissions];
+        if (!this.pendingRouteTableId) {
+          this.filteredRequisitions = [...this.productionSubmissions];
+        }
       } else if (this.userRole === 'procurement') {
         await this.loadTablesDirectly();
       } else {
         await this.loadTablesDirectly();
         
-        if (this.tables.length > 0 && !this.selectedTable) {
+        if (this.tables.length > 0 && !this.selectedTable && !this.pendingRouteTableId) {
           const lastTableId = localStorage.getItem(`lastSelectedRequisitionTable_${this.userId}`);
           if (lastTableId && this.tables.some(t => t.id === lastTableId)) {
             this.selectedTable = this.tables.find(t => t.id === lastTableId) || null;
@@ -242,14 +315,15 @@ export class Page3Component implements OnInit {
         }
       }
 
+      if (this.pendingRouteTableId) {
+        await this.applyTableIdFromRoute(this.pendingRouteTableId);
+        this.pendingRouteTableId = null;
+      }
+
       this.route.queryParams.subscribe(async params => {
-        if (params['tableId']) {
-          setTimeout(async () => {
-            const tableToSelect = this.tables.find(t => t.id === params['tableId']);
-            if (tableToSelect) {
-              await this.selectTable(tableToSelect);
-            }
-          }, 1000);
+        const tableId = params['tableId'];
+        if (tableId) {
+          await this.applyTableIdFromRoute(tableId);
         }
       });
     } else {
@@ -278,6 +352,16 @@ export class Page3Component implements OnInit {
     try {
       this.categories = await this.db.getUniqueCategories();
     } catch (err) {
+    }
+  }
+
+  async loadMasterDataForMaterials() {
+    try {
+      this.masterDataRows = await this.db.getAllMasterData();
+      console.log('Loaded master data for materials:', this.masterDataRows.length, 'rows');
+    } catch (err) {
+      console.error('Failed to load master data for materials', err);
+      this.masterDataRows = [];
     }
   }
 
@@ -313,7 +397,8 @@ export class Page3Component implements OnInit {
           const q = query(
             tablesRef,
             where('type', '==', 'requisition'),
-            where('submitted', '==', true)
+            where('submitted', '==', true),
+            where('production_reviewed', '==', true)
           );
           return getDocs(q);
         });
@@ -380,7 +465,7 @@ export class Page3Component implements OnInit {
       this.tables = loadedTables;
 
       if (this.userRole === 'production') {
-        if (this.tables.length > 0 && !this.selectedTable) {
+        if (this.tables.length > 0 && !this.selectedTable && !this.pendingRouteTableId) {
           this.selectedTable = this.tables[0];
           this.selectedTableId = this.tables[0].id;
 
@@ -398,10 +483,10 @@ export class Page3Component implements OnInit {
           this.updatePagination();
         }
       } else if (this.userRole === 'procurement') {
-        if (this.tables.length > 0) {
+        if (this.tables.length > 0 && !this.pendingRouteTableId) {
           this.selectedTable = this.tables[0];
           this.selectedTableId = this.tables[0].id;
-        } else {
+        } else if (!this.pendingRouteTableId) {
           this.selectedTable = null;
           this.selectedTableId = '';
         }
@@ -478,12 +563,41 @@ export class Page3Component implements OnInit {
       });
 
       this.requisitions = loadedRequisitions;
+      
+      // Populate materials for all requisitions immediately
+      await this.populateMaterialsForAllRequisitions(this.requisitions);
+      
       this.applyFilter();
 
     } catch (err) {
       this.showToast('Failed to load requisitions', 'error');
     } finally {
       this.isLoading = false;
+    }
+  }
+
+  private async populateMaterialsForAllRequisitions(reqs: Requisition[]) {
+    for (const req of reqs) {
+      const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
+      const skuName = String(req.skuName ?? req['sku_name'] ?? '').trim();
+      
+      if (skuCode || skuName) {
+        const loadedMaterials = this.getMaterialsFromLoadedData(skuCode, skuName);
+
+        if (req.materials && req.materials.length > 0) {
+          const existingActions = req.materials.reduce((map: Record<string, Material>, mat) => {
+            map[(mat.raw_material || '').toLowerCase()] = mat;
+            return map;
+          }, {} as Record<string, Material>);
+
+          req.materials = loadedMaterials.map(mat => ({
+            ...mat,
+            production_action: existingActions[mat.raw_material.toLowerCase()]?.production_action
+          }));
+        } else {
+          req.materials = loadedMaterials;
+        }
+      }
     }
   }
 
@@ -509,6 +623,7 @@ export class Page3Component implements OnInit {
 
       await this.loadUserEmailsForRequisitions(submissions);
       await this.loadTableNamesForRequisitions(submissions);
+      await this.populateMaterialsForAllRequisitions(submissions);
 
       this.productionSubmissions = submissions;
 
@@ -560,6 +675,7 @@ export class Page3Component implements OnInit {
 
       await this.loadUserEmailsForRequisitions(reviewed);
       await this.loadTableNamesForRequisitions(reviewed);
+      await this.populateMaterialsForAllRequisitions(reviewed);
 
       this.productionReviewed = reviewed;
 
@@ -619,11 +735,16 @@ export class Page3Component implements OnInit {
         console.error('loadProcurementReviewed fallback failed', err);
       }
 
+      const approvedTableIds = new Set(this.tables.filter(t => t.production_reviewed).map(t => t.id));
+      reviewed = reviewed.filter(r => r.table_id && approvedTableIds.has(r.table_id));
+
       await this.loadUserEmailsForRequisitions(reviewed);
       await this.loadTableNamesForRequisitions(reviewed);
+      await this.populateMaterialsForAllRequisitions(reviewed);
 
       this.procurementReviewed = reviewed;
       this.filteredRequisitions = [...this.procurementReviewed];
+      this.computeProcurementTableSummaries();
       this.updatePagination();
 
     } catch (err) {
@@ -713,6 +834,67 @@ export class Page3Component implements OnInit {
 
     if (this.userRole !== 'production' && this.userRole !== 'procurement') {
       await this.loadRequisitionsDirectly();
+    }
+  }
+
+  private async applyTableIdFromRoute(tableId: string): Promise<void> {
+    if (this.selectedTableId === tableId) {
+      return;
+    }
+
+    let table = this.tables.find(t => t.id === tableId);
+
+    if (!table) {
+      const fetched = await this.fetchTableById(tableId);
+      if (fetched) {
+        table = fetched;
+        if (!this.tables.some(t => t.id === tableId)) {
+          this.tables.unshift(table);
+        }
+      }
+    }
+
+    if (table) {
+      await this.selectTable(table);
+    } else {
+      this.showToast('Submitted table could not be found', 'error');
+    }
+  }
+
+  private async fetchTableById(tableId: string): Promise<Table | null> {
+    try {
+      const tableDoc = await this.run(() => getDoc(doc(this.firestore, 'tables', tableId)));
+      if (!tableDoc.exists()) {
+        return null;
+      }
+
+      const data = tableDoc.data();
+      const table: Table = {
+        id: tableDoc.id,
+        name: data['name'] || 'Untitled',
+        user_id: data['user_id'] || '',
+        type: data['type'] || 'requisition',
+        item_count: data['item_count'] || 0,
+        submitted: data['submitted'] || false,
+        submitted_at: data['submitted_at'],
+        created_at: data['created_at'],
+        updated_at: data['updated_at'],
+        po_file_url: data['po_file_url'],
+        po_file_name: data['po_file_name'],
+        po_file_size: data['po_file_size'],
+        po_file_type: data['po_file_type'],
+        production_reviewed: data['production_reviewed'] || false,
+        production_reviewed_at: data['production_reviewed_at'],
+        production_reviewed_by: data['production_reviewed_by']
+      };
+
+      if (table.user_id) {
+        table.user_email = await this.getUserEmail(table.user_id);
+      }
+
+      return table;
+    } catch {
+      return null;
     }
   }
 
@@ -1056,8 +1238,7 @@ export class Page3Component implements OnInit {
       supplier: req.supplier || '',
       customSupplier: '',
       brand: req.brand || '',
-      customBrand: '',
-      remarks: req.remarks || ''
+      customBrand: ''
     };
 
     const predefinedSuppliers = ['Supplier A', 'Supplier B', 'Supplier C'];
@@ -1102,11 +1283,13 @@ export class Page3Component implements OnInit {
     try {
       const skuName = this.formData.skuName;
       const selectedItem = this.availableSkus.find(item => item.sku_name === skuName);
-      const skuCode = selectedItem ? selectedItem.sku_code : this.selectedSkuCode;
+      const skuCode = this.db.normalizeSkuCode(
+        selectedItem ? selectedItem.sku_code : this.selectedSkuCode
+      );
 
       const finalSupplier = this.formData.supplier === '__other__'
-        ? this.formData.customSupplier?.trim()
-        : this.formData.supplier;
+        ? (this.formData.customSupplier?.trim() || '')
+        : (this.formData.supplier?.trim() || '');
 
       const finalBrand = this.formData.brand === '__other__'
         ? this.formData.customBrand?.trim()
@@ -1133,7 +1316,6 @@ export class Page3Component implements OnInit {
         brand: finalBrand,
         status: this.editingRequisition ? this.editingRequisition.status : 'Pending',
         category: this.formData.category,
-        remarks: this.formData.remarks?.trim() || '',
         user_id: this.userId,
         table_id: this.selectedTableId || this.editingRequisition?.table_id || '',
         updated_at: new Date().toISOString()
@@ -1273,7 +1455,7 @@ export class Page3Component implements OnInit {
           items: items,
           tableId: table.id,
           itemCount: items.length,
-          reviewLink: `${window.location.origin}/requisitions?tableId=${table.id}&role=production`
+          reviewLink: `${window.location.origin}/dashboard/procurement?tableId=${table.id}`
         });
         console.log('Email notification sent to Production team');
         this.showToast(`Table "${table.name}" submitted and Production team has been notified`, 'success');
@@ -1575,7 +1757,7 @@ export class Page3Component implements OnInit {
   async submitReviewedTable() {
     if (!this.canSubmitReviewedTable() || !this.selectedTable) return;
 
-    if (!confirm(`Submit reviewed table "${this.selectedTable.name}" to procurement?`)) return;
+    if (!confirm(`Transfer reviewed table "${this.selectedTable.name}" to procurement?`)) return;
 
     try {
       this.isSubmitting = true;
@@ -1641,10 +1823,10 @@ export class Page3Component implements OnInit {
           reviewLink: `${window.location.origin}/requisitions?tableId=${this.selectedTable.id}&role=procurement`
         });
         console.log('Email notification sent to Procurement team');
-        this.showToast(`Table "${this.selectedTable.name}" submitted to procurement – they have been notified`, 'success');
+        this.showToast(`Table "${this.selectedTable.name}" transferred to procurement – they have been notified`, 'success');
       } catch (emailError) {
         console.error('Failed to send email notification:', emailError);
-        this.showToast(`Table "${this.selectedTable.name}" submitted to procurement (email notification failed)`, 'info');
+        this.showToast(`Table "${this.selectedTable.name}" transferred to procurement (email notification failed)`, 'info');
       }
 
       await this.notificationService.sendTableReviewedByProductionNotification(
@@ -1677,22 +1859,229 @@ export class Page3Component implements OnInit {
     if (!req.id) return;
 
     this.expandedRows[req.id] = !this.expandedRows[req.id];
+    this.cdr.detectChanges();
+  }
 
-    if (this.expandedRows[req.id] && !req.materials) {
-      this.loadingMaterials[req.id] = true;
-      try {
+  async confirmAllMaterials(req: Requisition) {
+    if (!req || !req.reqNumber) return;
+    if (!confirm(`Accept all materials for requisition ${req.reqNumber}?`)) return;
+    await this.setAllMaterialsAction(req, 'confirmed');
+  }
+
+  async rejectAllMaterials(req: Requisition) {
+    if (!req || !req.reqNumber) return;
+    if (!confirm(`Reject all materials for requisition ${req.reqNumber}?`)) return;
+    await this.setAllMaterialsAction(req, 'removed');
+  }
+
+  private async setAllMaterialsAction(req: Requisition, action: 'confirmed' | 'removed') {
+    if (!req) return;
+
+    if (!req.materials || req.materials.length === 0) {
+      const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
+      const skuName = String(req.skuName ?? req['sku_name'] ?? '').trim();
+      req.materials = this.getMaterialsFromLoadedData(skuCode, skuName);
+    }
+
+    if (!req.materials || req.materials.length === 0) {
+      this.showToast('No materials were found for this requisition.', 'error');
+      return;
+    }
+
+    req.materials = req.materials.map(mat => ({
+      ...mat,
+      production_action: action
+    }));
+    req.materials = [...req.materials];
+
+    req.production_action = action;
+    req.production_action_at = new Date().toISOString();
+    req.production_action_by = this.userId;
+
+    const updateData: any = {
+      materials: req.materials,
+      production_action: req.production_action,
+      production_action_at: req.production_action_at,
+      production_action_by: req.production_action_by
+    };
+
+    const success = await this.db.updateRequisitionStatus(
+      req.id,
+      req.status,
+      this.userId,
+      req.table_id || '',
+      updateData
+    );
+
+    if (success) {
+      this.showToast(`All materials ${action === 'confirmed' ? 'accepted' : 'rejected'} for requisition ${req.reqNumber}`, 'success');
+    } else {
+      this.showToast(`Failed to ${action === 'confirmed' ? 'accept' : 'reject'} materials`, 'error');
+    }
+  }
+
+  async setMaterialAction(req: Requisition, material: Material, action: 'confirmed' | 'removed') {
+    if (!req || !req.materials) return;
+
+    material.production_action = action;
+    req.materials = [...req.materials];
+
+    const allMaterialsCompleted = req.materials.every(mat => mat.production_action === 'confirmed' || mat.production_action === 'removed');
+    const rejectedCount = req.materials.filter(mat => mat.production_action === 'removed').length;
+
+    if (allMaterialsCompleted) {
+      req.production_action = rejectedCount === req.materials.length ? 'removed' : 'confirmed';
+      req.production_action_at = new Date().toISOString();
+      req.production_action_by = this.userId;
+    } else {
+      delete req.production_action;
+      delete req.production_action_at;
+      delete req.production_action_by;
+    }
+
+    const updateData: any = {
+      materials: req.materials
+    };
+
+    if (req.production_action) {
+      updateData.production_action = req.production_action;
+      updateData.production_action_at = req.production_action_at;
+      updateData.production_action_by = req.production_action_by;
+    }
+
+    const success = await this.db.updateRequisitionStatus(
+      req.id,
+      req.status,
+      this.userId,
+      req.table_id || '',
+      updateData
+    );
+
+    if (success) {
+      this.showToast(
+        `Material ${material.raw_material} ${action === 'confirmed' ? 'accepted' : 'rejected'} for requisition ${req.reqNumber}`,
+        'success'
+      );
+    } else {
+      this.showToast(`Failed to update material action`, 'error');
+    }
+  }
+
+  private computeProcurementTableSummaries() {
+    const tableMap = new Map<string, ProcurementTableSummary>();
+
+    for (const req of this.procurementReviewed) {
+      if (!req.table_id) continue;
+
+      const tableName = req.table_name || this.tableNameMap[req.table_id] || 'Unknown Table';
+      if (!req.materials || req.materials.length === 0) {
         const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
-        const materials = await this.db.getMaterialsForSku(skuCode);
-        req.materials = materials || [];
-      } catch (err) {
-        console.error('Failed to load materials', err);
-        req.materials = [];
-        this.showToast('Failed to load materials', 'error');
-      } finally {
-        this.loadingMaterials[req.id] = false;
-        this.cdr.detectChanges();
+        const skuName = String(req.skuName ?? req['sku_name'] ?? '').trim();
+        req.materials = this.getMaterialsFromLoadedData(skuCode, skuName);
+      }
+
+      let summary = tableMap.get(req.table_id);
+      if (!summary) {
+        summary = {
+          table_id: req.table_id,
+          table_name: tableName,
+          uniqueMaterialsCount: 0,
+          totalRequestedQuantity: 0,
+          materials: []
+        };
+        tableMap.set(req.table_id, summary);
+      }
+
+      for (const mat of req.materials || []) {
+        const qty = this.calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch);
+        const key = `${mat.raw_material}||${mat.unit}||${mat.type}`.toLowerCase();
+        let existing = summary.materials.find(item => item.raw_material.toLowerCase() === mat.raw_material.toLowerCase() && item.unit === mat.unit && item.type === mat.type);
+
+        if (!existing) {
+          existing = {
+            raw_material: mat.raw_material,
+            unit: mat.unit || '—',
+            type: mat.type || 'N/A',
+            totalQuantity: qty,
+            table_id: req.table_id,
+            table_name: tableName
+          };
+          summary.materials.push(existing);
+        } else {
+          existing.totalQuantity += qty;
+        }
       }
     }
+
+    this.procurementTableSummaries = Array.from(tableMap.values()).map(summary => ({
+      ...summary,
+      uniqueMaterialsCount: summary.materials.length,
+      totalRequestedQuantity: summary.materials.reduce((sum, mat) => sum + (mat.totalQuantity || 0), 0)
+    }));
+  }
+
+  setProcurementMaterialAction(item: ProcurementMaterialSummary, action: 'approved' | 'rejected') {
+    item.procurement_action = action;
+  }
+
+  openProcurementOriginalItemsModal(summary: ProcurementTableSummary) {
+    this.currentProcurementTableId = summary.table_id;
+    this.currentProcurementTableName = summary.table_name;
+    this.expandedProcurementModalRows = {};
+    this.showProcurementOriginalItemsModal = true;
+  }
+
+  closeProcurementOriginalItemsModal() {
+    this.showProcurementOriginalItemsModal = false;
+    this.currentProcurementTableId = '';
+    this.currentProcurementTableName = '';
+    this.expandedProcurementModalRows = {};
+  }
+
+  toggleProcurementModalRow(reqId: string) {
+    this.expandedProcurementModalRows[reqId] = !this.expandedProcurementModalRows[reqId];
+  }
+
+  getProcurementOriginalRequisitions(tableId: string) {
+    return this.procurementReviewed.filter(req => req.table_id === tableId);
+  }
+
+  private getMaterialsFromLoadedData(skuCode: string, skuName: string): Material[] {
+    if (!this.masterDataRows || this.masterDataRows.length === 0) {
+      console.log('getMaterialsFromLoadedData: No master data loaded');
+      return [];
+    }
+
+    const skuCodeLower = skuCode.toLowerCase().trim();
+    const skuNameLower = skuName.toLowerCase().trim();
+    
+    console.log(`getMaterialsFromLoadedData: Searching for skuCode="${skuCode}" or skuName="${skuName}"`);
+
+    const materials: Material[] = [];
+    const seen = new Set<string>();
+
+    this.masterDataRows.forEach(row => {
+      const rowSkuCode = (row.sku_code || '').toString().trim().toLowerCase();
+      const rowSkuName = (row.sku_name || '').toString().trim().toLowerCase();
+
+      // Match by SKU code or SKU name
+      if ((skuCodeLower && rowSkuCode === skuCodeLower) || 
+          (skuNameLower && rowSkuName === skuNameLower)) {
+        const rawMaterial = (row.raw_material || '').trim();
+        if (rawMaterial && !seen.has(rawMaterial.toLowerCase())) {
+          materials.push({
+            raw_material: rawMaterial,
+            quantity_per_batch: row.qty_per_batch ?? null,
+            unit: (row.batch_unit || '').trim(),
+            type: (row.type || '').trim()
+          });
+          seen.add(rawMaterial.toLowerCase());
+        }
+      }
+    });
+
+    console.log(`getMaterialsFromLoadedData: Found ${materials.length} unique materials`);
+    return materials;
   }
 
   calculateMaterialTotal(quantity: number, qtyPerBatch: number | null): number {
@@ -1927,6 +2316,175 @@ async removePoLink() {
 
 
 
+  canUploadMasterData(): boolean {
+    return this.userRole === 'user' || this.userRole === 'store' || this.userRole === 'admin';
+  }
+
+  canViewMasterData(): boolean {
+    return (
+      this.userRole === 'user' ||
+      this.userRole === 'store' ||
+      this.userRole === 'admin' ||
+      this.userRole === 'production' ||
+      this.userRole === 'procurement'
+    );
+  }
+
+  async openMasterDataModal() {
+    this.showMasterDataModal = true;
+    this.masterDataSearchQuery = '';
+    this.loadingMasterDataView = true;
+    this.masterDataRows = [];
+    this.filteredMasterDataRows = [];
+    this.groupedMasterData = {};
+    this.groupedMasterDataArray = [];
+    this.filteredGroupedMasterData = [];
+    this.expandedSkus = {};
+
+    try {
+      this.masterDataRows = await this.db.getAllMasterData();
+      this.buildGroupedMasterData();
+      this.applyMasterDataFilter();
+    } catch {
+      this.showToast('Failed to load master data', 'error');
+    } finally {
+      this.loadingMasterDataView = false;
+    }
+  }
+
+  private buildGroupedMasterData() {
+    // Group master data by unique SKU (code + name combination)
+    this.groupedMasterData = {};
+    
+    this.masterDataRows.forEach(row => {
+      const skuCode = (row.sku_code || '').trim();
+      const skuName = (row.sku_name || '').trim();
+      const skuKey = `${skuCode}|${skuName}`;
+      
+      if (!this.groupedMasterData[skuKey]) {
+        this.groupedMasterData[skuKey] = {
+          sku: { code: skuCode, name: skuName },
+          materials: []
+        };
+      }
+      
+      this.groupedMasterData[skuKey].materials.push(row);
+    });
+    
+    // Convert to array for easier iteration in template
+    this.groupedMasterDataArray = Object.entries(this.groupedMasterData).map(([skuKey, data]) => ({
+      skuKey,
+      sku: data.sku,
+      materials: data.materials,
+      materialCount: data.materials.length
+    })).sort((a, b) => {
+      // Sort by category, then by SKU code
+      const catA = (a.materials[0]?.category || '').localeCompare(b.materials[0]?.category || '');
+      if (catA !== 0) return catA;
+      return a.sku.code.localeCompare(b.sku.code);
+    });
+  }
+
+  closeMasterDataModal() {
+    this.showMasterDataModal = false;
+    this.masterDataSearchQuery = '';
+    this.expandedSkus = {};
+  }
+
+  toggleSkuExpand(skuKey: string) {
+    this.expandedSkus[skuKey] = !this.expandedSkus[skuKey];
+    this.cdr.detectChanges();
+  }
+
+  applyMasterDataFilter() {
+    const q = this.masterDataSearchQuery.trim().toLowerCase();
+    
+    // Filter both the flat and grouped data
+    if (!q) {
+      this.filteredMasterDataRows = [...this.masterDataRows];
+      this.filteredGroupedMasterData = [...this.groupedMasterDataArray];
+      return;
+    }
+
+    // Filter grouped master data
+    this.filteredGroupedMasterData = this.groupedMasterDataArray.filter(group => {
+      // Check if SKU matches
+      if ((group.sku.code || '').toLowerCase().includes(q) ||
+          (group.sku.name || '').toLowerCase().includes(q)) {
+        return true;
+      }
+      
+      // Check if any material matches
+      return group.materials.some(mat =>
+        (mat.category || '').toLowerCase().includes(q) ||
+        (mat.raw_material || '').toLowerCase().includes(q) ||
+        (mat.supplier || '').toLowerCase().includes(q)
+      );
+    });
+
+    // Filter flat master data (for export functionality)
+    this.filteredMasterDataRows = this.masterDataRows.filter(row =>
+      (row.sku_code || '').toLowerCase().includes(q) ||
+      (row.sku_name || '').toLowerCase().includes(q) ||
+      (row.category || '').toLowerCase().includes(q) ||
+      (row.raw_material || '').toLowerCase().includes(q) ||
+      (row.supplier || '').toLowerCase().includes(q)
+    );
+  }
+
+  exportMasterDataToXlsx() {
+    const rows = this.filteredMasterDataRows.length
+      ? this.filteredMasterDataRows
+      : this.masterDataRows;
+
+    if (!rows.length) {
+      this.showToast('No master data to export', 'error');
+      return;
+    }
+
+    const headers = [
+      'SKU Code',
+      'SKU Name',
+      'Qty Per Unit',
+      'Unit',
+      'Qty Per Pack',
+      'Pack Unit',
+      'Projected Yield Per Batch',
+      'Yield Unit',
+      'Category',
+      'Raw Material',
+      'Qty Per Batch',
+      'Batch Unit',
+      'Type',
+      'Supplier'
+    ];
+
+    const data = rows.map(row => [
+      row.sku_code || '',
+      row.sku_name || '',
+      row.qty_per_unit ?? '',
+      row.unit || '',
+      row.qty_per_pack ?? '',
+      row.pack_unit || '',
+      row.projected_yield_per_batch ?? '',
+      row.yield_unit || '',
+      row.category || '',
+      row.raw_material || '',
+      row.qty_per_batch ?? '',
+      row.batch_unit || '',
+      row.type || '',
+      row.supplier || ''
+    ]);
+
+    const worksheet = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Master Data');
+
+    const date = new Date().toISOString().split('T')[0];
+    XLSX.writeFile(workbook, `master-data-${date}.xlsx`);
+    this.showToast('Master data exported', 'success');
+  }
+
   async onFileSelected(event: any) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -1941,6 +2499,10 @@ async removePoLink() {
         this.importStatus = 'success';
         this.importMessage = `Imported ${result.count} rows`;
         await this.loadCategories();
+        if (this.showMasterDataModal) {
+          this.masterDataRows = await this.db.getAllMasterData();
+          this.applyMasterDataFilter();
+        }
         this.showToast('Master data imported successfully', 'success');
       } else {
         this.importStatus = 'error';
@@ -1993,23 +2555,14 @@ async removePoLink() {
   }
 
   validateForm(): boolean {
-    if (
-      !this.formData.type ||
-      !this.formData.category ||
-      !this.formData.skuName ||
-      !this.formData.quantity ||
-      this.formData.quantity <= 0 ||
-      !this.formData.unit ||
-      !this.formData.supplier
-    ) {
-      return false;
-    }
-
-    if (this.formData.supplier === '__other__' && !this.formData.customSupplier?.trim()) {
-      return false;
-    }
-
-    return true;
+    return !!(
+      this.formData.type &&
+      this.formData.category &&
+      this.formData.skuName &&
+      this.formData.quantity &&
+      this.formData.quantity > 0 &&
+      this.formData.unit
+    );
   }
 
   closeModal() {
@@ -2028,8 +2581,7 @@ async removePoLink() {
       supplier: '',
       customSupplier: '',
       brand: '',
-      customBrand: '',
-      remarks: ''
+      customBrand: ''
     };
     this.selectedSkuCode = '';
   }
@@ -2058,11 +2610,18 @@ async removePoLink() {
     }
   }
 
-  canCreateRequisition(): boolean {
+  canManageTables(): boolean {
     return (
       (this.userRole === 'user' || this.userRole === 'store' || this.userRole === 'admin') &&
-      this.viewMode === 'my_tables' &&
-      (!this.selectedTable || !this.selectedTable.submitted)
+      this.viewMode === 'my_tables'
+    );
+  }
+
+  canCreateRequisition(): boolean {
+    return (
+      this.canManageTables() &&
+      !!this.selectedTable &&
+      !this.selectedTable.submitted
     );
   }
 

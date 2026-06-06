@@ -19,7 +19,7 @@ export interface TableSubmittedData {
   tableId: string;
   itemCount: number;
   reviewLink: string;
-  recipientEmail?: string; // Optional - will be fetched from user roles if not provided
+  recipientEmail?: string;
 }
 
 export interface TableReviewedData {
@@ -31,7 +31,7 @@ export interface TableReviewedData {
   removedItems: number;
   tableId: string;
   reviewLink: string;
-  recipientEmail?: string; // Optional - will be fetched from user roles if not provided
+  recipientEmail?: string;
 }
 
 export interface EmailResponse {

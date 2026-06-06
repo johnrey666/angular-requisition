@@ -801,7 +801,7 @@ export class Page2Component implements OnInit {
         cell.border = {
           top: { style: 'thin' },
           left: { style: 'thin' },
-          bottom: { style: 'thin' },
+          bottom: { style: 'thin' },      
           right: { style: 'thin' }
         };
       });

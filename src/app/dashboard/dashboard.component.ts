@@ -517,7 +517,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     }
     
     if (notification.type === 'table_submitted') {
-      this.router.navigate(['/dashboard/production'], { queryParams: { tableId: notification.tableId } });
+      this.router.navigate(['/dashboard/procurement'], { queryParams: { tableId: notification.tableId } });
     } else if (notification.type === 'table_reviewed_by_production') {
       this.router.navigate(['/dashboard/procurement'], { queryParams: { tableId: notification.tableId } });
     }

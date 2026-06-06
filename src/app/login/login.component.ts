@@ -72,7 +72,7 @@ export class LoginComponent {
             await this.router.navigate(['/dashboard/store']);
             break;
           case 'production':
-            await this.router.navigate(['/dashboard/production']);
+            await this.router.navigate(['/dashboard']);
             break;
           case 'procurement':
             await this.router.navigate(['/dashboard/procurement']);
