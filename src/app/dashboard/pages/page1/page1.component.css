@@ -54,7 +54,7 @@
 }
 
 .stat-trend-up {
-  color: hsl(217.2 91.2% 59.8%);
+  color: hsl(var(--primary));
 }
 
 .stat-trend-down {
@@ -147,7 +147,7 @@
 }
 
 .tab-btn.active {
-  background: hsl(217.2 91.2% 59.8%);
+  background: hsl(var(--primary));
   color: hsl(0 0% 100%);
 }
 
@@ -194,7 +194,7 @@
   flex: 1;
   min-height: 8px;
   height: var(--h, 50%);
-  background: hsl(217 91% 50%);
+  background: hsl(var(--primary));
   border-radius: 0.25rem 0.25rem 0 0;
   transition: height 0.3s ease;
 }
@@ -232,7 +232,7 @@
 }
 
 .legend-dot-blue {
-  background: hsl(217.2 91.2% 59.8%);
+  background: hsl(var(--primary));
 }
 
 .legend-dot-green {
@@ -335,11 +335,145 @@
 }
 
 .badge-pending {
-  background: hsl(217.2 91.2% 59.8% / 0.15);
-  color: hsl(217.2 91.2% 59.8%);
+  background: hsl(var(--primary) / 0.15);
+  color: hsl(var(--primary));
 }
 
 .badge-processing {
   background: hsl(38 92% 50% / 0.15);
   color: hsl(25 95% 53%);
+}
+
+/* Mobile responsive improvements */
+@media (max-width: 768px) {
+  .page-content {
+    max-width: 100%;
+  }
+
+  .charts-row {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .bottom-row {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .stat-card {
+    padding: 1rem;
+  }
+
+  .stat-value {
+    font-size: 1.5rem;
+  }
+
+  .stat-label {
+    font-size: 0.75rem;
+  }
+
+  .card {
+    border-radius: 0.375rem;
+  }
+
+  .card-title {
+    font-size: 0.9375rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .table {
+    font-size: 0.8125rem;
+  }
+
+  .table th,
+  .table td {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .analytics-value {
+    font-size: 1.625rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-content {
+    max-width: 100%;
+  }
+
+  .stats-grid {
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .stat-card {
+    padding: 0.875rem;
+  }
+
+  .stat-header {
+    margin-bottom: 0.375rem;
+  }
+
+  .stat-label {
+    font-size: 0.7rem;
+  }
+
+  .stat-value {
+    font-size: 1.25rem;
+    margin-bottom: 0.125rem;
+  }
+
+  .stat-trend {
+    font-size: 0.65rem;
+  }
+
+  .stat-subtitle {
+    font-size: 0.7rem;
+  }
+
+  .card-title {
+    font-size: 0.875rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .charts-row,
+  .bottom-row {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .table {
+    font-size: 0.75rem;
+  }
+
+  .table th,
+  .table td {
+    padding: 0.375rem 0.5rem;
+  }
+
+  .table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .analytics-value {
+    font-size: 1.375rem;
+  }
+
+  .analytics-label {
+    font-size: 0.75rem;
+  }
+
+  .analytics-desc {
+    font-size: 0.8125rem;
+  }
+
+  .badge {
+    padding: 0.1rem 0.375rem;
+    font-size: 0.65rem;
+  }
+
+  .font-mono {
+    font-size: 0.75rem;
+  }
 }

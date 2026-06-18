@@ -1,19 +1,19 @@
 /* ===== Design Tokens ===== */
 :host {
-  --navy-50: #f0f4f8;
-  --navy-100: #e0e7f0;
-  --navy-200: #c7d2e0;
-  --navy-300: #9fb5d1;
-  --navy-400: #5b7fa8;
-  --navy-500: #3b82f6;
-  --navy-600: #1e40af;
-  --navy-700: #1e3a8a;
-  --navy-800: #1e293b;
-  --navy-900: #0f172a;
-  --navy-950: #020617;
-  --gold-50: #fffbeb;
+  --navy-50:  #f0f7ff;
+  --navy-100: #e0edff;
+  --navy-200: #c7deff;
+  --navy-300: #9fb5ff;
+  --navy-400: #5b7fcc;
+  --navy-500: #3d5d99;
+  --navy-600: #203d5f;
+  --navy-700: #1a2942;
+  --navy-800: #112233;
+  --navy-900: #0a1621;
+  --navy-950: #050b0f;
+  --gold-50:  #fffbeb;
   --gold-100: #fef3c7;
-  --gold-200: #fde68a;
+  --gold-200: #fde68a;  
   --gold-300: #fcd34d;
   --gold-400: #fbbf24;
   --gold-500: #f59e0b;
@@ -21,8 +21,8 @@
   --gold-700: #b45309;
   --gold-800: #92400e;
   --gold-900: #78350f;
-  --white: #ffffff;
-  --gray-50: #fafafa;
+  --white:    #ffffff;
+  --gray-50:  #fafafa;
   --gray-100: #f4f4f5;
   --gray-200: #e4e4e7;
   --gray-600: #52525b;
@@ -111,7 +111,7 @@
 
 .nav-cta {
   background: var(--navy-600) !important;
-  color: var(--white) !important;
+  color: var(--gold-400) !important;
   padding: 0.5rem 1.25rem !important;
   border-radius: 8px !important;
 }
@@ -119,7 +119,7 @@
 .nav-cta:hover {
   background: var(--navy-700) !important;
   transform: translateY(-2px) !important;
-  box-shadow: 0 4px 12px rgba(30, 64, 175, 0.3);
+  box-shadow: 0 4px 12px rgba(32, 61, 95, 0.3);
 }
 
 .nav-mobile-toggle {
@@ -993,7 +993,7 @@
   position: relative;
   background: var(--white);
   color: var(--navy-700);
-}
+} 
 
 .cta-card .btn-primary:hover {
   background: var(--gold-50);
@@ -1092,38 +1092,321 @@
 }
 
 @media (max-width: 768px) {
+  .nav {
+    padding: 0.75rem 1rem;
+  }
+
+  .nav-logo {
+    font-size: 1.125rem;
+  }
+
+  .logo-icon {
+    font-size: 1.25rem;
+  }
+
   .nav-links {
     display: none;
   }
 
   .nav-mobile-toggle {
     display: flex;
+    width: 2rem;
+    height: 2rem;
+    padding: 0.5rem;
   }
 
   .hero {
-    padding: 5rem 1.5rem 3rem;
+    padding: 5rem 1rem 3rem;
+    min-height: auto;
+  }
+
+  .hero-content {
+    padding-top: 1rem;
+  }
+
+  .hero-title {
+    font-size: 1.875rem;
+    line-height: 1.3;
+  }
+
+  .hero-subtitle {
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .hero-cta {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .hero-cta button {
+    width: 100%;
   }
 
   .hero-stats {
     flex-direction: column;
     gap: 1.5rem;
+    margin-top: 2rem;
+  }
+
+  .stat-item {
+    text-align: center;
+  }
+
+  .hero-visual {
+    margin-top: 2rem;
+    margin-left: 0;
+    margin-right: 0;
+    width: 100%;
+  }
+
+  .visual-blob {
+    width: 200px !important;
+    height: 200px !important;
   }
 
   .section {
-    padding: 4rem 1.5rem;
+    padding: 4rem 1rem;
+  }
+
+  .section-title {
+    font-size: 1.875rem;
   }
 
   .features-grid {
     grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .feature-card {
+    padding: 2rem 1.5rem;
+  }
+
+  .feature-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .benefits-content {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .benefits-visual {
+    order: -1;
+    margin-bottom: 2rem;
   }
 
   .cta-card {
     padding: 2.5rem 1.5rem;
+    margin: 2rem 1rem;
+  }
+
+  .cta-title {
+    font-size: 1.625rem;
+  }
+
+  .cta-description {
+    font-size: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .footer {
+    padding: 3rem 1rem 1rem;
   }
 
   .footer-links {
     flex-wrap: wrap;
     justify-content: center;
     gap: 1rem;
+    font-size: 0.875rem;
+  }
+
+  .footer-link {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .footer-bottom {
+    flex-direction: column;
+    gap: 1rem;
+    padding-top: 2rem;
+  }
+
+  .footer-copyright {
+    text-align: center;
+    font-size: 0.8125rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .nav {
+    padding: 0.625rem 0.75rem;
+  }
+
+  .nav-logo {
+    font-size: 1rem;
+    gap: 0.375rem;
+  }
+
+  .logo-icon {
+    font-size: 1.125rem;
+  }
+
+  .nav-mobile-toggle {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .hero {
+    padding: 4rem 0.75rem 2rem;
+  }
+
+  .hero-content {
+    padding-top: 0.5rem;
+  }
+
+  .hero-title {
+    font-size: 1.5rem;
+    line-height: 1.25;
+  }
+
+  .hero-subtitle {
+    font-size: 0.9375rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .hero-cta {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .hero-cta button {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    font-size: 0.9375rem;
+  }
+
+  .hero-stats {
+    flex-direction: column;
+    gap: 1.25rem;
+    margin-top: 1.5rem;
+  }
+
+  .stat-item span:first-child {
+    font-size: 1.5rem;
+  }
+
+  .stat-item span:last-child {
+    font-size: 0.8125rem;
+  }
+
+  .hero-visual {
+    margin-top: 1.5rem;
+  }
+
+  .visual-blob {
+    width: 150px !important;
+    height: 150px !important;
+  }
+
+  .section {
+    padding: 2.5rem 0.75rem;
+  }
+
+  .section-title {
+    font-size: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .section-description {
+    font-size: 0.9375rem;
+    margin-bottom: 2rem;
+  }
+
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .feature-card {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .feature-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    font-size: 1.125rem;
+  }
+
+  .feature-title {
+    font-size: 1rem;
+  }
+
+  .feature-description {
+    font-size: 0.8125rem;
+  }
+
+  .benefits-content {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .benefit-item {
+    font-size: 0.9375rem;
+    margin-bottom: 1rem;
+  }
+
+  .cta-card {
+    padding: 2rem 1rem;
+    margin: 1.5rem 0.5rem;
+  }
+
+  .cta-title {
+    font-size: 1.35rem;
+  }
+
+  .cta-description {
+    font-size: 0.9375rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .cta-btn {
+    padding: 0.75rem 1.5rem;
+    font-size: 0.9375rem;
+  }
+
+  .footer {
+    padding: 2rem 0.75rem 0.75rem;
+  }
+
+  .footer-content {
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .footer-section h4 {
+    font-size: 1rem;
+  }
+
+  .footer-links {
+    flex-direction: column;
+    gap: 0.75rem;
+    justify-content: flex-start;
+  }
+
+  .footer-link {
+    padding: 0.375rem 0;
+    font-size: 0.8125rem;
+  }
+
+  .footer-bottom {
+    flex-direction: column;
+    gap: 1rem;
+    padding-top: 1.5rem;
+  }
+
+  .footer-copyright {
+    text-align: center;
+    font-size: 0.75rem;
   }
 }

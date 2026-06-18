@@ -1,115 +1,1402 @@
 <div class="page-content">
-  <header class="page-header">
-    <h1 class="page-title">Material Requisition</h1>
-    <p class="page-description">Manage material requests and track requisition status.</p>
-  </header>
+  <!-- Role Badge -->
+  <div class="role-header" *ngIf="userRole">
+    <span class="role-badge" [class]="'role-' + userRole">
+      {{ userRole | titlecase }} Access
+    </span>
+    <span class="role-description" *ngIf="userRole === 'procurement'">
+      Procurement Dashboard - Manage confirmed requisitions for delivery
+    </span>
+    <span class="role-description" *ngIf="userRole === 'production'">
+      Production Dashboard - Review submitted tables and manage requisitions
+    </span>
+    <span class="role-description" *ngIf="userRole === 'user' || userRole === 'store'">
+      Requisition Management - Create a table first, then add requisition items
+    </span>
+    <span class="role-description" *ngIf="userRole === 'admin'">
+      Administrator - Full control over requisitions and workflow
+    </span>
+  </div>
 
-  <!-- Stats grid -->
-  <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Pending Requests</span>
-        <span class="stat-trend stat-trend-up">+15</span>
-      </div>
-      <p class="stat-value">42</p>
-      <p class="stat-subtitle">Awaiting approval</p>
+  <!-- Snackbar -->
+  <div class="snackbar" [class.show]="showSnackbar" [class]="snackbarType">
+    <span>{{ snackbarMessage }}</span>
+    <button (click)="hideSnackbar()">✕</button>
+  </div>
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>Material Requisitions</h1>
+      <span class="subtitle" *ngIf="userRole === 'production'">
+        Production Review - Review submitted tables
+        <span *ngIf="selectedTable" class="table-filter-indicator">
+          Table: {{ selectedTable.name }}
+          <button class="btn-link-small" (click)="showAllTables()">(show all)</button>
+        </span>
+      </span>
+      <span class="subtitle" *ngIf="viewMode === 'for_delivery' && userRole === 'procurement'">
+        Production Confirmed - Ready for scheduling/delivery
+        <span *ngIf="selectedTable" class="table-filter-indicator">
+          Filtered by: {{ selectedTable.name }}
+          <button class="btn-link-small" (click)="showAllTables()">(clear)</button>
+        </span>
+      </span>
+      <span class="subtitle" *ngIf="viewMode === 'my_tables'">
+        Manage and track material requests
+      </span>
     </div>
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Approved This Week</span>
-        <span class="stat-trend stat-trend-up">+28.3%</span>
+    <div class="header-actions">
+      <!-- Show All Tables Button for Production/Procurement -->
+      <button *ngIf="(userRole === 'production' || userRole === 'procurement') && selectedTable" 
+              class="btn btn-outline btn-sm" 
+              (click)="showAllTables()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+        Show All Tables
+      </button>
+
+      <!-- Transfer Reviewed Table Button for Production -->
+      <ng-container *ngIf="!selectedTable?.production_reviewed">
+        <button *ngIf="canSubmitReviewedTable()" 
+                class="btn btn-success" 
+                (click)="submitReviewedTable()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+          Transfer to Procurement
+        </button>
+      </ng-container>
+      <span *ngIf="selectedTable?.production_reviewed && userRole === 'production'" class="badge badge-success">
+        Transferred to Procurement
+      </span>
+
+      <!-- Tables Dropdown - Only for store/user with their tables -->
+      <div class="dropdown" [class.open]="showTableDropdown" *ngIf="viewMode === 'my_tables'">
+        <button class="btn btn-outline" (click)="toggleTableDropdown()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          {{ selectedTable ? selectedTable.name : 'Manage Tables' }}
+          <span *ngIf="selectedTable?.submitted" class="badge-submitted">Submitted</span>
+        </button>
+        
+        <div class="dropdown-menu" *ngIf="showTableDropdown">
+          <div class="dropdown-header">
+            <span>Your Requisition Tables</span>
+            <button class="btn-icon" (click)="openTableModal()" title="New Table">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="dropdown-list">
+            <div *ngFor="let table of tables" 
+                 class="dropdown-item" 
+                 [class.active]="selectedTable?.id === table.id"
+                 [class.submitted]="table.submitted"
+                 (click)="selectTable(table)">
+              <span class="name">{{ table.name || 'Untitled' }}</span>
+              <span class="count">{{ table.item_count || 0 }}</span>
+              <span *ngIf="table.submitted" class="submitted-badge">✓</span>
+            </div>
+            
+            <div *ngIf="tables.length === 0" class="dropdown-empty">
+              <p>No tables yet</p>
+              <button class="btn-link" (click)="openTableModal()">Create one</button>
+            </div>
+          </div>
+          
+          <div class="dropdown-footer" *ngIf="tables.length > 0" (click)="openTableModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+            Create New Table
+          </div>
+        </div>
       </div>
-      <p class="stat-value">127</p>
-      <p class="stat-subtitle">Requisitions approved</p>
-    </div>
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Total Materials</span>
-        <span class="stat-trend stat-trend-up">+12.1%</span>
+      
+      <!-- Tables Dropdown for Production/Procurement -->
+      <div class="dropdown" [class.open]="showTableDropdown" *ngIf="userRole === 'production' || userRole === 'procurement'">
+        <button class="btn btn-outline" (click)="toggleTableDropdown()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          {{ selectedTable ? selectedTable.name : 'All Tables' }}
+        </button>
+        
+        <div class="dropdown-menu" *ngIf="showTableDropdown">
+          <div class="dropdown-header">
+            <span>All Tables</span>
+            <button class="btn-icon" (click)="showAllTables()" title="Show All">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M4 6h16M4 12h16M4 18h16"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="dropdown-list">
+            <div *ngFor="let table of tables" 
+                 class="dropdown-item" 
+                 [class.active]="selectedTable?.id === table.id"
+                 [class.submitted]="table.submitted"
+                 (click)="selectTable(table)">
+              <span class="name">{{ table.name || 'Untitled' }}</span>
+              <span class="count">{{ table.item_count || 0 }}</span>
+              <span *ngIf="table.submitted" class="submitted-badge" title="Submitted">✓</span>
+              <span class="submitted-by" *ngIf="table.user_email">by {{ table.user_email }}</span>
+            </div>
+            
+            <div *ngIf="tables.length === 0" class="dropdown-empty">
+              <p>No tables yet</p>
+            </div>
+          </div>
+        </div>
       </div>
-      <p class="stat-value">1,234</p>
-      <p class="stat-subtitle">Items requested</p>
-    </div>
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Avg. Processing</span>
-        <span class="stat-trend stat-trend-down">-0.5 days</span>
+      
+      <!-- P.O Upload Section for Procurement - File Upload -->
+      <div *ngIf="userRole === 'procurement' && selectedTable" class="po-upload-section">
+        <div *ngIf="!selectedTable.po_file_url" class="po-file-input">
+          <input 
+            type="file" 
+            id="poFileInput"
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+            (change)="onPoFileSelected($event)"
+            style="display: none;">
+          <div class="po-input-group">
+            <button class="btn btn-outline btn-sm" (click)="triggerPoFileInput()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+                <polyline points="8 12 12 16 16 12"/>
+                <line x1="12" y1="2" x2="12" y2="16"/>
+              </svg>
+              Choose File
+            </button>
+            <span class="po-file-name">{{ poFileName || 'No file chosen' }}</span>
+            <button class="btn btn-primary btn-sm" (click)="uploadPoFile()" [disabled]="!poFile || isUploadingPo">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M20 6L9 17l-5-5"/>
+              </svg>
+              {{ isUploadingPo ? 'Uploading...' : 'Upload & Save' }}
+            </button>
+          </div>
+        </div>
+        <div *ngIf="selectedTable.po_file_url" class="po-file-display">
+          <a [href]="selectedTable.po_file_url" target="_blank" class="po-file-link">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14,2 14,8 20,8"/>
+            </svg>
+            {{ selectedTable.po_file_name || 'View P.O Document' }}
+          </a>
+          <button class="btn-icon btn-sm" (click)="removePoLink()" title="Remove P.O document">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
       </div>
-      <p class="stat-value">2.1 days</p>
-      <p class="stat-subtitle">Average turnaround</p>
+      
+      <!-- Submit Table Button -->
+      <button class="btn btn-success" 
+              *ngIf="canSubmitTable() && selectedTable" 
+              (click)="submitTable(selectedTable)" 
+              [disabled]="selectedTable.submitted">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M20 6L9 17l-5-5"/>
+        </svg>
+        {{ selectedTable.submitted ? 'Table Submitted' : 'Submit Table' }}
+      </button>
+      
+      <button class="btn btn-primary" (click)="openTableModal()" *ngIf="canManageTables() && !selectedTable && tables.length === 0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Create Table
+      </button>
+
+      <button class="btn btn-primary" (click)="openModal()" *ngIf="canCreateRequisition()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        New Requisition
+      </button>
     </div>
   </div>
 
-  <!-- Requisition table -->
-  <div class="card table-card">
-    <div class="card-header">
-      <h3 class="card-title">Recent Requisitions</h3>
-      <div class="card-actions">
-        <div class="search-box">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8"/>
-            <path d="M21 21l-4.35-4.35"/>
+  <!-- No Table Selected State (store/user only) -->
+  <div class="empty-card" *ngIf="viewMode === 'my_tables' && !selectedTable">
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      <h3>{{ tables.length === 0 ? 'Create a Table First' : 'Select a Table' }}</h3>
+      <p>
+        <ng-container *ngIf="tables.length === 0">
+          Step 1: Create a requisition table. Step 2: Add requisition items to that table.
+        </ng-container>
+        <ng-container *ngIf="tables.length > 0">
+          Choose a table from the dropdown above, then add requisition items.
+        </ng-container>
+      </p>
+      <button class="btn btn-primary" (click)="openTableModal()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Create Your First Table
+      </button>
+    </div>
+  </div> 
+
+  <!-- No Data State for Production -->
+  <div class="empty-card" *ngIf="userRole === 'production' && filteredRequisitions.length === 0 && !isLoading">
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      <h3>
+        <ng-container *ngIf="selectedTable">
+          No Requisitions in "{{ selectedTable.name }}"
+        </ng-container>
+        <ng-container *ngIf="!selectedTable">
+          No Submissions Yet
+        </ng-container>
+      </h3>
+      <p>
+        <ng-container *ngIf="selectedTable">
+          This table has no requisitions in the current view.
+          <button class="btn-link" (click)="showAllTables()">Show all tables</button>
+        </ng-container>
+        <ng-container *ngIf="!selectedTable">
+          There are no submitted requisitions to review at this time.
+        </ng-container>
+      </p>
+    </div>
+  </div>
+  <!-- No Data State for Procurement -->
+  <div class="empty-card" *ngIf="userRole === 'procurement' && filteredRequisitions.length === 0 && !isLoading">
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      <h3>
+        <ng-container *ngIf="selectedTable">
+          No Confirmed Requisitions in "{{ selectedTable.name }}"
+        </ng-container>
+        <ng-container *ngIf="!selectedTable">
+          No Confirmed Requisitions
+        </ng-container>
+      </h3>
+      <p>
+        <ng-container *ngIf="selectedTable">
+          This table has no production-confirmed requisitions.
+          <button class="btn-link" (click)="showAllTables()">Show all tables</button>
+        </ng-container>
+        <ng-container *ngIf="!selectedTable">
+          There are no production-confirmed requisitions ready for delivery.
+        </ng-container>
+      </p>
+    </div>
+  </div>
+
+  <!-- Main Content Container -->
+  <div class="main-content" *ngIf="
+    userRole === 'production' ||
+    userRole === 'procurement' ||
+    (selectedTable && viewMode === 'my_tables')
+  ">
+    <!-- Master Data Section -->
+    <div class="import-card" *ngIf="canViewMasterData()">
+      <div class="import-header">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <line x1="3" y1="9" x2="21" y2="9"/>
+          <line x1="9" y1="21" x2="9" y2="9"/>
+        </svg>
+        <span>Master Data</span>
+        <span class="import-badge" *ngIf="categories.length">{{ categories.length }} categories</span>
+      </div>
+      <div class="import-body">
+        <ng-container *ngIf="canUploadMasterData()">
+          <input type="file" accept=".xlsx,.xls" (change)="onFileSelected($event)" hidden #fileInput>
+          <button class="btn btn-outline" (click)="fileInput.click()" [disabled]="importStatus === 'loading'">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+              <polyline points="8 12 12 16 16 12"/>
+              <line x1="12" y1="2" x2="12" y2="16"/>
+            </svg>
+            {{ importStatus === 'loading' ? 'Uploading...' : 'Upload Excel' }}
+          </button>
+        </ng-container>
+        <button class="btn btn-outline" (click)="openMasterDataModal()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
           </svg>
-          <input type="text" placeholder="Search..." class="search-input" />
-        </div>
-        <button class="btn btn-primary">New Requisition</button>
+          View Master Data
+        </button>
+        <span class="import-status" *ngIf="canUploadMasterData()" [class.success]="importStatus === 'success'" [class.error]="importStatus === 'error'">
+          {{ importMessage || 'No file selected' }}
+        </span>
       </div>
     </div>
-    <div class="table-wrapper">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Requisition ID</th>
-            <th>Material</th>
-            <th>Quantity</th>
-            <th>Requested By</th>
-            <th>Status</th>
-            <th>Date</th>
+
+    <!-- Current Table Info - Only show when a specific table is selected (store/user) -->
+    <div class="table-info-card" *ngIf="selectedTable && viewMode === 'my_tables'">
+      <div class="table-info-content">
+        <div>
+          <h4>{{ selectedTable.name }}</h4>
+          <div class="stats">
+            <span class="stat">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+              </svg>
+              {{ filteredRequisitions.length }} requisitions
+            </span>
+            <span class="stat" *ngIf="selectedTable.submitted">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M20 6L9 17l-5-5"/>
+              </svg>
+              Submitted {{ selectedTable.submitted_at | date:'short' }}
+            </span>
+          </div>
+        </div>
+        <div class="table-actions">
+          <button class="btn btn-sm btn-outline" (click)="editTable(selectedTable)" [disabled]="selectedTable.submitted">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
+            </svg>
+            Rename
+          </button>
+          <button class="btn btn-sm btn-outline-danger" (click)="deleteTable(selectedTable)" [disabled]="tables.length <= 1 || selectedTable.submitted">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>
+              <line x1="10" y1="11" x2="10" y2="17"/>
+              <line x1="14" y1="11" x2="14" y2="17"/>
+            </svg>
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Production Review Table Info -->
+    <div class="table-info-card" *ngIf="selectedTable && userRole === 'production'">
+      <div class="table-info-content">
+        <div>
+          <h4>{{ selectedTable.name }}</h4>
+          <div class="stats">
+            <span class="stat">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+              </svg>
+              {{ filteredRequisitions.length }} submissions to review
+            </span>
+            <span class="stat" *ngIf="selectedTable.submitted">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M20 6L9 17l-5-5"/>
+              </svg>
+              Submitted {{ selectedTable.submitted_at | date:'short' }}
+            </span>
+            <span class="stat" *ngIf="selectedTable.user_email">
+              by {{ selectedTable.user_email }}
+            </span>
+          </div>
+        </div>
+        <div class="table-actions" *ngIf="canSubmitReviewedTable()">
+          <button class="btn btn-success" (click)="submitReviewedTable()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M20 6L9 17l-5-5"/>
+            </svg>
+            Transfer to Procurement
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Store Submissions Header (Production) -->
+    <div class="table-info-card" *ngIf="viewMode === 'store_submissions' && userRole === 'production'">
+      <div class="table-info-content">
+        <div>
+          <h4>{{ selectedProductionView === 'submissions' ? 'Submitted Requisitions' : 'Reviewed Requisitions' }}</h4>
+          <div class="stats">
+            <span class="stat">
+              {{ filteredRequisitions.length }} items
+            </span>
+            <span class="stat" *ngIf="selectedTable">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+              </svg>
+              Table: {{ selectedTable.name }}
+              <button class="btn-link-small" (click)="showAllTables()">(clear)</button>
+            </span>
+            <span class="stat" *ngIf="!selectedTable">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+              </svg>
+              Showing all tables
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- For Delivery Header (Procurement) -->
+    <div class="table-info-card" *ngIf="viewMode === 'for_delivery' && userRole === 'procurement'">
+      <div class="table-info-content">
+        <div>
+          <h4>Production Confirmed - Pending Action</h4>
+          <div class="stats">
+            <span class="stat">{{ filteredRequisitions.length }} items</span>
+            <span class="stat" *ngIf="selectedTable">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+              </svg>
+              Table: {{ selectedTable.name }}
+              <button class="btn-link-small" (click)="showAllTables()">(clear)</button>
+            </span>
+            <span class="stat" *ngIf="!selectedTable">
+              Schedule, mark delivered, or add notes for missing materials
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Requisitions Card -->
+    <div class="card" [class.card-loading]="isLoading">
+      <div class="card-header">
+        <div>
+          <h2>Requisitions</h2>
+          <span class="count">{{ filteredRequisitions.length }} total</span>
+        </div>
+        <div class="filters">
+          <div class="search">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input 
+              type="text" 
+              placeholder="Search by SKU, supplier..." 
+              [(ngModel)]="searchQuery" 
+              (input)="applyFilter()"
+            >
+            <button *ngIf="searchQuery" class="clear" (click)="searchQuery = ''; applyFilter()">✕</button>
+          </div>
+          <select [(ngModel)]="filterStatus" (ngModelChange)="applyFilter()">
+            <option value="">All status</option>
+            <option value="Pending">Pending</option>
+            <option value="Submitted">Submitted</option>
+            <option value="Production_Confirmed">Production Confirmed</option>
+            <option value="Removed">Removed</option>
+            <option value="Scheduled">Scheduled</option>
+            <option value="Approved">Approved</option>
+            <option value="Delivered">Delivered</option>
+            <option value="Partially_Delivered">Partially Delivered</option>
+            <option value="Rejected">Rejected</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div class="table-wrapper" *ngIf="userRole !== 'procurement'">
+        <div *ngIf="isLoading" class="loading">
+          <div class="spinner"></div>
+          <p>Loading...</p>
+        </div>
+
+        <table [class.table-dimmed]="isLoading">
+          <thead>
+             <tr>
+              <th></th>
+              <th *ngIf="userRole === 'production' || userRole === 'procurement'">Table</th>
+              <th *ngIf="userRole === 'production'">Submitted By</th>
+              <th>Req #</th>
+              <th>Type</th>
+              <th>Date</th>
+              <th>SKU Code</th>
+              <th>SKU Name</th>
+              <th>Qty</th>
+              <th>Unit</th>
+              <th>Supplier</th>
+              <th>Brand</th>
+              <th>Status</th>
+              <th>Scheduled</th>
+              <th>Actions</th>
+             </tr>
+          </thead>
+          <tbody *ngFor="let req of paginatedRequisitions">
+              <tr class="parent-row" [class.expanded]="expandedRows[req.id]" (click)="toggleRow(req)">
+                <td class="expand-cell">
+                  <div class="expand-icon" [class.expanded]="expandedRows[req.id]">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <polyline points="9 18 15 12 9 6"/>
+                    </svg>
+                  </div>
+                </td>
+                <td *ngIf="userRole === 'production' || userRole === 'procurement'">
+                  <span class="table-name" 
+                        [class.clickable]="userRole === 'production' || userRole === 'procurement'"
+                        [title]="'Click to filter by ' + (tableNameMap[req.table_id || ''] || req.table_name || 'this table')"
+                        (click)="req.table_id && filterByTable(req.table_id); $event.stopPropagation()">
+                    {{ tableNameMap[req.table_id || ''] || req.table_name || '—' }}
+                  </span>
+                </td>
+                <td *ngIf="userRole === 'production'">
+                  <span class="submitted-by" [title]="req.user_email || ''">{{ req.user_email || '—' }}</span>
+                </td>
+                <td><span class="req-number">{{ req.reqNumber || req.id || 'N/A' }}</span></td>
+                <td>
+                  <span class="type" [class.perishable]="req.type === 'Perishable'">
+                    {{ req.type }}
+                  </span>
+                </td>
+                <td>{{ req.dateNeeded || 'ASAP' }}</td>
+                <td><span class="sku" title="{{ req.skuCode || req['sku_code'] || '' }}">{{ req.skuCode || req['sku_code'] }}</span></td>
+                <td class="limit" title="{{ req.skuName || req['sku_name'] || '—' }}">{{ req.skuName || req['sku_name'] || '—' }}</td>
+                <td class="number">{{ (req.quantity || req['qty_needed'] || 0) | number }}</td>
+                <td>{{ req.unit || req['batch_unit'] || '—' }}</td>
+                <td class="limit" title="{{ req.supplier || '' }}">{{ req.supplier }}</td>
+                <td class="limit" title="{{ req.brand || '—' }}">{{ req.brand || '—' }}</td>
+                <td>
+                  <span class="status" [class]="getStatusBadgeClass(req.status)" [title]="(req.status === 'Delivered' || req.status === 'Partially_Delivered') && req.procurement_notes ? req.procurement_notes : ''">
+                    {{ req.status || 'Pending' }}
+                  </span>
+                </td>
+                <td>
+                  <span *ngIf="req.scheduled_date" class="scheduled-date" title="{{ req.scheduled_date | date:'medium' }}">
+                    {{ req.scheduled_date | date:'short' }}
+                  </span>
+                  <span *ngIf="!req.scheduled_date && req.status === 'Scheduled'" class="scheduled-date">Pending Schedule</span>
+                  <span *ngIf="!req.scheduled_date && req.status !== 'Scheduled'">—</span>
+                </td>
+                <td>
+                  <div class="action-buttons">
+                    <!-- Production bulk material action buttons -->
+                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
+                            class="btn-icon success"
+                            (click)="confirmAllMaterials(req); $event.stopPropagation()"
+                            title="Accept all materials for this requisition">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </button>
+
+                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
+                            class="btn-icon danger"
+                            (click)="rejectAllMaterials(req); $event.stopPropagation()"
+                            title="Reject all materials for this requisition">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </button>
+
+                    <!-- Status Indicators -->
+                    <span *ngIf="req.production_action === 'confirmed'" class="action-marked confirmed" title="Confirmed by production">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </span>
+
+                    <span *ngIf="req.production_action === 'removed'" class="action-marked removed" title="Removed by production">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </span>
+
+                    <button *ngIf="canMarkDelivered(req)"
+                            class="btn-icon success"
+                            (click)="markDelivered(req); $event.stopPropagation()"
+                            title="Mark as fully delivered">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </button>
+
+                    <button *ngIf="canAddMissingNotes(req)"
+                            class="btn-icon primary"
+                            (click)="openMissingNotesModal(req); $event.stopPropagation()"
+                            title="Add notes for missing materials">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              
+              <!-- Expanded Row - Materials -->
+              <tr class="expanded-row" *ngIf="expandedRows[req.id]">
+                <td [attr.colspan]="getColspan()">
+                  <div class="expanded-content">
+                    <div *ngIf="loadingMaterials[req.id]" class="loading-state">
+                      <div class="spinner-small"></div>
+                      <span>Loading materials for SKU {{ req.skuCode || '—' }}...</span>
+                    </div>
+                    
+                    <div *ngIf="!loadingMaterials[req.id] && req.materials?.length">
+                      <div class="expanded-header">
+                        <h4>Raw Materials for {{ req.skuCode || req.skuName || 'Unknown SKU' }}</h4>
+                        <div class="expanded-header-actions">
+                          <span class="material-note">
+                            Based on requisition quantity: {{ (req.quantity || req['qty_needed'] || 0) | number }} {{ req.unit || '—' }}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div class="materials-grid">
+                        <table class="materials-table">
+                          <thead>
+                            <tr>
+                              <th>Material</th>
+                              <th>Qty/Batch</th>
+                              <th>Unit</th>
+                              <th>Type</th>
+                              <th>Total Required</th>
+                              <th *ngIf="userRole === 'production' && req.status === 'Submitted'">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr *ngFor="let mat of req.materials" [class.material-confirmed]="mat.production_action === 'confirmed'" [class.material-removed]="mat.production_action === 'removed'">
+                              <td>{{ mat.raw_material || '—' }}</td>
+                              <td class="number">{{ (mat.quantity_per_batch ?? 0) | number:'1.2-2' }}</td>
+                              <td><span class="badge">{{ mat.unit || '—' }}</span></td>
+                              <td><span class="badge" [class.badge-material]="mat.type">{{ mat.type || 'N/A' }}</span></td>
+                              <td class="number primary">
+                                {{ calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch) | number:'1.2-2' }}
+                              </td>
+                              <td class="material-action-cell" *ngIf="userRole === 'production' && req.status === 'Submitted'">
+                                <button class="btn btn-icon success" [class.active]="mat.production_action === 'confirmed'" aria-label="Accept material" (click)="setMaterialAction(req, mat, 'confirmed'); $event.stopPropagation()">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <path d="M20 6L9 17l-5-5"/>
+                                  </svg>
+                                </button>
+                                <button class="btn btn-icon danger" [class.active]="mat.production_action === 'removed'" aria-label="Reject material" (click)="setMaterialAction(req, mat, 'removed'); $event.stopPropagation()">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                                    <line x1="18" y1="6" x2="6" y2="18"/>
+                                    <line x1="6" y1="6" x2="18" y2="18"/>
+                                  </svg>
+                                </button>
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    
+                    <div *ngIf="!loadingMaterials[req.id] && !req.materials?.length" class="empty-materials">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <line x1="3" y1="9" x2="21" y2="9"/>
+                        <line x1="9" y1="21" x2="9" y2="9"/>
+                      </svg>
+                      <p>
+                        No materials found for SKU <strong>"{{ req.skuCode || req['sku_code'] || '—' }}"</strong><br>
+                        <small>(check master data upload & SKU code formatting)</small>
+                      </p>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+          </tbody>
+          <tbody *ngIf="filteredRequisitions.length === 0">
+            <tr>
+              <td [attr.colspan]="getColspan()" class="empty">
+                <div>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <line x1="3" y1="9" x2="21" y2="9"/>
+                    <line x1="9" y1="21" x2="9" y2="9"/>
+                  </svg>
+                  <h3>No requisitions</h3>
+                  <p>{{ searchQuery || filterStatus ? 'Try adjusting filters' : 'Create your first requisition' }}</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div class="pagination" *ngIf="filteredRequisitions.length > 0 && !isLoading">
+        <span class="info">
+          {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, filteredRequisitions.length) }} of {{ filteredRequisitions.length }}
+        </span>
+        <div class="controls">
+          <button [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
+          <span class="page">{{ currentPage }}/{{ totalPages }}</span>
+          <button [disabled]="currentPage === totalPages" (click)="goToPage(currentPage + 1)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+        </div>
+        <select [(ngModel)]="pageSize" (change)="onPageSizeChange()">
+          <option value="10">10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </div>
+    </div>
+
+  <div class="table-wrapper" *ngIf="userRole === 'procurement'">
+    <div *ngIf="isLoading" class="loading">
+      <div class="spinner"></div>
+      <p>Loading...</p>
+    </div>
+
+    <table class="procurement-summary-table" [class.table-dimmed]="isLoading">
+      <thead>
+        <tr>
+          <th>Table</th>
+          <th>Unique Materials</th>
+          <th>Total Requested Qty</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <ng-container *ngFor="let summary of procurementTableSummaries">
+          <tr class="procurement-summary-row">
+            <td>{{ summary.table_name }}</td>
+            <td>{{ summary.uniqueMaterialsCount }}</td>
+            <td>{{ summary.totalRequestedQuantity | number:'1.2-2' }}</td>
+            <td>
+              <button class="btn btn-sm btn-outline" (click)="openProcurementOriginalItemsModal(summary)">
+                View Exact Requisition Items
+              </button>
+            </td>
           </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td class="font-mono">MR-2025-001</td>
-            <td>Steel Sheets</td>
-            <td>500 kg</td>
-            <td>John Smith</td>
-            <td><span class="badge badge-success">Approved</span></td>
-            <td>Feb 3, 2025</td>
+          <tr class="procurement-detail-row">
+            <td colspan="4">
+              <div class="procurement-materials-block">
+                <h4>Requested Materials for {{ summary.table_name }}</h4>
+                <table class="materials-table procurement-modal-table">
+                  <thead>
+                    <tr>
+                      <th>Raw Material</th>
+                      <th>Type</th>
+                      <th>Total Requested Qty</th>
+                      <th>Unit</th>
+                      <th>Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr *ngFor="let item of summary.materials" [class.material-approved]="item.procurement_action === 'approved'" [class.material-rejected]="item.procurement_action === 'rejected'">
+                      <td>{{ item.raw_material }}</td>
+                      <td>{{ item.type }}</td>
+                      <td class="number">{{ item.totalQuantity | number:'1.2-2' }}</td>
+                      <td>{{ item.unit }}</td>
+                      <td class="material-action-cell">
+                        <button class="btn btn-icon success" [class.active]="item.procurement_action === 'approved'" aria-label="Approve raw material" (click)="setProcurementMaterialAction(item, 'approved')">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M20 6L9 17l-5-5"/>
+                          </svg>
+                        </button>
+                        <button class="btn btn-icon danger" [class.active]="item.procurement_action === 'rejected'" aria-label="Reject raw material" (click)="setProcurementMaterialAction(item, 'rejected')">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                    <tr *ngIf="!summary.materials.length">
+                      <td colspan="5" class="empty">
+                        <div>
+                          <p>No requested materials available.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </td>
           </tr>
-          <tr>
-            <td class="font-mono">MR-2025-002</td>
-            <td>Electrical Components</td>
-            <td>120 units</td>
-            <td>Sarah Johnson</td>
-            <td><span class="badge badge-pending">Pending</span></td>
-            <td>Feb 2, 2025</td>
-          </tr>
-          <tr>
-            <td class="font-mono">MR-2025-003</td>
-            <td>Raw Materials</td>
-            <td>2,000 kg</td>
-            <td>Mike Davis</td>
-            <td><span class="badge badge-processing">Processing</span></td>
-            <td>Feb 1, 2025</td>
-          </tr>
-          <tr>
-            <td class="font-mono">MR-2025-004</td>
-            <td>Packaging Supplies</td>
-            <td>350 boxes</td>
-            <td>Emily Brown</td>
-            <td><span class="badge badge-success">Approved</span></td>
-            <td>Jan 31, 2025</td>
-          </tr>
-          <tr>
-            <td class="font-mono">MR-2025-005</td>
-            <td>Safety Equipment</td>
-            <td>45 units</td>
-            <td>David Wilson</td>
-            <td><span class="badge badge-pending">Pending</span></td>
-            <td>Jan 30, 2025</td>
-          </tr>
-        </tbody>
-      </table>
+        </ng-container>
+        <tr *ngIf="!procurementTableSummaries.length && !isLoading">
+          <td colspan="4" class="empty">
+            <div>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="9" y1="21" x2="9" y2="9"/>
+              </svg>
+              <h3>No production-confirmed tables</h3>
+              <p>There are no tables transferred to procurement yet.</p>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Procurement Exact Requisition Items Modal -->
+  <div class="modal" [class.active]="showProcurementOriginalItemsModal">
+    <div class="backdrop" (click)="closeProcurementOriginalItemsModal()"></div>
+    <div class="modal-container modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>Exact Requisition Items</h3>
+          <p class="modal-subtitle">Original requisitions for {{ currentProcurementTableName || currentProcurementTableId }}.</p>
+        </div>
+        <button class="close" (click)="closeProcurementOriginalItemsModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="materials-grid">
+          <table class="materials-table procurement-modal-table">
+            <thead>
+              <tr>
+                <th>Req #</th>
+                <th>SKU</th>
+                <th>Qty</th>
+                <th>Unit</th>
+                <th>Status</th>
+                <th>Materials</th>
+              </tr>
+            </thead>
+            <tbody>
+              <ng-container *ngFor="let req of getProcurementOriginalRequisitions(currentProcurementTableId)">
+                <tr>
+                  <td>{{ req.reqNumber || req.id }}</td>
+                  <td>
+                    <strong>{{ req.skuCode || req['sku_code'] || '—' }}</strong>
+                    <div class="small">{{ req.skuName || req['sku_name'] || 'Unknown SKU' }}</div>
+                  </td>
+                  <td class="number">{{ (req.quantity || req['qty_needed'] || 0) | number:'1.0-0' }}</td>
+                  <td>{{ req.unit || req['batch_unit'] || '—' }}</td>
+                  <td>
+                    <span class="status" [class]="getStatusBadgeClass(req.status)">
+                      {{ req.status || 'Pending' }}
+                    </span>
+                  </td>
+                  <td>
+                    <button class="btn btn-sm btn-outline" (click)="toggleProcurementModalRow(req.id)">
+                      {{ expandedProcurementModalRows[req.id] ? 'Hide' : 'Show' }} Materials
+                    </button>
+                  </td>
+                </tr>
+                <tr *ngIf="expandedProcurementModalRows[req.id]">
+                  <td colspan="6">
+                    <table class="materials-table inner-table">
+                      <thead>
+                        <tr>
+                          <th>Raw Material</th>
+                          <th>Qty/Batch</th>
+                          <th>Unit</th>
+                          <th>Type</th>
+                          <th>Total Required</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr *ngFor="let mat of req.materials">
+                          <td>{{ mat.raw_material || '—' }}</td>
+                          <td class="number">{{ (mat.quantity_per_batch ?? 0) | number:'1.2-2' }}</td>
+                          <td>{{ mat.unit || '—' }}</td>
+                          <td>{{ mat.type || 'N/A' }}</td>
+                          <td class="number">
+                            {{ calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch) | number:'1.2-2' }}
+                          </td>
+                        </tr>
+                        <tr *ngIf="!req.materials?.length">
+                          <td colspan="5" class="empty">
+                            <div>
+                              <p>No raw materials available for this requisition.</p>
+                            </div>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </td>
+                </tr>
+              </ng-container>
+              <tr *ngIf="!getProcurementOriginalRequisitions(currentProcurementTableId).length">
+                <td colspan="6" class="empty">
+                  <div>
+                    <p>No exact requisition items are available for this table.</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeProcurementOriginalItemsModal()">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- Create/Edit Requisition Modal -->
+  <div class="modal" [class.active]="showModal">
+    <div class="backdrop" (click)="closeModal()"></div>
+    <div class="modal-container">
+      <div class="modal-header">
+        <div>
+          <h3>{{ editingRequisition ? 'Edit' : 'New' }} Requisition</h3>
+          <span class="note">All fields marked * are required</span>
+        </div>
+        <button class="close" (click)="closeModal()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="modal-body">
+        <form>
+          <div class="row">
+            <div class="field">
+              <label>Type *</label>
+              <select [(ngModel)]="formData.type" name="type">
+                <option value="" disabled>Select type</option>
+                <option value="Perishable">Perishable</option>
+                <option value="Shelf-Stable">Shelf-Stable</option>
+              </select>
+              <span class="error" *ngIf="submitted && !formData.type">Required</span>
+            </div>
+
+            <div class="field">
+              <label>Category *</label>
+              <select 
+                [(ngModel)]="formData.category" 
+                name="category"
+                (change)="onCategoryChange()"
+                [disabled]="categories.length === 0">
+                <option value="" disabled>
+                  {{ categories.length ? 'Select category' : 'Import data first' }}
+                </option>
+                <option *ngFor="let cat of categories" [value]="cat">{{ cat }}</option>
+              </select>
+              <span class="error" *ngIf="submitted && !formData.category">Required</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>SKU Name *</label>
+              <select 
+                [(ngModel)]="formData.skuName" 
+                name="skuName"
+                (change)="onSkuNameSelect()"
+                [disabled]="!formData.category || availableSkus.length === 0">
+                <option value="" disabled>
+                  {{ !formData.category ? 'Select category first' : 'Select SKU name' }}
+                </option>
+                <option *ngFor="let item of availableSkus" [value]="item.sku_name">
+                  {{ item.sku_name }}
+                </option>
+              </select>
+              <span class="error" *ngIf="submitted && !formData.skuName">Required</span>
+            </div>
+
+            <div class="field">
+              <label>SKU Code *</label>
+              <input 
+                type="text" 
+                [value]="selectedSkuCode" 
+                readonly
+                class="readonly"
+                placeholder="Auto-generated from SKU name">
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>Quantity *</label>
+              <input 
+                type="number" 
+                [(ngModel)]="formData.quantity" 
+                name="quantity"
+                min="0.01" 
+                step="0.01"
+                placeholder="0.00">
+              <span class="error" *ngIf="submitted && !formData.quantity">Required</span>
+              <span class="error" *ngIf="submitted && formData.quantity <= 0">Must be > 0</span>
+            </div>
+
+            <div class="field">
+              <label>Unit *</label>
+              <select [(ngModel)]="formData.unit" name="unit">
+                <option value="" disabled>Select unit</option>
+                <option value="kg">kg</option>
+                <option value="g">g</option>
+                <option value="units">units</option>
+                <option value="boxes">boxes</option>
+                <option value="liters">L</option>
+                <option value="pieces">pcs</option>
+              </select>
+              <span class="error" *ngIf="submitted && !formData.unit">Required</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>Date needed</label>
+              <input 
+                type="date" 
+                [(ngModel)]="formData.dateNeeded" 
+                name="dateNeeded"
+                [min]="tomorrow">
+            </div>
+
+            <div class="field">
+              <label>Supplier</label>
+              <select 
+                [(ngModel)]="formData.supplier" 
+                name="supplier" 
+                (change)="onSupplierChange()">
+                <option value="">Optional</option>
+                <option value="Supplier A">Supplier A</option>
+                <option value="Supplier B">Supplier B</option>
+                <option value="Supplier C">Supplier C</option>
+                <option value="__other__">Other</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field" *ngIf="formData.supplier === '__other__'">
+              <label>Supplier name</label>
+              <input 
+                type="text" 
+                [(ngModel)]="formData.customSupplier" 
+                name="customSupplier"
+                placeholder="Enter name">
+            </div>
+
+            <div class="field">
+              <label>Brand</label>
+              <select [(ngModel)]="formData.brand" name="brand" (change)="onBrandChange()">
+                <option value="" disabled>Optional</option>
+                <option value="Brand X">Brand X</option>
+                <option value="Brand Y">Brand Y</option>
+                <option value="Brand Z">Brand Z</option>
+                <option value="__other__">Other</option>
+              </select>
+            </div>
+
+            <div class="field" *ngIf="formData.brand === '__other__'">
+              <label>Brand name</label>
+              <input 
+                type="text" 
+                [(ngModel)]="formData.customBrand" 
+                name="customBrand"
+                placeholder="Enter name">
+            </div>
+          </div>
+
+        </form>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeModal()">Cancel</button>
+        <button class="btn btn-primary" (click)="onSubmit()" [disabled]="isSubmitting">
+          {{ isSubmitting ? 'Saving...' : (editingRequisition ? 'Update' : 'Create') }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule Modal (Procurement) -->
+  <div class="modal" [class.active]="showScheduleModal">
+    <div class="backdrop" (click)="closeScheduleModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>Schedule Requisition</h3>
+        <button class="close" (click)="closeScheduleModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">
+          Set scheduled date for requisition <strong>{{ selectedRequisition?.reqNumber }}</strong>
+        </p>
+        
+        <div class="field">
+          <label>Date *</label>
+          <input 
+            type="date" 
+            [(ngModel)]="scheduledDate" 
+            [min]="tomorrow"
+            placeholder="Select date">
+        </div>
+
+        <div class="field">
+          <label>Time (optional)</label>
+          <input 
+            type="time" 
+            [(ngModel)]="scheduledTime"
+            placeholder="Select time">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeScheduleModal()">Cancel</button>
+        <button class="btn btn-primary" (click)="scheduleRequisition()" [disabled]="!scheduledDate">
+          Schedule
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Approve Modal (Admin) -->
+  <div class="modal" [class.active]="showApproveModal">
+    <div class="backdrop" (click)="closeApproveModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>Approve Requisition</h3>
+        <button class="close" (click)="closeApproveModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">
+          Approve requisition <strong>{{ selectedRequisition?.reqNumber }}</strong>
+        </p>
+        
+        <div class="field">
+          <label>Notes (optional)</label>
+          <textarea 
+            [(ngModel)]="approvalNotes"
+            rows="3"
+            placeholder="Add any approval notes..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeApproveModal()">Cancel</button>
+        <button class="btn btn-success" (click)="approveRequisition()">
+          Approve
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Production Action Modal -->
+  <div class="modal" [class.active]="showProductionActionModal">
+    <div class="backdrop" (click)="closeProductionActionModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>{{ productionActionType === 'confirmed' ? 'Confirm' : 'Remove' }} Requisition</h3>
+        <button class="close" (click)="closeProductionActionModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">
+          {{ productionActionType === 'confirmed' ? 'Confirm' : 'Remove' }} requisition <strong>{{ selectedRequisition?.reqNumber }}</strong>
+        </p>
+        
+        <div class="field">
+          <label>Notes (optional)</label>
+          <textarea 
+            [(ngModel)]="productionActionNotes"
+            rows="3"
+            [placeholder]="productionActionType === 'confirmed' ? 'Add any confirmation notes...' : 'Add reason for removal...'"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeProductionActionModal()">Cancel</button>
+        <button class="btn" [class.btn-success]="productionActionType === 'confirmed'" [class.btn-danger]="productionActionType === 'removed'" (click)="confirmProductionAction()">
+          {{ productionActionType === 'confirmed' ? 'Confirm' : 'Remove' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Missing Materials Notes Modal (Procurement) -->
+  <div class="modal" [class.active]="showMissingNotesModal">
+    <div class="backdrop" (click)="closeMissingNotesModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>Add Notes for Missing Materials</h3>
+        <button class="close" (click)="closeMissingNotesModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle">
+          Requisition <strong>{{ selectedRequisition?.reqNumber || selectedRequisition?.id }}</strong> - Note which materials are missing or not delivered
+        </p>
+        <div class="field">
+          <label>Notes for missing materials *</label>
+          <textarea 
+            [(ngModel)]="missingMaterialsNotes"
+            rows="4"
+            placeholder="List the materials that are missing, ODK, or not yet received..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeMissingNotesModal()">Cancel</button>
+        <button class="btn btn-primary" (click)="saveMissingNotes()" [disabled]="!missingMaterialsNotes || !missingMaterialsNotes.trim()">
+          Save & Mark Partially Delivered
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table Modal -->
+  <div class="modal" [class.active]="showTableModal">
+    <div class="backdrop" (click)="closeTableModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>{{ editingTable ? 'Edit Table' : 'Create New Table' }}</h3>
+        <button class="close" (click)="closeTableModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Table Name</label>
+          <ng-container *ngIf="!editingTable; else editTableNameField">
+            <input
+              type="text"
+              [value]="newTableName"
+              readonly
+              class="readonly"
+              aria-label="Generated table name">
+            <p class="note small">Table name is generated automatically.</p>
+          </ng-container>
+          <ng-template #editTableNameField>
+            <input
+              type="text"
+              [(ngModel)]="editTableName"
+              placeholder="Enter table name"
+              (keyup.enter)="updateTableName()">
+          </ng-template>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeTableModal()">Cancel</button>
+        <button *ngIf="!editingTable" class="btn btn-primary" (click)="createTable()">
+          Create
+        </button>
+        <button *ngIf="editingTable" class="btn btn-primary" (click)="updateTableName()">
+          Update
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Master Data Viewer Modal -->
+  <div class="modal" [class.active]="showMasterDataModal">
+    <div class="backdrop" (click)="closeMasterDataModal()"></div>
+    <div class="modal-container modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>Master Data</h3>
+          <p class="modal-subtitle-inline">{{ groupedMasterDataArray.length }} unique SKUs • {{ masterDataRows.length }} total materials</p>
+        </div>
+        <button class="close" (click)="closeMasterDataModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="master-data-toolbar">
+          <div class="search-field">
+            <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              type="text"
+              placeholder="Search SKU, category, material, supplier..."
+              [(ngModel)]="masterDataSearchQuery"
+              (input)="applyMasterDataFilter()">
+            <button *ngIf="masterDataSearchQuery" class="search-clear" (click)="masterDataSearchQuery = ''; applyMasterDataFilter()">✕</button>
+          </div>
+          <span class="master-data-count">{{ filteredGroupedMasterData.length }} SKUs</span>
+        </div>
+
+        <div *ngIf="loadingMasterDataView" class="loading-state">
+          <div class="spinner-small"></div>
+          <span>Loading master data...</span>
+        </div>
+
+        <!-- Collapsible Grouped Master Data View -->
+        <div *ngIf="!loadingMasterDataView && filteredGroupedMasterData.length" class="master-data-grouped">
+          <div class="master-data-group" *ngFor="let group of filteredGroupedMasterData">
+            <div class="group-header" (click)="toggleSkuExpand(group.skuKey)">
+              <button class="expand-toggle">
+                <svg [class.rotated]="expandedSkus[group.skuKey]" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </button>
+              <div class="group-info">
+                <div class="sku-header">
+                  <strong>{{ group.sku.code }}</strong>
+                  <span class="sku-name">{{ group.sku.name }}</span>
+                </div>
+                <span class="material-badge">{{ group.materialCount }} material{{ group.materialCount !== 1 ? 's' : '' }}</span>
+              </div>
+            </div>
+
+            <!-- Expanded Materials -->
+            <div class="group-content" *ngIf="expandedSkus[group.skuKey]">
+              <table class="materials-nested-table">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Raw Material</th>
+                    <th>Qty/Batch</th>
+                    <th>Batch Unit</th>
+                    <th>Type</th>
+                    <th>Supplier</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let mat of group.materials" class="material-row">
+                    <td>{{ mat.category || '—' }}</td>
+                    <td><strong>{{ mat.raw_material || '—' }}</strong></td>
+                    <td class="number">{{ mat.qty_per_batch ?? '—' }}</td>
+                    <td>{{ mat.batch_unit || '—' }}</td>
+                    <td><span class="badge" [class.badge-material]="mat.type">{{ mat.type || 'N/A' }}</span></td>
+                    <td>{{ mat.supplier || '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div *ngIf="!loadingMasterDataView && !filteredGroupedMasterData.length" class="empty-materials">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          <p>
+            <ng-container *ngIf="masterDataRows.length === 0">
+              No master data uploaded yet.
+            </ng-container>
+            <ng-container *ngIf="masterDataRows.length > 0">
+              No SKUs match your search.
+            </ng-container>
+          </p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeMasterDataModal()">Close</button>
+        <button class="btn btn-primary" (click)="exportMasterDataToXlsx()" [disabled]="!masterDataRows.length">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+            <polyline points="8 12 12 16 16 12"/>
+            <line x1="12" y1="2" x2="12" y2="16"/>
+          </svg>
+          Export XLSX
+        </button>
+      </div>
     </div>
   </div>
 </div>
