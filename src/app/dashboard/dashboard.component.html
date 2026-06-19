@@ -291,13 +291,18 @@
         <table class="users-table">
           <thead>
             <tr>
+              <th>Name</th>
               <th>Email</th>
               <th>User Type / Role</th>
               <th>Created At</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr *ngFor="let user of users">
+              <td class="user-name">
+                <span class="name-text">{{ user.name || 'N/A' }}</span>
+              </td>
               <td class="user-email">
                 <span class="email-text">{{ user.email }}</span>
               </td>
@@ -311,6 +316,13 @@
               </td>
               <td class="user-created">
                 {{ user.createdAt ? (user.createdAt.toDate() | date:'medium') : 'N/A' }}
+              </td>
+              <td class="user-actions">
+                <button type="button" class="btn danger btn-sm"
+                        (click)="deleteUser(user)"
+                        [disabled]="user.uid === currentUser?.uid">
+                  Delete
+                </button>
               </td>
             </tr>
           </tbody>
@@ -341,6 +353,14 @@
     </div>
 
     <form [formGroup]="createUserForm" (ngSubmit)="createUser()">
+      <div class="form-group">
+        <label>Name</label>
+        <input type="text" formControlName="name" placeholder="Full name" />
+        <div class="field-error" *ngIf="createUserForm.get('name')?.invalid && createUserForm.get('name')?.touched">
+          <small *ngIf="createUserForm.get('name')?.errors?.['required']">Name is required</small>
+        </div>
+      </div>
+
       <div class="form-group">
         <label>Email</label>
         <input type="email" formControlName="email" placeholder="user@example.com" />
