@@ -246,6 +246,7 @@ export class Page3Component implements OnInit {
 
   userRole: string = '';
   userId: string = '';
+  userName: string = '';
 
   tableNameMap: { [tableId: string]: string } = {};
 
@@ -280,6 +281,7 @@ export class Page3Component implements OnInit {
 
     if (user) {
       this.userId = user.uid;
+      this.userName = user.email || '';
       this.pendingRouteTableId = this.route.snapshot.queryParamMap.get('tableId');
       await this.loadUserRole();
       await this.loadCategories();
@@ -340,6 +342,7 @@ export class Page3Component implements OnInit {
       if (userDoc.exists()) {
         const data = userDoc.data() as any;
         this.userRole = data['role'] || 'user';
+        this.userName = data['name'] || this.userName;
       } else {
         this.userRole = 'user';
       }
@@ -1030,9 +1033,21 @@ export class Page3Component implements OnInit {
     return `${month}/${day}/${year}`;
   }
 
+  private getRequisitionUserLabel(): string {
+    const name = (this.userName || '').trim();
+    if (!name) {
+      return '';
+    }
+    const atIndex = name.indexOf('@');
+    return atIndex > 0 ? name.slice(0, atIndex) : name;
+  }
+
   private getNextRequisitionTableName(): string {
     const dateText = this.formatTableDate(new Date());
-    const prefix = `Requisition Slip ${dateText}`;
+    const userLabel = this.getRequisitionUserLabel();
+    const prefix = userLabel
+      ? `Requisition Slip ${dateText} - ${userLabel}`
+      : `Requisition Slip ${dateText}`;
     const escapedPrefix = this.escapeTableNameRegExp(prefix);
     const regex = new RegExp(`^${escapedPrefix}(?: \((\d+)\))?$`);
 
