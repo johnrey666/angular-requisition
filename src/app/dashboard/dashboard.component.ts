@@ -8,7 +8,7 @@ import { AuthService } from '../core/services/auth.service';
 import { UserService } from '../core/services/user.service';
 import { NotificationService, Notification } from '../core/services/notification.service';
 import { Observable, Subscription } from 'rxjs';
-import { Firestore, collection, getDocs, doc, setDoc, query, orderBy, getDoc as getFirestoreDoc, serverTimestamp } from '@angular/fire/firestore';
+import { Firestore, collection, getDocs, doc, setDoc, deleteDoc, query, orderBy, getDoc as getFirestoreDoc, serverTimestamp } from '@angular/fire/firestore';
 import { User } from '@angular/fire/auth';
 
 interface NavItem {
@@ -21,6 +21,7 @@ interface NavItem {
 interface UserData {
   uid?: string;
   email: string;
+  name?: string;
   role: string;
   createdAt?: any;
   updatedAt?: any;
@@ -79,7 +80,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
   private isCreatingUser = false;
 
   private authSubscription?: Subscription;
-  private currentUser: User | null = null;
+  currentUser: User | null = null;
 
   constructor(
     public themeService: ThemeService,
@@ -93,6 +94,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.user$ = this.authService.getCurrentUserObservable();
     
     this.createUserForm = this.fb.nonNullable.group({
+      name: ['', [Validators.required]],
       email: ['', [Validators.required, Validators.email]],
       password: ['', [Validators.required, Validators.minLength(6)]],
       role: ['store', Validators.required],
@@ -334,11 +336,44 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.userListError = null;
   }
 
+  async deleteUser(user: UserData) {
+    if (!this.isAdmin) {
+      this.userListError = 'You do not have permission to delete users';
+      return;
+    }
+
+    if (this.currentUser && user.uid === this.currentUser.uid) {
+      this.userListError = 'You cannot delete your own account';
+      return;
+    }
+
+    if (!user.uid) {
+      return;
+    }
+
+    const label = user.name || user.email;
+    if (!confirm(`Are you sure you want to delete user ${label}? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      await deleteDoc(doc(this.firestore, 'users', user.uid));
+      this.users = this.users.filter(u => u.uid !== user.uid);
+    } catch (err: any) {
+      console.error('Error deleting user:', err);
+      if (err.code === 'permission-denied') {
+        this.userListError = 'You do not have permission to delete users.';
+      } else {
+        this.userListError = err?.message || 'Failed to delete user. Please try again.';
+      }
+    }
+  }
+
   openCreateUserFromList() {
     this.showCreateUserModal = true;
     this.createError = null;
     this.createSuccess = null;
-    this.createUserForm.reset({ email: '', password: '', role: 'store' });
+    this.createUserForm.reset({ name: '', email: '', password: '', role: 'store' });
   }
 
   openCreateUserModal() {
@@ -346,7 +381,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.showSettings = false;
     this.createError = null;
     this.createSuccess = null;
-    this.createUserForm.reset({ email: '', password: '', role: 'store' });
+    this.createUserForm.reset({ name: '', email: '', password: '', role: 'store' });
   }
 
   closeCreateUserModal() {
@@ -376,6 +411,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
         loadedUsers.push({
           uid: doc.id,
           email: data['email'] || '',
+          name: data['name'] || '',
           role: data['role'] || 'user',
           createdAt: data['createdAt'] || null,
           updatedAt: data['updatedAt'] || null
@@ -427,7 +463,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.createError = null;
     this.createSuccess = null;
 
-    const { email, password, role } = this.createUserForm.getRawValue();
+    const { name, email, password, role } = this.createUserForm.getRawValue();
 
     try {
       if (!this.isAdmin) {
@@ -442,10 +478,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
       console.log('Creating new user with email:', email, 'role:', role);
       
-      await this.userService.createUserAccount(email, password, role);
+      await this.userService.createUserAccount(email, password, role, name);
       
       this.createSuccess = 'User created successfully!';
-      this.createUserForm.reset({ email: '', password: '', role: 'store' });
+      this.createUserForm.reset({ name: '', email: '', password: '', role: 'store' });
       
       await this.loadUserRole(adminUid);
       

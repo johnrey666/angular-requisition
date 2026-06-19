@@ -622,6 +622,23 @@
   filter: brightness(0.9);
 }
 
+.btn.danger {
+  background: hsl(var(--destructive));
+  color: hsl(var(--primary-foreground));
+  border-color: transparent;
+}
+
+.btn.danger:hover {
+  background: hsl(var(--destructive));
+  filter: brightness(0.9);
+}
+
+.btn.btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  min-width: auto;
+}
+
 .btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

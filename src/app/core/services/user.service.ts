@@ -15,7 +15,7 @@ export class UserService {
    * and then add a user document to Firestore with a `role` field.
    * After creating, it signs back in as the admin.
    */
-  async createUserAccount(email: string, password: string, role: string = 'user') {
+  async createUserAccount(email: string, password: string, role: string = 'user', name: string = '') {
     // Get current user before creating new one
     const currentUser = this.auth.currentUser;
     if (!currentUser) {
@@ -44,6 +44,7 @@ export class UserService {
       const userRef = doc(this.firestore, 'users', uid);
       await setDoc(userRef, {
         email: email,
+        name: name,
         role: role,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
