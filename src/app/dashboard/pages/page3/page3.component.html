@@ -1,4 +1,10 @@
 <div class="page-content">
+  <input
+    type="file"
+    id="poFileInput"
+    accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
+    (change)="onPoFileSelected($event)"
+    hidden>
   <!-- Role Badge -->
   <div class="role-header" *ngIf="userRole">
     <span class="role-badge" [class]="'role-' + userRole">
@@ -157,50 +163,6 @@
               <p>No tables yet</p>
             </div>
           </div>
-        </div>
-      </div>
-      
-      <!-- P.O Upload Section for Procurement - File Upload -->
-      <div *ngIf="userRole === 'procurement' && selectedTable" class="po-upload-section">
-        <div *ngIf="!selectedTable.po_file_url" class="po-file-input">
-          <input 
-            type="file" 
-            id="poFileInput"
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png"
-            (change)="onPoFileSelected($event)"
-            style="display: none;">
-          <div class="po-input-group">
-            <button class="btn btn-outline btn-sm" (click)="triggerPoFileInput()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
-                <polyline points="8 12 12 16 16 12"/>
-                <line x1="12" y1="2" x2="12" y2="16"/>
-              </svg>
-              Choose File
-            </button>
-            <span class="po-file-name">{{ poFileName || 'No file chosen' }}</span>
-            <button class="btn btn-primary btn-sm" (click)="uploadPoFile()" [disabled]="!poFile || isUploadingPo">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path d="M20 6L9 17l-5-5"/>
-              </svg>
-              {{ isUploadingPo ? 'Uploading...' : 'Upload & Save' }}
-            </button>
-          </div>
-        </div>
-        <div *ngIf="selectedTable.po_file_url" class="po-file-display">
-          <a [href]="selectedTable.po_file_url" target="_blank" class="po-file-link">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14,2 14,8 20,8"/>
-            </svg>
-            {{ selectedTable.po_file_name || 'View P.O Document' }}
-          </a>
-          <button class="btn-icon btn-sm" (click)="removePoLink()" title="Remove P.O document">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
         </div>
       </div>
       
@@ -473,6 +435,30 @@
               Schedule, mark delivered, or add notes for missing materials
             </span>
           </div>
+        </div>
+
+        <div class="po-upload-inline" *ngIf="selectedTable">
+          <ng-container *ngIf="!hasPoDocument(selectedTable)">
+            <button class="btn btn-outline btn-sm" type="button" (click)="triggerPoFileInput(selectedTable)">
+              Choose File
+            </button>
+            <span class="po-file-name">{{ poUploadTargetTable?.id === selectedTable.id && poFileName ? poFileName : 'No file chosen' }}</span>
+            <button
+              class="btn btn-primary btn-sm po-upload-btn"
+              type="button"
+              (click)="uploadPoFile(selectedTable)"
+              [disabled]="!poFile || poUploadTargetTable?.id !== selectedTable.id || isUploadingPo">
+              {{ isUploadingPo ? 'Saving...' : 'Upload P.O' }}
+            </button>
+          </ng-container>
+          <ng-container *ngIf="hasPoDocument(selectedTable)">
+            <a [href]="getPoViewUrl(selectedTable)" target="_blank" rel="noopener" class="po-file-link">
+              {{ selectedTable.po_file_name || 'View P.O' }}
+            </a>
+            <button class="btn btn-outline btn-sm" type="button" (click)="removePoLink(selectedTable)" title="Remove P.O">
+              Remove
+            </button>
+          </ng-container>
         </div>
       </div>
     </div>
@@ -784,9 +770,27 @@
             <td>{{ summary.uniqueMaterialsCount }}</td>
             <td>{{ summary.totalRequestedQuantity | number:'1.2-2' }}</td>
             <td>
-              <button class="btn btn-sm btn-outline" (click)="openProcurementOriginalItemsModal(summary)">
-                View Exact Requisition Items
-              </button>
+              <div class="procurement-row-actions">
+                <button class="btn btn-sm btn-outline" (click)="openProcurementOriginalItemsModal(summary)">
+                  View Exact Requisition Items
+                </button>
+                <ng-container *ngIf="getTableForSummary(summary) as table">
+                  <div class="po-upload-inline po-upload-row" *ngIf="!hasPoDocument(table)">
+                    <button class="btn btn-outline btn-sm" type="button" (click)="triggerPoFileInput(table)">Choose File</button>
+                    <button
+                      class="btn btn-primary btn-sm po-upload-btn"
+                      type="button"
+                      (click)="uploadPoFile(table)"
+                      [disabled]="!poFile || poUploadTargetTable?.id !== table.id || isUploadingPo">
+                      {{ isUploadingPo && poUploadTargetTable?.id === table.id ? 'Saving...' : 'Upload P.O' }}
+                    </button>
+                  </div>
+                  <div class="po-upload-inline po-upload-row" *ngIf="hasPoDocument(table)">
+                    <a [href]="getPoViewUrl(table)" target="_blank" rel="noopener" class="po-file-link">{{ table.po_file_name || 'View P.O' }}</a>
+                    <button class="btn btn-outline btn-sm" type="button" (click)="removePoLink(table)">Remove</button>
+                  </div>
+                </ng-container>
+              </div>
             </td>
           </tr>
           <tr class="procurement-detail-row">
@@ -908,10 +912,13 @@
                           <th>Unit</th>
                           <th>Type</th>
                           <th>Total Required</th>
+                          <th>Production</th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr *ngFor="let mat of req.materials">
+                        <tr *ngFor="let mat of req.materials"
+                            [class.material-production-confirmed]="mat.production_action === 'confirmed'"
+                            [class.material-production-removed]="mat.production_action === 'removed'">
                           <td>{{ mat.raw_material || '—' }}</td>
                           <td class="number">{{ (mat.quantity_per_batch ?? 0) | number:'1.2-2' }}</td>
                           <td>{{ mat.unit || '—' }}</td>
@@ -919,9 +926,23 @@
                           <td class="number">
                             {{ calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch) | number:'1.2-2' }}
                           </td>
+                          <td class="material-action-cell">
+                            <span *ngIf="mat.production_action === 'confirmed'" class="production-action-badge confirmed" title="Accepted by production">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20 6L9 17l-5-5"/>
+                              </svg>
+                            </span>
+                            <span *ngIf="mat.production_action === 'removed'" class="production-action-badge removed" title="Rejected by production">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                              </svg>
+                            </span>
+                            <span *ngIf="!mat.production_action" class="production-action-badge pending" title="No production action yet">—</span>
+                          </td>
                         </tr>
                         <tr *ngIf="!req.materials?.length">
-                          <td colspan="5" class="empty">
+                          <td colspan="6" class="empty">
                             <div>
                               <p>No raw materials available for this requisition.</p>
                             </div>

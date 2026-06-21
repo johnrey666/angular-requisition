@@ -571,6 +571,59 @@ h2 {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
+}
+
+.po-upload-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.po-upload-inline.po-upload-row {
+  margin-top: 8px;
+}
+
+.procurement-row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.production-action-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.production-action-badge.confirmed {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.production-action-badge.removed {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.production-action-badge.pending {
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.material-production-removed td {
+  opacity: 0.75;
+  text-decoration: line-through;
+}
+
+.material-production-confirmed td {
+  background: #f0fdf4;
 }
 
 .stats {

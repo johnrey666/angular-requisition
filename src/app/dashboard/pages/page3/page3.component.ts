@@ -11,7 +11,6 @@ import {
   Firestore, doc, collection, query, where, getDocs,
   writeBatch, getDoc, updateDoc, orderBy
 } from '@angular/fire/firestore';
-import { Storage, ref, uploadBytes, getDownloadURL, deleteObject } from '@angular/fire/storage';
 import { Router, ActivatedRoute } from '@angular/router';
 import * as XLSX from 'xlsx';
 
@@ -72,6 +71,8 @@ interface Table {
   submitted?: boolean;
   submitted_at?: string;
   po_file_url?: string;
+  po_file_data?: string;
+  po_file_mime?: string;
   po_file_name?: string;
   po_file_size?: number;
   po_file_type?: string;
@@ -197,7 +198,9 @@ export class Page3Component implements OnInit {
   // P.O File Upload Properties
   poFile: File | null = null;
   poFileName: string = '';
+  poUploadTargetTable: Table | null = null;
   isUploadingPo: boolean = false;
+  private readonly maxPoFileBytes = 500 * 1024;
 
   formData: any = {
     type: '',
@@ -258,7 +261,6 @@ export class Page3Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private storage: Storage,
     private router: Router,
     private route: ActivatedRoute,
     private injector: Injector,
@@ -432,6 +434,8 @@ export class Page3Component implements OnInit {
           created_at: data['created_at'],
           updated_at: data['updated_at'],
           po_file_url: data['po_file_url'],
+          po_file_data: data['po_file_data'],
+          po_file_mime: data['po_file_mime'],
           po_file_name: data['po_file_name'],
           po_file_size: data['po_file_size'],
           po_file_type: data['po_file_type'],
@@ -883,6 +887,8 @@ export class Page3Component implements OnInit {
         created_at: data['created_at'],
         updated_at: data['updated_at'],
         po_file_url: data['po_file_url'],
+        po_file_data: data['po_file_data'],
+        po_file_mime: data['po_file_mime'],
         po_file_name: data['po_file_name'],
         po_file_size: data['po_file_size'],
         po_file_type: data['po_file_type'],
@@ -1014,6 +1020,8 @@ export class Page3Component implements OnInit {
             submitted: data['submitted'] || false,
             submitted_at: data['submitted_at'],
             po_file_url: data['po_file_url'],
+            po_file_data: data['po_file_data'],
+            po_file_mime: data['po_file_mime'],
             po_file_name: data['po_file_name']
           };
         }
@@ -1988,6 +1996,11 @@ export class Page3Component implements OnInit {
     for (const req of this.procurementReviewed) {
       if (!req.table_id) continue;
 
+      // Skip requisitions fully removed by production
+      if (req.status === 'Removed' || req.production_action === 'removed') {
+        continue;
+      }
+
       const tableName = req.table_name || this.tableNameMap[req.table_id] || 'Unknown Table';
       if (!req.materials || req.materials.length === 0) {
         const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
@@ -2008,8 +2021,12 @@ export class Page3Component implements OnInit {
       }
 
       for (const mat of req.materials || []) {
+        // Exclude materials rejected (X) by production from procurement requested list
+        if (mat.production_action === 'removed') {
+          continue;
+        }
+
         const qty = this.calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch);
-        const key = `${mat.raw_material}||${mat.unit}||${mat.type}`.toLowerCase();
         let existing = summary.materials.find(item => item.raw_material.toLowerCase() === mat.raw_material.toLowerCase() && item.unit === mat.unit && item.type === mat.type);
 
         if (!existing) {
@@ -2059,6 +2076,30 @@ export class Page3Component implements OnInit {
 
   getProcurementOriginalRequisitions(tableId: string) {
     return this.procurementReviewed.filter(req => req.table_id === tableId);
+  }
+
+  getTableForSummary(summary: ProcurementTableSummary): Table | undefined {
+    return this.tables.find(t => t.id === summary.table_id);
+  }
+
+  hasPoDocument(table: Table | null | undefined): boolean {
+    if (!table) return false;
+    return !!(table.po_file_data || table.po_file_url);
+  }
+
+  getPoViewUrl(table: Table | null | undefined): string {
+    if (!table) return '';
+    if (table.po_file_data) {
+      const mime = table.po_file_mime || table.po_file_type || 'application/octet-stream';
+      return `data:${mime};base64,${table.po_file_data}`;
+    }
+    return table.po_file_url || '';
+  }
+
+  getProductionMaterialActionLabel(action?: 'confirmed' | 'removed'): string {
+    if (action === 'confirmed') return 'Accepted';
+    if (action === 'removed') return 'Rejected';
+    return 'Pending';
   }
 
   private getMaterialsFromLoadedData(skuCode: string, skuName: string): Material[] {
@@ -2144,26 +2185,26 @@ export class Page3Component implements OnInit {
     this.selectedSkuCode = selectedItem ? selectedItem.sku_code : '';
   }
 
-  // P.O File Upload Methods
-  triggerPoFileInput() {
+  // P.O File Upload Methods (stored in Firestore as base64, no Firebase Storage)
+  triggerPoFileInput(table?: Table | null) {
+    this.poUploadTargetTable = table || this.selectedTable;
     const fileInput = document.getElementById('poFileInput') as HTMLInputElement;
     if (fileInput) {
+      fileInput.value = '';
       fileInput.click();
     }
   }
 
-  onPoFileSelected(event: any) {
-    const file = event.target.files?.[0];
+  onPoFileSelected(event: Event) {
+    const file = (event.target as HTMLInputElement).files?.[0];
     if (file) {
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        this.showToast('File size must be less than 5MB', 'error');
+      if (file.size > this.maxPoFileBytes) {
+        this.showToast(`File must be less than ${Math.round(this.maxPoFileBytes / 1024)}KB (Firestore limit)`, 'error');
         this.poFile = null;
         this.poFileName = '';
         return;
       }
-      
-      // Validate file type
+
       const allowedTypes = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png'];
       const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
       if (!allowedTypes.includes(fileExt)) {
@@ -2172,7 +2213,7 @@ export class Page3Component implements OnInit {
         this.poFileName = '';
         return;
       }
-      
+
       this.poFile = file;
       this.poFileName = file.name;
     } else {
@@ -2181,153 +2222,138 @@ export class Page3Component implements OnInit {
     }
   }
 
- async uploadPoFile() {
-  if (!this.selectedTable) {
-    this.showToast('Please select a table first', 'error');
-    return;
+  private readFileAsBase64(file: File): Promise<{ base64: string; mime: string }> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const match = result.match(/^data:([^;]+);base64,(.+)$/);
+        if (match) {
+          resolve({ mime: match[1], base64: match[2] });
+        } else {
+          reject(new Error('Failed to read file'));
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
   }
 
-  if (!this.poFile) {
-    this.showToast('Please select a file first', 'error');
-    return;
-  }
+  async uploadPoFile(table?: Table | null) {
+    const targetTable = table || this.poUploadTargetTable || this.selectedTable;
+    if (!targetTable) {
+      this.showToast('Please select a table first', 'error');
+      return;
+    }
 
-  try {
-    this.isUploadingPo = true;
-    this.showToast('Uploading file...', 'info');
+    if (!this.poFile) {
+      this.showToast('Please choose a P.O file first', 'error');
+      return;
+    }
 
-    // Create a unique filename
-    const timestamp = new Date().getTime();
-    const fileExt = this.poFile.name.split('.').pop();
-    const fileName = `po_${this.selectedTable.id}_${timestamp}.${fileExt}`;
-    
-    // Create a reference to Firebase Storage
-    const storageRef = ref(this.storage, `po_documents/${fileName}`);
-    
-    // Upload the file - ensure we're passing the File object, not null
-    const uploadResult = await this.run(() => uploadBytes(storageRef, this.poFile as Blob));
-    
-    // Get the download URL
-    const downloadUrl = await this.run(() => getDownloadURL(uploadResult.ref));
-    
-    // Save the URL to Firestore
-    const tableRef = doc(this.firestore, 'tables', this.selectedTable.id);
-    await this.run(() => 
-      updateDoc(tableRef, {
-        po_file_url: downloadUrl,
-        po_file_name: this.poFile?.name || '',
-        po_file_size: this.poFile?.size || 0,
-        po_file_type: this.poFile?.type || '',
-        po_uploaded_at: new Date().toISOString(),
-        po_uploaded_by: this.userId,
-        updated_at: new Date().toISOString()
-      })
-    );
+    try {
+      this.isUploadingPo = true;
+      this.showToast('Saving P.O to Firestore...', 'info');
 
-    // Update local state
-    if (this.selectedTable) {
-      this.selectedTable.po_file_url = downloadUrl;
-      this.selectedTable.po_file_name = this.poFile?.name || '';
-      this.selectedTable.po_file_size = this.poFile?.size;
-      this.selectedTable.po_file_type = this.poFile?.type;
+      const { base64, mime } = await this.readFileAsBase64(this.poFile);
 
-      const tableIndex = this.tables.findIndex(t => t.id === this.selectedTable!.id);
+      const tableRef = doc(this.firestore, 'tables', targetTable.id);
+      await this.run(() =>
+        updateDoc(tableRef, {
+          po_file_data: base64,
+          po_file_mime: mime,
+          po_file_name: this.poFile?.name || '',
+          po_file_size: this.poFile?.size || 0,
+          po_file_type: mime,
+          po_file_url: null,
+          po_uploaded_at: new Date().toISOString(),
+          po_uploaded_by: this.userId,
+          updated_at: new Date().toISOString()
+        })
+      );
+
+      targetTable.po_file_data = base64;
+      targetTable.po_file_mime = mime;
+      targetTable.po_file_name = this.poFile?.name || '';
+      targetTable.po_file_size = this.poFile?.size;
+      targetTable.po_file_type = mime;
+      targetTable.po_file_url = undefined;
+
+      const tableIndex = this.tables.findIndex(t => t.id === targetTable.id);
       if (tableIndex !== -1) {
-        this.tables[tableIndex].po_file_url = downloadUrl;
-        this.tables[tableIndex].po_file_name = this.poFile?.name || '';
-        this.tables[tableIndex].po_file_size = this.poFile?.size;
-        this.tables[tableIndex].po_file_type = this.poFile?.type;
+        this.tables[tableIndex] = { ...this.tables[tableIndex], ...targetTable };
       }
-    }
 
-    // Reset the file input
-    this.poFile = null;
-    this.poFileName = '';
-    const fileInput = document.getElementById('poFileInput') as HTMLInputElement;
-    if (fileInput) {
-      fileInput.value = '';
-    }
-    
-    this.showToast('P.O document uploaded and saved successfully', 'success');
+      if (this.selectedTable?.id === targetTable.id) {
+        this.selectedTable = { ...this.selectedTable, ...targetTable };
+      }
 
-  } catch (err: any) {
-    console.error('Failed to upload P.O file:', err);
-    const errorMessage = err?.message || err?.code || 'Failed to upload file. Please try again.';
-    if (typeof errorMessage === 'string' && /cors|preflight|permission|auth|net::err_failed/i.test(errorMessage)) {
-      this.showToast('Upload failed due to Firebase Storage CORS or permission issue. Check your storage bucket settings and CORS configuration.', 'error');
-    } else {
-      this.showToast(errorMessage, 'error');
+      this.poFile = null;
+      this.poFileName = '';
+      this.poUploadTargetTable = null;
+      const fileInput = document.getElementById('poFileInput') as HTMLInputElement;
+      if (fileInput) {
+        fileInput.value = '';
+      }
+
+      this.showToast('P.O uploaded and saved successfully', 'success');
+    } catch (err: any) {
+      console.error('Failed to upload P.O file:', err);
+      this.showToast(err?.message || 'Failed to save P.O file. Please try again.', 'error');
+    } finally {
+      this.isUploadingPo = false;
     }
-  } finally {
-    this.isUploadingPo = false;
   }
-}
 
-async removePoLink() {
-  if (!this.selectedTable) return;
+  async removePoLink(table?: Table | null) {
+    const targetTable = table || this.selectedTable;
+    if (!targetTable) return;
 
-  if (!confirm('Remove this P.O document? This will also delete the file from storage.')) return;
+    if (!confirm('Remove this P.O document?')) return;
 
-  try {
-    this.isSubmitting = true;
-    this.showToast('Removing P.O document...', 'info');
+    try {
+      this.isSubmitting = true;
+      this.showToast('Removing P.O document...', 'info');
 
-    // If there's a URL, try to delete the file from storage
-    if (this.selectedTable.po_file_url) {
-      try {
-        // Extract the storage path from the URL
-        const urlParts = this.selectedTable.po_file_url.split('/');
-        const fileName = urlParts[urlParts.length - 1].split('?')[0];
-        const storagePath = `po_documents/${fileName}`;
-        const storageRef = ref(this.storage, storagePath);
-        
-        // Attempt to delete the file
-        await this.run(() => deleteObject(storageRef));
-      } catch (storageErr) {
-        console.warn('Could not delete file from storage:', storageErr);
-        // Continue even if storage deletion fails
-      }
-    }
+      const tableRef = doc(this.firestore, 'tables', targetTable.id);
+      await this.run(() =>
+        updateDoc(tableRef, {
+          po_file_data: null,
+          po_file_mime: null,
+          po_file_url: null,
+          po_file_name: null,
+          po_file_size: null,
+          po_file_type: null,
+          po_removed_at: new Date().toISOString(),
+          po_removed_by: this.userId,
+          updated_at: new Date().toISOString()
+        })
+      );
 
-    // Remove the URL from Firestore
-    const tableRef = doc(this.firestore, 'tables', this.selectedTable.id);
-    await this.run(() => 
-      updateDoc(tableRef, {
-        po_file_url: null,
-        po_file_name: null,
-        po_file_size: null,
-        po_file_type: null,
-        po_removed_at: new Date().toISOString(),
-        po_removed_by: this.userId,
-        updated_at: new Date().toISOString()
-      })
-    );
+      targetTable.po_file_data = undefined;
+      targetTable.po_file_mime = undefined;
+      targetTable.po_file_url = undefined;
+      targetTable.po_file_name = undefined;
+      targetTable.po_file_size = undefined;
+      targetTable.po_file_type = undefined;
 
-    // Update local state
-    if (this.selectedTable) {
-      this.selectedTable.po_file_url = undefined;
-      this.selectedTable.po_file_name = undefined;
-      this.selectedTable.po_file_size = undefined;
-      this.selectedTable.po_file_type = undefined;
-
-      const tableIndex = this.tables.findIndex(t => t.id === this.selectedTable!.id);
+      const tableIndex = this.tables.findIndex(t => t.id === targetTable.id);
       if (tableIndex !== -1) {
-        this.tables[tableIndex].po_file_url = undefined;
-        this.tables[tableIndex].po_file_name = undefined;
-        this.tables[tableIndex].po_file_size = undefined;
-        this.tables[tableIndex].po_file_type = undefined;
+        this.tables[tableIndex] = { ...this.tables[tableIndex], ...targetTable };
       }
+
+      if (this.selectedTable?.id === targetTable.id) {
+        this.selectedTable = { ...this.selectedTable, ...targetTable };
+      }
+
+      this.showToast('P.O document removed successfully', 'success');
+    } catch (err) {
+      console.error('Failed to remove P.O document:', err);
+      this.showToast('Failed to remove P.O document', 'error');
+    } finally {
+      this.isSubmitting = false;
     }
-
-    this.showToast('P.O document removed successfully', 'success');
-
-  } catch (err) {
-    console.error('Failed to remove P.O document:', err);
-    this.showToast('Failed to remove P.O document', 'error');
-  } finally {
-    this.isSubmitting = false;
   }
-}
 
 
 
