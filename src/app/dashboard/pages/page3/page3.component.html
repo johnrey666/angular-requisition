@@ -38,14 +38,12 @@
         Production Review - Review submitted tables
         <span *ngIf="selectedTable" class="table-filter-indicator">
           Table: {{ selectedTable.name }}
-          <button class="btn-link-small" (click)="showAllTables()">(show all)</button>
         </span>
       </span>
       <span class="subtitle" *ngIf="viewMode === 'for_delivery' && userRole === 'procurement'">
         Production Confirmed - Ready for scheduling/delivery
         <span *ngIf="selectedTable" class="table-filter-indicator">
           Filtered by: {{ selectedTable.name }}
-          <button class="btn-link-small" (click)="showAllTables()">(clear)</button>
         </span>
       </span>
       <span class="subtitle" *ngIf="viewMode === 'my_tables'">
@@ -53,16 +51,6 @@
       </span>
     </div>
     <div class="header-actions">
-      <!-- Show All Tables Button for Production/Procurement -->
-      <button *ngIf="(userRole === 'production' || userRole === 'procurement') && selectedTable" 
-              class="btn btn-outline btn-sm" 
-              (click)="showAllTables()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-          <path d="M4 6h16M4 12h16M4 18h16"/>
-        </svg>
-        Show All Tables
-      </button>
-
       <!-- Transfer Reviewed Table Button for Production -->
       <ng-container *ngIf="!selectedTable?.production_reviewed">
         <button *ngIf="canSubmitReviewedTable()" 
@@ -126,7 +114,7 @@
         </div>
       </div>
       
-      <!-- Tables Dropdown for Production/Procurement -->
+      <!-- Tables Dropdown for Production/Procurement (no show-all option) -->
       <div class="dropdown" [class.open]="showTableDropdown" *ngIf="userRole === 'production' || userRole === 'procurement'">
         <button class="btn btn-outline" (click)="toggleTableDropdown()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -134,17 +122,12 @@
             <line x1="3" y1="9" x2="21" y2="9"/>
             <line x1="9" y1="21" x2="9" y2="9"/>
           </svg>
-          {{ selectedTable ? selectedTable.name : 'All Tables' }}
+          {{ selectedTable ? selectedTable.name : 'Select Table' }}
         </button>
         
         <div class="dropdown-menu" *ngIf="showTableDropdown">
           <div class="dropdown-header">
-            <span>All Tables</span>
-            <button class="btn-icon" (click)="showAllTables()" title="Show All">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <path d="M4 6h16M4 12h16M4 18h16"/>
-              </svg>
-            </button>
+            <span>{{ userRole === 'production' ? 'Submitted Tables' : 'Confirmed Tables' }}</span>
           </div>
           
           <div class="dropdown-list">
@@ -156,6 +139,7 @@
               <span class="name">{{ table.name || 'Untitled' }}</span>
               <span class="count">{{ table.item_count || 0 }}</span>
               <span *ngIf="table.submitted" class="submitted-badge" title="Submitted">✓</span>
+              <span *ngIf="table.request_closed" class="closed-badge" title="Closed">Closed</span>
               <span class="submitted-by" *ngIf="table.user_email">by {{ table.user_email }}</span>
             </div>
             
@@ -217,67 +201,51 @@
         Create Your First Table
       </button>
     </div>
-  </div> 
+  </div>
 
-  <!-- No Data State for Production -->
-  <div class="empty-card" *ngIf="userRole === 'production' && filteredRequisitions.length === 0 && !isLoading">
+  <!-- No Table Selected State for Production/Procurement -->
+  <div class="empty-card" *ngIf="(userRole === 'production' || userRole === 'procurement') && !selectedTable && !isLoading">
     <div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
         <line x1="3" y1="9" x2="21" y2="9"/>
         <line x1="9" y1="21" x2="9" y2="9"/>
       </svg>
-      <h3>
-        <ng-container *ngIf="selectedTable">
-          No Requisitions in "{{ selectedTable.name }}"
-        </ng-container>
-        <ng-container *ngIf="!selectedTable">
-          No Submissions Yet
-        </ng-container>
-      </h3>
-      <p>
-        <ng-container *ngIf="selectedTable">
-          This table has no requisitions in the current view.
-          <button class="btn-link" (click)="showAllTables()">Show all tables</button>
-        </ng-container>
-        <ng-container *ngIf="!selectedTable">
-          There are no submitted requisitions to review at this time.
-        </ng-container>
-      </p>
+      <h3>Select a Table</h3>
+      <p>Choose a table from the dropdown above to view its requisitions.</p>
     </div>
   </div>
-  <!-- No Data State for Procurement -->
-  <div class="empty-card" *ngIf="userRole === 'procurement' && filteredRequisitions.length === 0 && !isLoading">
+
+  <!-- No Data State for Production (table selected but empty) -->
+  <div class="empty-card" *ngIf="userRole === 'production' && selectedTable && filteredRequisitions.length === 0 && !isLoading">
     <div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
         <line x1="3" y1="9" x2="21" y2="9"/>
         <line x1="9" y1="21" x2="9" y2="9"/>
       </svg>
-      <h3>
-        <ng-container *ngIf="selectedTable">
-          No Confirmed Requisitions in "{{ selectedTable.name }}"
-        </ng-container>
-        <ng-container *ngIf="!selectedTable">
-          No Confirmed Requisitions
-        </ng-container>
-      </h3>
-      <p>
-        <ng-container *ngIf="selectedTable">
-          This table has no production-confirmed requisitions.
-          <button class="btn-link" (click)="showAllTables()">Show all tables</button>
-        </ng-container>
-        <ng-container *ngIf="!selectedTable">
-          There are no production-confirmed requisitions ready for delivery.
-        </ng-container>
-      </p>
+      <h3>No Requisitions in "{{ selectedTable.name }}"</h3>
+      <p>This table has no requisitions in the current view.</p>
+    </div>
+  </div>
+
+  <!-- No Data State for Procurement (table selected but empty) -->
+  <div class="empty-card" *ngIf="userRole === 'procurement' && selectedTable && filteredRequisitions.length === 0 && !isLoading">
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      <h3>No Confirmed Requisitions in "{{ selectedTable.name }}"</h3>
+      <p>This table has no production-confirmed requisitions.</p>
     </div>
   </div>
 
   <!-- Main Content Container -->
   <div class="main-content" *ngIf="
-    userRole === 'production' ||
-    userRole === 'procurement' ||
+    (userRole === 'production' && selectedTable) ||
+    (userRole === 'procurement' && selectedTable) ||
     (selectedTable && viewMode === 'my_tables')
   ">
     <!-- Master Data Section -->
@@ -334,6 +302,13 @@
               </svg>
               Submitted {{ selectedTable.submitted_at | date:'short' }}
             </span>
+            <span class="stat closed-indicator" *ngIf="selectedTable.request_closed">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              Request Closed
+            </span>
           </div>
         </div>
         <div class="table-actions">
@@ -377,6 +352,13 @@
             <span class="stat" *ngIf="selectedTable.user_email">
               by {{ selectedTable.user_email }}
             </span>
+            <span class="stat closed-indicator" *ngIf="selectedTable.request_closed">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              Request Closed by Procurement
+            </span>
           </div>
         </div>
         <div class="table-actions" *ngIf="canSubmitReviewedTable()">
@@ -391,26 +373,17 @@
     </div>
 
     <!-- Store Submissions Header (Production) -->
-    <div class="table-info-card" *ngIf="viewMode === 'store_submissions' && userRole === 'production'">
+    <div class="table-info-card" *ngIf="viewMode === 'store_submissions' && userRole === 'production' && selectedTable">
       <div class="table-info-content">
         <div>
           <h4>{{ selectedProductionView === 'submissions' ? 'Submitted Requisitions' : 'Reviewed Requisitions' }}</h4>
           <div class="stats">
+            <span class="stat">{{ filteredRequisitions.length }} items</span>
             <span class="stat">
-              {{ filteredRequisitions.length }} items
-            </span>
-            <span class="stat" *ngIf="selectedTable">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
               </svg>
               Table: {{ selectedTable.name }}
-              <button class="btn-link-small" (click)="showAllTables()">(clear)</button>
-            </span>
-            <span class="stat" *ngIf="!selectedTable">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                <rect x="3" y="3" width="18" height="18" rx="2"/>
-              </svg>
-              Showing all tables
             </span>
           </div>
         </div>
@@ -418,47 +391,72 @@
     </div>
 
     <!-- For Delivery Header (Procurement) -->
-    <div class="table-info-card" *ngIf="viewMode === 'for_delivery' && userRole === 'procurement'">
+    <div class="table-info-card" *ngIf="viewMode === 'for_delivery' && userRole === 'procurement' && selectedTable">
       <div class="table-info-content">
         <div>
           <h4>Production Confirmed - Pending Action</h4>
           <div class="stats">
             <span class="stat">{{ filteredRequisitions.length }} items</span>
-            <span class="stat" *ngIf="selectedTable">
+            <span class="stat">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
               </svg>
               Table: {{ selectedTable.name }}
-              <button class="btn-link-small" (click)="showAllTables()">(clear)</button>
             </span>
-            <span class="stat" *ngIf="!selectedTable">
-              Schedule, mark delivered, or add notes for missing materials
+            <span class="stat closed-indicator" *ngIf="selectedTable.request_closed">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              Request Closed
             </span>
           </div>
         </div>
 
-        <div class="po-upload-inline" *ngIf="selectedTable">
-          <ng-container *ngIf="!hasPoDocument(selectedTable)">
-            <button class="btn btn-outline btn-sm" type="button" (click)="triggerPoFileInput(selectedTable)">
-              Choose File
-            </button>
-            <span class="po-file-name">{{ poUploadTargetTable?.id === selectedTable.id && poFileName ? poFileName : 'No file chosen' }}</span>
-            <button
-              class="btn btn-primary btn-sm po-upload-btn"
-              type="button"
-              (click)="uploadPoFile(selectedTable)"
-              [disabled]="!poFile || poUploadTargetTable?.id !== selectedTable.id || isUploadingPo">
-              {{ isUploadingPo ? 'Saving...' : 'Upload P.O' }}
-            </button>
-          </ng-container>
-          <ng-container *ngIf="hasPoDocument(selectedTable)">
-            <a [href]="getPoViewUrl(selectedTable)" target="_blank" rel="noopener" class="po-file-link">
-              {{ selectedTable.po_file_name || 'View P.O' }}
-            </a>
-            <button class="btn btn-outline btn-sm" type="button" (click)="removePoLink(selectedTable)" title="Remove P.O">
-              Remove
-            </button>
-          </ng-container>
+        <div class="table-actions-group">
+          <!-- Close Request Button for Procurement -->
+          <button
+            *ngIf="!selectedTable.request_closed"
+            class="btn btn-sm btn-outline-danger"
+            (click)="closeRequest(selectedTable)"
+            title="Close this request once all materials are resolved">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Close Request
+          </button>
+          <span *ngIf="selectedTable.request_closed" class="badge badge-closed">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Request Closed
+          </span>
+
+          <div class="po-upload-inline" *ngIf="selectedTable">
+            <ng-container *ngIf="!hasPoDocument(selectedTable)">
+              <button class="btn btn-outline btn-sm" type="button" (click)="triggerPoFileInput(selectedTable)">
+                Choose File
+              </button>
+              <span class="po-file-name">{{ poUploadTargetTable?.id === selectedTable.id && poFileName ? poFileName : 'No file chosen' }}</span>
+              <button
+                class="btn btn-primary btn-sm po-upload-btn"
+                type="button"
+                (click)="uploadPoFile(selectedTable)"
+                [disabled]="!poFile || poUploadTargetTable?.id !== selectedTable.id || isUploadingPo">
+                {{ isUploadingPo ? 'Saving...' : 'Upload P.O' }}
+              </button>
+            </ng-container>
+            <ng-container *ngIf="hasPoDocument(selectedTable)">
+              <a [href]="getPoViewUrl(selectedTable)" target="_blank" rel="noopener" class="po-file-link">
+                {{ selectedTable.po_file_name || 'View P.O' }}
+              </a>
+              <button class="btn btn-outline btn-sm" type="button" (click)="removePoLink(selectedTable)" title="Remove P.O">
+                Remove
+              </button>
+            </ng-container>
+          </div>
         </div>
       </div>
     </div>
@@ -471,6 +469,20 @@
           <span class="count">{{ filteredRequisitions.length }} total</span>
         </div>
         <div class="filters">
+          <!-- View Raw Materials Button for user/store/production -->
+          <button
+            *ngIf="(userRole === 'user' || userRole === 'store' || userRole === 'production') && selectedTable"
+            class="btn btn-outline btn-sm raw-mats-btn"
+            (click)="openRawMaterialsModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+              <rect x="9" y="3" width="6" height="4" rx="1"/>
+              <line x1="9" y1="12" x2="15" y2="12"/>
+              <line x1="9" y1="16" x2="13" y2="16"/>
+            </svg>
+            View Raw Materials
+          </button>
+
           <div class="search">
             <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <circle cx="11" cy="11" r="8"/>
@@ -499,7 +511,7 @@
         </div>
       </div>
 
-      <!-- Table -->
+      <!-- Table for non-procurement -->
       <div class="table-wrapper" *ngIf="userRole !== 'procurement'">
         <div *ngIf="isLoading" class="loading">
           <div class="spinner"></div>
@@ -536,10 +548,7 @@
                   </div>
                 </td>
                 <td *ngIf="userRole === 'production' || userRole === 'procurement'">
-                  <span class="table-name" 
-                        [class.clickable]="userRole === 'production' || userRole === 'procurement'"
-                        [title]="'Click to filter by ' + (tableNameMap[req.table_id || ''] || req.table_name || 'this table')"
-                        (click)="req.table_id && filterByTable(req.table_id); $event.stopPropagation()">
+                  <span class="table-name">
                     {{ tableNameMap[req.table_id || ''] || req.table_name || '—' }}
                   </span>
                 </td>
@@ -748,7 +757,8 @@
       </div>
     </div>
 
-  <div class="table-wrapper" *ngIf="userRole === 'procurement'">
+  <!-- Procurement Table View -->
+  <div class="table-wrapper" *ngIf="userRole === 'procurement' && selectedTable">
     <div *ngIf="isLoading" class="loading">
       <div class="spinner"></div>
       <p>Loading...</p>
@@ -766,7 +776,10 @@
       <tbody>
         <ng-container *ngFor="let summary of procurementTableSummaries">
           <tr class="procurement-summary-row">
-            <td>{{ summary.table_name }}</td>
+            <td>
+              {{ summary.table_name }}
+              <span *ngIf="getTableForSummary(summary)?.request_closed" class="closed-badge-inline">Closed</span>
+            </td>
             <td>{{ summary.uniqueMaterialsCount }}</td>
             <td>{{ summary.totalRequestedQuantity | number:'1.2-2' }}</td>
             <td>
@@ -775,6 +788,26 @@
                   View Exact Requisition Items
                 </button>
                 <ng-container *ngIf="getTableForSummary(summary) as table">
+                  <!-- Close Request Button -->
+                  <button
+                    *ngIf="!table.request_closed"
+                    class="btn btn-sm btn-outline-danger"
+                    (click)="closeRequest(table)"
+                    title="Close this request once all materials are resolved">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    Close Request
+                  </button>
+                  <span *ngIf="table.request_closed" class="badge badge-closed">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                    Closed
+                  </span>
+
                   <div class="po-upload-inline po-upload-row" *ngIf="!hasPoDocument(table)">
                     <button class="btn btn-outline btn-sm" type="button" (click)="triggerPoFileInput(table)">Choose File</button>
                     <button
@@ -804,15 +837,33 @@
                       <th>Type</th>
                       <th>Total Requested Qty</th>
                       <th>Unit</th>
-                      <th>Action</th>
+                      <th>Production</th>
+                      <th>Procurement Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr *ngFor="let item of summary.materials" [class.material-approved]="item.procurement_action === 'approved'" [class.material-rejected]="item.procurement_action === 'rejected'">
+                    <tr *ngFor="let item of summary.materials"
+                        [class.material-approved]="item.procurement_action === 'approved'"
+                        [class.material-rejected]="item.procurement_action === 'rejected'">
                       <td>{{ item.raw_material }}</td>
                       <td>{{ item.type }}</td>
                       <td class="number">{{ item.totalQuantity | number:'1.2-2' }}</td>
                       <td>{{ item.unit }}</td>
+                      <td>
+                        <!-- Production status indicator in procurement view -->
+                        <span *ngIf="item.production_status === 'confirmed'" class="production-action-badge confirmed" title="Accepted by production">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <path d="M20 6L9 17l-5-5"/>
+                          </svg>
+                        </span>
+                        <span *ngIf="item.production_status === 'removed'" class="production-action-badge removed" title="Rejected by production">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                            <line x1="18" y1="6" x2="6" y2="18"/>
+                            <line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                        </span>
+                        <span *ngIf="!item.production_status" class="text-muted">—</span>
+                      </td>
                       <td class="material-action-cell">
                         <button class="btn btn-icon success" [class.active]="item.procurement_action === 'approved'" aria-label="Approve raw material" (click)="setProcurementMaterialAction(item, 'approved')">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -828,7 +879,7 @@
                       </td>
                     </tr>
                     <tr *ngIf="!summary.materials.length">
-                      <td colspan="5" class="empty">
+                      <td colspan="6" class="empty">
                         <div>
                           <p>No requested materials available.</p>
                         </div>
@@ -913,6 +964,7 @@
                           <th>Type</th>
                           <th>Total Required</th>
                           <th>Production</th>
+                          <th>Procurement</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -940,9 +992,23 @@
                             </span>
                             <span *ngIf="!mat.production_action" class="production-action-badge pending" title="No production action yet">—</span>
                           </td>
+                          <td class="material-action-cell">
+                            <span *ngIf="getMaterialProcurementAction(req, mat) === 'approved'" class="production-action-badge confirmed" title="Approved by procurement">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M20 6L9 17l-5-5"/>
+                              </svg>
+                            </span>
+                            <span *ngIf="getMaterialProcurementAction(req, mat) === 'rejected'" class="production-action-badge removed" title="Rejected by procurement">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="6" x2="6" y2="18"/>
+                                <line x1="6" y1="6" x2="18" y2="18"/>
+                              </svg>
+                            </span>
+                            <span *ngIf="!getMaterialProcurementAction(req, mat)" class="production-action-badge pending" title="No procurement action yet">—</span>
+                          </td>
                         </tr>
                         <tr *ngIf="!req.materials?.length">
-                          <td colspan="6" class="empty">
+                          <td colspan="7" class="empty">
                             <div>
                               <p>No raw materials available for this requisition.</p>
                             </div>
@@ -970,6 +1036,122 @@
     </div>
   </div>
 </div>
+
+  <!-- ============================================================ -->
+  <!-- Raw Materials Modal (User / Production view) -->
+  <!-- ============================================================ -->
+  <div class="modal" [class.active]="showRawMaterialsModal">
+    <div class="backdrop" (click)="closeRawMaterialsModal()"></div>
+    <div class="modal-container modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>Raw Materials Overview</h3>
+          <p class="modal-subtitle">
+            All raw materials for table: <strong>{{ selectedTable?.name }}</strong>
+            <span *ngIf="selectedTable?.request_closed" class="closed-badge-inline">Closed</span>
+          </p>
+        </div>
+        <button class="close" (click)="closeRawMaterialsModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div *ngIf="rawMaterialsModalLoading" class="loading-state">
+          <div class="spinner-small"></div>
+          <span>Loading raw materials...</span>
+        </div>
+
+        <div *ngIf="!rawMaterialsModalLoading">
+          <!-- Legend -->
+          <div class="raw-mats-legend">
+            <span class="legend-item">
+              <span class="legend-dot confirmed"></span> Accepted by Production
+            </span>
+            <span class="legend-item">
+              <span class="legend-dot removed"></span> Rejected by Production (crossed out)
+            </span>
+            <span class="legend-item">
+              <span class="legend-dot procurement-approved"></span> Approved by Procurement
+            </span>
+            <span class="legend-item">
+              <span class="legend-dot procurement-rejected"></span> Rejected by Procurement
+            </span>
+          </div>
+
+          <table class="materials-table raw-mats-overview-table">
+            <thead>
+              <tr>
+                <th>Raw Material</th>
+                <th>Type</th>
+                <th>Total Qty Required</th>
+                <th>Unit</th>
+                <th>Production</th>
+                <th>Procurement</th>
+              </tr>
+            </thead>
+            <tbody>
+              <ng-container *ngFor="let item of rawMaterialsModalData">
+                <tr
+                  [class.mat-row-confirmed]="item.production_status === 'confirmed'"
+                  [class.mat-row-removed]="item.production_status === 'removed'"
+                  [class.mat-row-proc-approved]="item.procurement_action === 'approved'"
+                  [class.mat-row-proc-rejected]="item.procurement_action === 'rejected'">
+                  <td>
+                    <span [class.strikethrough]="item.production_status === 'removed'">
+                      {{ item.raw_material }}
+                    </span>
+                  </td>
+                  <td>{{ item.type || '—' }}</td>
+                  <td class="number">
+                    <span [class.strikethrough]="item.production_status === 'removed'">
+                      {{ item.totalQuantity | number:'1.2-2' }}
+                    </span>
+                  </td>
+                  <td>{{ item.unit || '—' }}</td>
+                  <td class="material-action-cell">
+                    <span *ngIf="item.production_status === 'confirmed'" class="production-action-badge confirmed" title="Accepted by Production">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </span>
+                    <span *ngIf="item.production_status === 'removed'" class="production-action-badge removed" title="Rejected by Production">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </span>
+                    <span *ngIf="!item.production_status" class="production-action-badge pending">—</span>
+                  </td>
+                  <td class="material-action-cell">
+                    <span *ngIf="item.procurement_action === 'approved'" class="production-action-badge confirmed" title="Approved by Procurement">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M20 6L9 17l-5-5"/>
+                      </svg>
+                    </span>
+                    <span *ngIf="item.procurement_action === 'rejected'" class="production-action-badge removed" title="Rejected by Procurement">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                    </span>
+                    <span *ngIf="!item.procurement_action" class="production-action-badge pending">—</span>
+                  </td>
+                </tr>
+              </ng-container>
+              <tr *ngIf="rawMaterialsModalData.length === 0">
+                <td colspan="6" class="empty">
+                  <div>
+                    <p>No raw materials found for this table. Ensure master data is uploaded and SKU codes match.</p>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeRawMaterialsModal()">Close</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Create/Edit Requisition Modal -->
   <div class="modal" [class.active]="showModal">
