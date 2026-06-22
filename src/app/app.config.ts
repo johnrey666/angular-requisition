@@ -1,8 +1,8 @@
 // src/app/app.config.ts
 import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
 import { provideRouter, PreloadAllModules, withPreloading } from '@angular/router';
-import { provideClientHydration, withEventReplay, withIncrementalHydration } from '@angular/platform-browser';
-import { provideHttpClient } from '@angular/common/http'; // Add this import
+import { provideClientHydration } from '@angular/platform-browser';
+import { provideHttpClient } from '@angular/common/http';
 import { routes } from './app.routes';
 
 // AngularFire imports
@@ -20,14 +20,11 @@ export const appConfig: ApplicationConfig = {
     // Router (preload all lazy components for snappier navigation)
     provideRouter(routes, withPreloading(PreloadAllModules)),
     
-    // Client hydration with SSR - properly configured
-    provideClientHydration(
-      withEventReplay(),
-      withIncrementalHydration() // Better for components with browser APIs
-    ),
+    // Client hydration (removed SSR-specific features)
+    provideClientHydration(),
     
     // HTTP Client for API calls
-    provideHttpClient(), // Add this line
+    provideHttpClient(),
     
     // Firebase setup
     provideFirebaseApp(() => initializeApp(environment.firebase)),
