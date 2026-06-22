@@ -63,6 +63,15 @@ interface Table {
 @Injectable({ providedIn: 'root' })
 export class DatabaseService {
 
+  // masterData is reference data uploaded in bulk and changes rarely. Reading the
+  // whole collection on every page (and per line item) was the main driver of
+  // Firestore read usage, so it is cached here and shared by all callers.
+  private static readonly MASTERDATA_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+  private static readonly MASTERDATA_LS_KEY = 'masterDataCache_v1';
+  private masterDataCache: MasterData[] | null = null;
+  private masterDataCacheExpiry = 0;
+  private masterDataInFlight: Promise<MasterData[]> | null = null;
+
   constructor(
     private firestore: Firestore,
     private auth: AuthService,
@@ -73,27 +82,123 @@ export class DatabaseService {
     return runInInjectionContext(this.injector, fn);
   }
 
+  private get hasLocalStorage(): boolean {
+    try {
+      return typeof window !== 'undefined' && !!window.localStorage;
+    } catch {
+      return false;
+    }
+  }
+
+  private loadMasterDataFromLocalStorage(): MasterData[] | null {
+    if (!this.hasLocalStorage) return null;
+    try {
+      const raw = window.localStorage.getItem(DatabaseService.MASTERDATA_LS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as { expiry: number; rows: MasterData[] };
+      if (!parsed || !Array.isArray(parsed.rows) || !parsed.expiry || parsed.expiry < Date.now()) {
+        return null;
+      }
+      this.masterDataCacheExpiry = parsed.expiry;
+      return parsed.rows;
+    } catch {
+      return null;
+    }
+  }
+
+  private saveMasterDataToLocalStorage(rows: MasterData[], expiry: number): void {
+    if (!this.hasLocalStorage) return;
+    try {
+      window.localStorage.setItem(
+        DatabaseService.MASTERDATA_LS_KEY,
+        JSON.stringify({ expiry, rows })
+      );
+    } catch {
+      // localStorage may be full or unavailable; the in-memory cache still applies.
+    }
+  }
+
+  /**
+   * Returns the full masterData collection, served from an in-memory or
+   * localStorage cache when fresh. Concurrent callers share a single network
+   * read. Pass force=true to bypass the cache.
+   */
+  private async loadMasterDataCached(force = false): Promise<MasterData[]> {
+    const now = Date.now();
+
+    if (!force && this.masterDataCache && this.masterDataCacheExpiry > now) {
+      return this.masterDataCache;
+    }
+
+    if (!force) {
+      const fromLs = this.loadMasterDataFromLocalStorage();
+      if (fromLs) {
+        this.masterDataCache = fromLs;
+        return fromLs;
+      }
+      if (this.masterDataInFlight) {
+        return this.masterDataInFlight;
+      }
+    }
+
+    const promise = this.run(async () => {
+      const snapshot = await getDocs(collection(this.firestore, 'masterData'));
+      const rows: MasterData[] = [];
+      snapshot.forEach(d => rows.push(d.data() as MasterData));
+      return rows;
+    })
+      .then(rows => {
+        const expiry = Date.now() + DatabaseService.MASTERDATA_TTL_MS;
+        this.masterDataCache = rows;
+        this.masterDataCacheExpiry = expiry;
+        this.saveMasterDataToLocalStorage(rows, expiry);
+        this.masterDataInFlight = null;
+        return rows;
+      })
+      .catch(err => {
+        this.masterDataInFlight = null;
+        throw err;
+      });
+
+    this.masterDataInFlight = promise;
+    return promise;
+  }
+
+  private invalidateMasterDataCache(): void {
+    this.masterDataCache = null;
+    this.masterDataCacheExpiry = 0;
+    this.masterDataInFlight = null;
+    if (this.hasLocalStorage) {
+      try {
+        window.localStorage.removeItem(DatabaseService.MASTERDATA_LS_KEY);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /** Force a fresh read of masterData (e.g. after an admin re-import). */
+  async refreshMasterData(): Promise<void> {
+    this.invalidateMasterDataCache();
+    await this.loadMasterDataCached(true);
+  }
+
   normalizeSkuCode(sku: any): string {
     if (!sku && sku !== 0) return '';
 
     let s = String(sku).trim();
-    
-    // Log the original for debugging
-    console.log('Normalizing SKU:', { original: s });
 
     // Remove ONLY leading/trailing whitespace, keep internal spaces if they exist
     s = s.trim();
 
     // If it's a number-like string, keep it as is
     if (/^\d+$/.test(s)) {
-      console.log('SKU is numeric, keeping as:', s);
       return s;
     }
 
     // For non-numeric SKUs, normalize to uppercase but keep original format
     s = s.toUpperCase();
-    
-    console.log('Normalized SKU result:', s);
+
     return s;
   }
 
@@ -191,6 +296,8 @@ export class DatabaseService {
         await batch.commit();
       });
 
+      this.invalidateMasterDataCache();
+
       return { success: true, count: savedCount };
     } catch (err: any) {
       console.error('Master data upload failed', err);
@@ -208,13 +315,10 @@ export class DatabaseService {
 
   async getUniqueCategories(): Promise<string[]> {
     try {
-      const snapshot = await this.run(() =>
-        getDocs(collection(this.firestore, 'masterData'))
-      );
+      const rows = await this.loadMasterDataCached();
 
       const cats = new Set<string>();
-      snapshot.forEach(doc => {
-        const data = doc.data() as MasterData;
+      rows.forEach(data => {
         const category = (data?.category || '').trim();
         if (category) cats.add(category);
       });
@@ -230,16 +334,13 @@ export class DatabaseService {
     if (!category?.trim()) return [];
 
     try {
-      const snapshot = await this.run(() => {
-        const masterDataRef = collection(this.firestore, 'masterData');
-        const q = query(masterDataRef, where('category', '==', category));
-        return getDocs(q);
-      });
+      const rows = await this.loadMasterDataCached();
+      const target = category.trim();
 
       const map = new Map<string, string>();
-      snapshot.forEach(doc => {
-        const data = doc.data() as MasterData;
-        const code = (data.sku_code || '').trim();
+      rows.forEach(data => {
+        if ((data.category || '').trim() !== target) return;
+        const code = (data.sku_code || '').toString().trim();
         const name = (data.sku_name || '').trim();
         if (code && name) {
           map.set(code, name);
@@ -263,10 +364,9 @@ export class DatabaseService {
     });
   }
 
-  private collectMaterialsFromSnapshot(snap: { forEach: (fn: (d: any) => void) => void }): any[] {
+  private collectMaterialsFromRows(rows: MasterData[]): any[] {
     const mats: any[] = [];
-    snap.forEach((d: any) => {
-      const data = d.data() as MasterData;
+    for (const data of rows) {
       if (data.raw_material?.trim()) {
         mats.push({
           raw_material: data.raw_material.trim(),
@@ -275,118 +375,63 @@ export class DatabaseService {
           type: (data.type || '').trim()
         });
       }
-    });
+    }
     return mats;
   }
 
   async getMaterialsForSku(skuCode: string, skuName?: string): Promise<any[]> {
     const raw = skuCode != null ? String(skuCode).trim() : '';
     const name = skuName != null ? String(skuName).trim() : '';
-    
-    console.log('getMaterialsForSku called with:', { skuCode: raw, skuName: name });
-    
+
     if (!raw && !name) {
-      console.log('getMaterialsForSku: Both SKU and name are empty');
       return [];
     }
 
     const cleanSku = raw ? this.normalizeSkuCode(raw) : '';
 
     try {
-      const masterRef = collection(this.firestore, 'masterData');
+      const rows = await this.loadMasterDataCached();
 
-      // Step 1: Try to find by exact SKU code match with various formats
+      // Step 1: match by exact SKU code, allowing common case/format variants.
       if (cleanSku || raw) {
-        const variants: (string | number)[] = [];
-        if (cleanSku) variants.push(cleanSku);
-        if (raw && raw !== cleanSku) variants.push(raw);
-        if (/^\d+$/.test(raw)) {
-          variants.push(Number(raw));
-          variants.push(parseInt(raw));
+        const variants = new Set<string>();
+        if (cleanSku) variants.add(cleanSku);
+        if (raw) {
+          variants.add(raw);
+          variants.add(raw.toLowerCase());
+          variants.add(raw.toUpperCase());
         }
-        if (raw.toLowerCase() !== raw) variants.push(raw.toLowerCase());
-        if (raw.toUpperCase() !== raw) variants.push(raw.toUpperCase());
 
-        console.log('getMaterialsForSku: Trying SKU variants:', variants);
-
-        for (const val of variants) {
-          try {
-            const snapshot = await this.run(() =>
-              getDocs(query(masterRef, where('sku_code', '==', val)))
-            );
-            const materials = this.collectMaterialsFromSnapshot(snapshot);
-            if (materials.length > 0) {
-              console.log(`getMaterialsForSku: Found ${materials.length} materials for variant "${val}"`);
-              return this.dedupeMaterials(materials);
-            }
-          } catch (e) {
-            // Continue to next variant
-            console.log(`getMaterialsForSku: Query failed for variant "${val}":`, e);
-          }
+        const bySku = rows.filter(d => variants.has((d.sku_code ?? '').toString().trim()));
+        const materials = this.collectMaterialsFromRows(bySku);
+        if (materials.length > 0) {
+          return this.dedupeMaterials(materials);
         }
       }
 
-      // Step 2: Try to find by exact SKU name match
+      // Step 2: match by exact SKU name.
       if (name) {
-        try {
-          const snapshot = await this.run(() =>
-            getDocs(query(masterRef, where('sku_name', '==', name)))
-          );
-          const materials = this.collectMaterialsFromSnapshot(snapshot);
-          if (materials.length > 0) {
-            console.log(`getMaterialsForSku: Found ${materials.length} materials for SKU name "${name}"`);
-            return this.dedupeMaterials(materials);
-          }
-        } catch (e) {
-          console.log(`getMaterialsForSku: Query by name failed:`, e);
+        const byName = rows.filter(d => (d.sku_name ?? '').toString().trim() === name);
+        const materials = this.collectMaterialsFromRows(byName);
+        if (materials.length > 0) {
+          return this.dedupeMaterials(materials);
         }
       }
 
-      // Step 3: Full collection scan with flexible matching (most reliable fallback)
-      console.log('getMaterialsForSku: Starting full collection scan');
-      const allSnapshot = await this.run(() => getDocs(masterRef));
-      const mats: any[] = [];
+      // Step 3: flexible, case-insensitive match (most reliable fallback).
       const skuLower = (cleanSku || raw).toLowerCase();
-
-      console.log(`getMaterialsForSku: Full scan - Searching for skuCode="${raw}" (normalized="${cleanSku}", lower="${skuLower}") or skuName="${name}"`);
-      console.log(`getMaterialsForSku: Full scan total documents:`, allSnapshot.size);
-
-      let docCount = 0;
-      allSnapshot.forEach(d => {
-        const data = d.data() as MasterData;
-        docCount++;
+      const permissive = rows.filter(data => {
         const docSkuNormalized = this.normalizeSkuCode(data.sku_code).toLowerCase();
         const docSkuRaw = (data.sku_code || '').toString().trim().toLowerCase();
         const docSkuName = (data.sku_name || '').trim().toLowerCase();
-
-        // Match by normalized SKU, raw SKU, or SKU name
-        const skuMatches = 
-          docSkuNormalized === skuLower || 
+        return (
+          docSkuNormalized === skuLower ||
           docSkuRaw === skuLower ||
-          (name && docSkuName === name.toLowerCase());
-
-        // Log every document for first few matches to debug
-        if (docCount <= 5 || skuMatches) {
-          console.log(`  Doc ${docCount}: sku_code="${data.sku_code}" (norm="${docSkuNormalized}", raw="${docSkuRaw}"), sku_name="${data.sku_name}" (lower="${docSkuName}"), raw_material="${data.raw_material}", matches=${skuMatches}`);
-        }
-
-        if (skuMatches && data.raw_material?.trim()) {
-          mats.push({
-            raw_material: data.raw_material.trim(),
-            quantity_per_batch: data.qty_per_batch ?? null,
-            unit: (data.batch_unit || '').trim(),
-            type: (data.type || '').trim()
-          });
-        }
+          (!!name && docSkuName === name.toLowerCase())
+        );
       });
 
-      if (mats.length > 0) {
-        console.log(`getMaterialsForSku: Full scan found ${mats.length} materials`);
-        return this.dedupeMaterials(mats);
-      }
-
-      console.log('getMaterialsForSku: No materials found after all attempts');
-      return [];
+      return this.dedupeMaterials(this.collectMaterialsFromRows(permissive));
     } catch (err) {
       console.error('getMaterialsForSku failed', { skuCode: raw, skuName: name, error: err });
       return [];
@@ -395,16 +440,9 @@ export class DatabaseService {
 
   async getAllMasterData(): Promise<MasterData[]> {
     try {
-      const snapshot = await this.run(() =>
-        getDocs(collection(this.firestore, 'masterData'))
-      );
+      const rows = await this.loadMasterDataCached();
 
-      const rows: MasterData[] = [];
-      snapshot.forEach(d => {
-        rows.push(d.data() as MasterData);
-      });
-
-      return rows.sort((a, b) => {
+      return [...rows].sort((a, b) => {
         const cat = (a.category || '').localeCompare(b.category || '');
         if (cat !== 0) return cat;
         const sku = (a.sku_code || '').localeCompare(b.sku_code || '');
