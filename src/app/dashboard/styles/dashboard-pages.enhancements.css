@@ -293,7 +293,9 @@
 .page-content .table-wrapper {
   border: 1px solid hsl(var(--border) / 0.5);
   border-radius: 0.75rem;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
 }
 
 .page-content table {

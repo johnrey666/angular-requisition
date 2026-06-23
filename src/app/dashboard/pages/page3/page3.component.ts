@@ -90,6 +90,7 @@ interface Table {
   production_reviewed?: boolean;
   production_reviewed_at?: string;
   production_reviewed_by?: string;
+  procurement_date_needed?: string;
   request_closed?: boolean;
   request_closed_at?: string;
   request_closed_by?: string;
@@ -231,6 +232,8 @@ export class Page3Component implements OnInit, OnDestroy {
   showMissingNotesModal = false;
   showProductionActionModal = false;
   showProductionNotesModal = false;
+  showTransferToProcurementModal = false;
+  transferDateNeeded = '';
   productionNotesText = '';
   productionNotesReadOnly = false;
 
@@ -501,6 +504,7 @@ export class Page3Component implements OnInit, OnDestroy {
           production_reviewed: data['production_reviewed'] || false,
           production_reviewed_at: data['production_reviewed_at'],
           production_reviewed_by: data['production_reviewed_by'],
+          procurement_date_needed: data['procurement_date_needed'],
           request_closed: data['request_closed'] || false,
           request_closed_at: data['request_closed_at'],
           request_closed_by: data['request_closed_by'],
@@ -823,10 +827,20 @@ export class Page3Component implements OnInit, OnDestroy {
     return 'Unknown';
   }
 
+  showRequisitionTableColumn(): boolean {
+    return (this.userRole === 'production' || this.userRole === 'procurement') && !this.selectedTable;
+  }
+
   getColspan(): number {
-    let baseCols = 12;
-    if (this.userRole === 'production') baseCols = 13;
-    return baseCols;
+    let cols = 1;
+    if (this.showRequisitionTableColumn()) cols++;
+    if (this.userRole === 'production') cols++;
+    cols += 11;
+    return cols;
+  }
+
+  getProcurementSummaryColspan(): number {
+    return this.selectedTable ? 3 : 4;
   }
 
   async onTableChange() {
@@ -902,6 +916,7 @@ export class Page3Component implements OnInit, OnDestroy {
         production_reviewed: data['production_reviewed'] || false,
         production_reviewed_at: data['production_reviewed_at'],
         production_reviewed_by: data['production_reviewed_by'],
+        procurement_date_needed: data['procurement_date_needed'],
         request_closed: data['request_closed'] || false,
         request_closed_at: data['request_closed_at'],
         request_closed_by: data['request_closed_by']
@@ -1865,8 +1880,7 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   async submitReviewedTable() {
-    if (!this.canSubmitReviewedTable() || !this.selectedTable) return;
-    if (!confirm(`Transfer reviewed table "${this.selectedTable.name}" to procurement?`)) return;
+    if (!this.canSubmitReviewedTable() || !this.selectedTable || !this.transferDateNeeded) return;
 
     try {
       this.isSubmitting = true;
@@ -1905,6 +1919,7 @@ export class Page3Component implements OnInit, OnDestroy {
           production_reviewed: true,
           production_reviewed_at: new Date().toISOString(),
           production_reviewed_by: this.userId,
+          procurement_date_needed: this.transferDateNeeded,
           updated_at: new Date().toISOString(),
           submitted: true
         })
@@ -1937,7 +1952,15 @@ export class Page3Component implements OnInit, OnDestroy {
 
       if (this.selectedTable) {
         this.selectedTable.production_reviewed = true;
+        this.selectedTable.procurement_date_needed = this.transferDateNeeded;
+        const tableIndex = this.tables.findIndex(t => t.id === this.selectedTable!.id);
+        if (tableIndex !== -1) {
+          this.tables[tableIndex].production_reviewed = true;
+          this.tables[tableIndex].procurement_date_needed = this.transferDateNeeded;
+        }
       }
+
+      this.closeTransferToProcurementModal();
 
       await this.loadProductionSubmissions();
       await this.loadProductionReviewed();
@@ -2831,8 +2854,33 @@ export class Page3Component implements OnInit, OnDestroy {
     return `${count} requisition${count === 1 ? '' : 's'}`;
   }
 
+  getProcurementMaterialCount(): number {
+    if (!this.selectedTable) return 0;
+    const summary = this.procurementTableSummaries.find(s => s.table_id === this.selectedTable!.id);
+    return summary?.uniqueMaterialsCount ?? 0;
+  }
+
   showTableContextBar(): boolean {
-    return !!this.selectedTable && this.userRole !== 'procurement';
+    return !!this.selectedTable;
+  }
+
+  openTransferToProcurementModal() {
+    if (!this.canSubmitReviewedTable() || !this.selectedTable) return;
+    this.transferDateNeeded = '';
+    this.showTransferToProcurementModal = true;
+  }
+
+  closeTransferToProcurementModal() {
+    this.showTransferToProcurementModal = false;
+    this.transferDateNeeded = '';
+  }
+
+  confirmTransferToProcurement() {
+    if (!this.transferDateNeeded) {
+      this.showToast('Please set a date needed before transferring', 'error');
+      return;
+    }
+    this.submitReviewedTable();
   }
 
   isChatWritable(): boolean {
