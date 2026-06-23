@@ -90,6 +90,14 @@ service cloud.firestore {
       ];
     }
 
+    function smUploadKeys() {
+      return [
+        'sm_file_data', 'sm_file_mime', 'sm_file_name', 'sm_file_size',
+        'sm_file_type', 'sm_file_url', 'sm_uploaded_at', 'sm_uploaded_by',
+        'sm_removed_at', 'sm_removed_by', 'updated_at'
+      ];
+    }
+
     function closeInitKeys() {
       return [
         'close_request_pending', 'close_request_user_accepted', 'close_request_production_accepted',
@@ -186,6 +194,10 @@ service cloud.firestore {
           resource.data.submitted == true &&
           resource.data.close_request_pending == true &&
           hasOnlyKeys(closeRejectKeys())) ||
+        // Production: Shipping Manifest upload/remove
+        (isProduction() &&
+          resource.data.submitted == true &&
+          hasOnlyKeys(smUploadKeys())) ||
         // Procurement/admin: workflow updates (P.O., close request, etc.)
         (procurementWorkflowTable()) ||
         // Procurement/admin: initiate close request (explicit keys, no tableIsOpen gate)
@@ -235,9 +247,15 @@ service cloud.firestore {
 
         allow create: if canAccessChat() &&
           request.resource.data.sender_id == request.auth.uid &&
-          request.resource.data.message is string &&
           request.resource.data.created_at is string &&
-          request.resource.data.message_type is string;
+          request.resource.data.message_type is string &&
+          (
+            (request.resource.data.message_type == 'image' &&
+              request.resource.data.image_data is string &&
+              request.resource.data.image_mime is string) ||
+            (request.resource.data.message_type != 'image' &&
+              request.resource.data.message is string)
+          );
 
         allow update, delete: if false;
       }

@@ -8,6 +8,7 @@ import { Firestore, collection, doc, getDoc, getDocs, query, where } from '@angu
 interface RecentRequisition {
   id: string;
   reqNumber: string;
+  tableName: string;
   skuName: string;
   status: string;
   date: string;
@@ -43,6 +44,13 @@ export class Page1Component implements OnInit {
   loadError: string | null = null;
   userRole = '';
 
+  // Monthly overview
+  topItemName = '';
+  topItemCode = '';
+  topRawMaterial = '';
+  monthlyRequisitionSlips = 0;
+  monthlyPendingInProgress = 0;
+
   // Production
   productionLineCount = 0;
   productionItemCount = 0;
@@ -66,8 +74,12 @@ export class Page1Component implements OnInit {
   recentRequisitions: RecentRequisition[] = [];
   statusBreakdown: StatusCount[] = [];
   weeklyActivity: DayActivity[] = [];
+  activityDays = 7;
+  readonly activityDayOptions = [7, 15, 30];
 
   userId = '';
+  private allRequisitions: any[] = [];
+  private tableNameMap = new Map<string, string>();
 
   constructor(
     private db: DatabaseService,
@@ -91,6 +103,28 @@ export class Page1Component implements OnInit {
     await this.loadDashboardData();
   }
 
+  setActivityDays(days: number) {
+    if (this.activityDays === days) return;
+    this.activityDays = days;
+    if (this.isLoading) {
+      this.weeklyActivity = this.buildSkeletonActivity(days);
+      return;
+    }
+    this.buildActivityChart(this.allRequisitions, days);
+  }
+
+  private buildSkeletonActivity(days: number): DayActivity[] {
+    const now = new Date();
+    return Array.from({ length: days }, (_, index) => {
+      const date = new Date(now);
+      date.setDate(now.getDate() - (days - 1 - index));
+      const label = days <= 7
+        ? date.toLocaleDateString('en-US', { weekday: 'short' })
+        : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return { label, count: 0, height: 18 + (index % 4) * 12 };
+    });
+  }
+
   private async loadUserRole() {
     try {
       const userDoc = await getDoc(doc(this.firestore, 'users', this.userId));
@@ -105,22 +139,29 @@ export class Page1Component implements OnInit {
   private async loadDashboardData() {
     this.isLoading = true;
     this.loadError = null;
+    this.weeklyActivity = this.buildSkeletonActivity(this.activityDays);
 
     try {
       const [productionTables, requisitionTables, requisitions] = await Promise.all([
         this.loadProductionTables(),
         this.loadRequisitionTables(),
-        this.db.getUserRequisitions(this.userId),
+        this.db.getRequisitionsForDashboard(this.userId, this.userRole),
       ]);
+
+      this.allRequisitions = requisitions;
+      await this.loadTableNameMap(requisitions);
 
       this.productionLineCount = productionTables.length;
       this.requisitionTableCount = requisitionTables.length;
       this.submittedTablesCount = requisitionTables.filter(t => t.submitted).length;
 
+      const monthlyRequisitions = this.filterMonthlyRequisitions(requisitions);
+
       await this.loadProductionStats(productionTables);
       this.loadOrderingStats(requisitions);
       await this.loadUsageStats(requisitions);
-      this.buildWeeklyActivity(requisitions);
+      await this.buildMonthlyOverview(monthlyRequisitions);
+      this.buildActivityChart(requisitions, this.activityDays);
       this.buildStatusBreakdown(requisitions);
       this.buildRecentRequisitions(requisitions);
     } catch (err) {
@@ -129,6 +170,117 @@ export class Page1Component implements OnInit {
     } finally {
       this.isLoading = false;
     }
+  }
+
+  private async loadTableNameMap(requisitions: any[]) {
+    this.tableNameMap.clear();
+    const tableIds = [...new Set(
+      requisitions.map(r => r.table_id).filter((id): id is string => Boolean(id))
+    )];
+
+    await Promise.all(tableIds.map(async tableId => {
+      try {
+        const tableDoc = await getDoc(doc(this.firestore, 'tables', tableId));
+        if (tableDoc.exists()) {
+          this.tableNameMap.set(tableId, tableDoc.data()['name'] || 'Untitled');
+        }
+      } catch {
+        // ignore missing table lookups
+      }
+    }));
+  }
+
+  private getRequisitionDate(req: any): Date | null {
+    const raw = req.created_at || req.submitted_at;
+    if (!raw) return null;
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  private filterMonthlyRequisitions(requisitions: any[]): any[] {
+    const now = new Date();
+    const month = now.getMonth();
+    const year = now.getFullYear();
+
+    return requisitions.filter(req => {
+      const date = this.getRequisitionDate(req);
+      return date !== null && date.getMonth() === month && date.getFullYear() === year;
+    });
+  }
+
+  private async buildMonthlyOverview(monthlyRequisitions: any[]) {
+    this.monthlyRequisitionSlips = monthlyRequisitions.length;
+
+    const inProgressStatuses = new Set([
+      'Pending',
+      'Submitted',
+      'Production_Confirmed',
+      'Scheduled',
+    ]);
+    this.monthlyPendingInProgress = monthlyRequisitions.filter(r =>
+      inProgressStatuses.has(r.status || 'Pending')
+    ).length;
+
+    const skuCounts = new Map<string, { name: string; count: number }>();
+    for (const req of monthlyRequisitions) {
+      const code = this.db.normalizeSkuCode(req.sku_code || req.skuCode || '');
+      if (!code) continue;
+
+      const name = String(req.skuName || req.sku_name || code).trim();
+      const existing = skuCounts.get(code);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        skuCounts.set(code, { name, count: 1 });
+      }
+    }
+
+    const topSku = [...skuCounts.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+    if (topSku) {
+      this.topItemCode = topSku[0];
+      this.topItemName = topSku[1].name;
+    } else {
+      this.topItemCode = '';
+      this.topItemName = '';
+    }
+
+    this.topRawMaterial = monthlyRequisitions.length > 0
+      ? await this.computeTopRawMaterial(monthlyRequisitions)
+      : '';
+  }
+
+  private async computeTopRawMaterial(monthlyRequisitions: any[]): Promise<string> {
+    const skuCache = new Map<string, any[]>();
+    const materialTotals = new Map<string, number>();
+
+    const uniqueSkus = [...new Set(
+      monthlyRequisitions
+        .map(r => this.db.normalizeSkuCode(r.sku_code || r.skuCode || ''))
+        .filter(Boolean)
+    )];
+
+    await Promise.all(uniqueSkus.map(async sku => {
+      const materials = await this.db.getMaterialsForSku(sku);
+      skuCache.set(sku, materials);
+    }));
+
+    for (const req of monthlyRequisitions) {
+      const skuCode = this.db.normalizeSkuCode(req.sku_code || req.skuCode || '');
+      if (!skuCode) continue;
+
+      const materials = skuCache.get(skuCode) || [];
+      const qtyRequired = Number(req.qty_needed ?? req.quantity ?? 0);
+
+      for (const mat of materials) {
+        if (!mat.raw_material) continue;
+        const total = Number(mat.quantity_per_batch ?? 0) * qtyRequired;
+        const key = mat.raw_material;
+        materialTotals.set(key, (materialTotals.get(key) || 0) + total);
+      }
+    }
+
+    const top = [...materialTotals.entries()].sort((a, b) => b[1] - a[1])[0];
+    return top?.[0] || '';
   }
 
   private async loadProductionTables(): Promise<any[]> {
@@ -241,11 +393,11 @@ export class Page1Component implements OnInit {
       .slice(0, 5);
   }
 
-  private buildWeeklyActivity(requisitions: any[]) {
-    const days: DayActivity[] = [];
+  private buildActivityChart(requisitions: any[], days: number) {
+    const activity: DayActivity[] = [];
     const now = new Date();
 
-    for (let i = 6; i >= 0; i--) {
+    for (let i = days - 1; i >= 0; i--) {
       const date = new Date(now);
       date.setDate(now.getDate() - i);
       date.setHours(0, 0, 0, 0);
@@ -254,25 +406,26 @@ export class Page1Component implements OnInit {
       nextDay.setDate(date.getDate() + 1);
 
       const count = requisitions.filter(r => {
-        const raw = r.created_at || r.submitted_at;
-        if (!raw) return false;
-        const created = new Date(raw);
+        const created = this.getRequisitionDate(r);
+        if (!created) return false;
         return created >= date && created < nextDay;
       }).length;
 
-      days.push({
-        label: date.toLocaleDateString('en-US', { weekday: 'short' }),
-        count,
-        height: 0,
-      });
+      const label = days <= 7
+        ? date.toLocaleDateString('en-US', { weekday: 'short' })
+        : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      activity.push({ label, count, height: 0 });
     }
 
-    const maxCount = Math.max(...days.map(d => d.count), 1);
-    days.forEach(d => {
-      d.height = Math.max(8, Math.round((d.count / maxCount) * 100));
+    const maxCount = Math.max(...activity.map(d => d.count), 1);
+    activity.forEach(d => {
+      d.height = d.count === 0
+        ? 3
+        : Math.max(12, Math.round((d.count / maxCount) * 100));
     });
 
-    this.weeklyActivity = days;
+    this.weeklyActivity = activity;
   }
 
   private buildStatusBreakdown(requisitions: any[]) {
@@ -307,14 +460,15 @@ export class Page1Component implements OnInit {
   private buildRecentRequisitions(requisitions: any[]) {
     this.recentRequisitions = [...requisitions]
       .sort((a, b) => {
-        const dateA = new Date(a.created_at || a.submitted_at || 0).getTime();
-        const dateB = new Date(b.created_at || b.submitted_at || 0).getTime();
+        const dateA = this.getRequisitionDate(a)?.getTime() ?? 0;
+        const dateB = this.getRequisitionDate(b)?.getTime() ?? 0;
         return dateB - dateA;
       })
       .slice(0, 8)
       .map(r => ({
         id: r.id,
         reqNumber: r.reqNumber || r.req_number || `REQ-${(r.id || '').slice(0, 6)}`,
+        tableName: this.tableNameMap.get(r.table_id) || r.table_name || '—',
         skuName: r.skuName || r.sku_name || r.skuCode || r.sku_code || 'Unknown',
         status: (r.status || 'Pending').replace(/_/g, ' '),
         date: this.formatDate(r.created_at || r.submitted_at),
@@ -352,5 +506,9 @@ export class Page1Component implements OnInit {
 
   get weeklyActivityTotal(): number {
     return this.weeklyActivity.reduce((sum, d) => sum + d.count, 0);
+  }
+
+  get currentMonthLabel(): string {
+    return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   }
 }

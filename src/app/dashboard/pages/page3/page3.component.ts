@@ -23,7 +23,7 @@ interface Material {
   production_action?: 'confirmed' | 'removed';
   procurement_action?: 'approved' | 'rejected';
 }
-
+  
 interface Requisition {
   id: string;
   reqNumber: string;
@@ -79,6 +79,14 @@ interface Table {
   po_file_name?: string;
   po_file_size?: number;
   po_file_type?: string;
+  sm_file_url?: string;
+  sm_file_data?: string;
+  sm_file_mime?: string;
+  sm_file_name?: string;
+  sm_file_size?: number;
+  sm_file_type?: string;
+  sm_uploaded_at?: string;
+  sm_uploaded_by?: string;
   production_reviewed?: boolean;
   production_reviewed_at?: string;
   production_reviewed_by?: string;
@@ -99,10 +107,12 @@ interface ChatMessage {
   sender_email: string;
   sender_role: string;
   message: string;
-  message_type: 'text' | 'close_request' | 'close_response' | 'po_upload' | 'system';
+  message_type: 'text' | 'close_request' | 'close_response' | 'po_upload' | 'sm_upload' | 'image' | 'system';
   created_at: string;
   close_response?: 'accepted' | 'rejected';
   po_file_name?: string;
+  image_data?: string;
+  image_mime?: string;
 }
 
 interface SkuOption {
@@ -236,6 +246,7 @@ export class Page3Component implements OnInit, OnDestroy {
 
   showPoViewerModal = false;
   poViewerTable: Table | null = null;
+  docViewerType: 'po' | 'sm' = 'po';
 
   viewMode: 'my_tables' | 'store_submissions' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
   selectedProductionView: 'submissions' | 'reviewed' = 'submissions';
@@ -246,12 +257,10 @@ export class Page3Component implements OnInit, OnDestroy {
   today = new Date().toISOString().split('T')[0];
   tomorrow: string = '';
 
-  // P.O File Upload Properties
-  poFile: File | null = null;
-  poFileName: string = '';
-  poUploadTargetTable: Table | null = null;
-  isUploadingPo: boolean = false;
+  isUploadingPo = false;
+  isUploadingSm = false;
   private readonly maxPoFileBytes = 500 * 1024;
+  private readonly maxChatImageBytes = 500 * 1024;
 
   formData: any = {
     category: '',
@@ -481,6 +490,14 @@ export class Page3Component implements OnInit, OnDestroy {
           po_file_name: data['po_file_name'],
           po_file_size: data['po_file_size'],
           po_file_type: data['po_file_type'],
+          sm_file_url: data['sm_file_url'],
+          sm_file_data: data['sm_file_data'],
+          sm_file_mime: data['sm_file_mime'],
+          sm_file_name: data['sm_file_name'],
+          sm_file_size: data['sm_file_size'],
+          sm_file_type: data['sm_file_type'],
+          sm_uploaded_at: data['sm_uploaded_at'],
+          sm_uploaded_by: data['sm_uploaded_by'],
           production_reviewed: data['production_reviewed'] || false,
           production_reviewed_at: data['production_reviewed_at'],
           production_reviewed_by: data['production_reviewed_by'],
@@ -502,7 +519,7 @@ export class Page3Component implements OnInit, OnDestroy {
           userEmailPromises.push(emailPromise);
         }
 
-        loadedTables.push(table);
+        loadedTables.push(this.sanitizeTableForRole(table));
       });
 
       await Promise.all(userEmailPromises);
@@ -874,6 +891,14 @@ export class Page3Component implements OnInit, OnDestroy {
         po_file_name: data['po_file_name'],
         po_file_size: data['po_file_size'],
         po_file_type: data['po_file_type'],
+        sm_file_url: data['sm_file_url'],
+        sm_file_data: data['sm_file_data'],
+        sm_file_mime: data['sm_file_mime'],
+        sm_file_name: data['sm_file_name'],
+        sm_file_size: data['sm_file_size'],
+        sm_file_type: data['sm_file_type'],
+        sm_uploaded_at: data['sm_uploaded_at'],
+        sm_uploaded_by: data['sm_uploaded_by'],
         production_reviewed: data['production_reviewed'] || false,
         production_reviewed_at: data['production_reviewed_at'],
         production_reviewed_by: data['production_reviewed_by'],
@@ -886,7 +911,7 @@ export class Page3Component implements OnInit, OnDestroy {
         table.user_email = await this.getUserEmail(table.user_id);
       }
 
-      return table;
+      return this.sanitizeTableForRole(table);
     } catch {
       return null;
     }
@@ -960,7 +985,7 @@ export class Page3Component implements OnInit, OnDestroy {
       const tableDoc = await this.run(() => getDoc(doc(this.firestore, 'tables', tableId)));
       if (tableDoc.exists()) {
         const data = tableDoc.data();
-        this.selectedTable = {
+        this.selectedTable = this.sanitizeTableForRole({
           id: tableDoc.id,
           name: data['name'] || 'Unknown',
           user_id: data['user_id'] || '',
@@ -972,6 +997,12 @@ export class Page3Component implements OnInit, OnDestroy {
           po_file_data: data['po_file_data'],
           po_file_mime: data['po_file_mime'],
           po_file_name: data['po_file_name'],
+          sm_file_url: data['sm_file_url'],
+          sm_file_data: data['sm_file_data'],
+          sm_file_mime: data['sm_file_mime'],
+          sm_file_name: data['sm_file_name'],
+          sm_file_size: data['sm_file_size'],
+          sm_file_type: data['sm_file_type'],
           request_closed: data['request_closed'] || false,
           request_closed_at: data['request_closed_at'],
           request_closed_by: data['request_closed_by'],
@@ -981,7 +1012,7 @@ export class Page3Component implements OnInit, OnDestroy {
           close_request_production_accepted: data['close_request_production_accepted'] || false,
           close_request_initiated_at: data['close_request_initiated_at'],
           close_request_initiated_by: data['close_request_initiated_by']
-        };
+        });
       }
     } catch (err) {}
   }
@@ -2196,38 +2227,129 @@ export class Page3Component implements OnInit, OnDestroy {
     return !!(table.po_file_data || table.po_file_url);
   }
 
-  getPoViewUrl(table: Table | null | undefined): string {
-    if (!table) return '';
-    if (table.po_file_data) {
-      const mime = table.po_file_mime || table.po_file_type || 'application/octet-stream';
-      return `data:${mime};base64,${table.po_file_data}`;
-    }
-    return table.po_file_url || '';
+  hasSmDocument(table: Table | null | undefined): boolean {
+    if (!table) return false;
+    return !!(table.sm_file_data || table.sm_file_url);
   }
 
-  getSafePoViewUrl(table: Table | null | undefined): SafeResourceUrl | string {
-    const url = this.getPoViewUrl(table);
+  canViewPo(): boolean {
+    return this.userRole === 'procurement' || this.userRole === 'production' || this.userRole === 'admin';
+  }
+
+  canViewSm(): boolean {
+    return this.userRole === 'user' || this.userRole === 'store' ||
+      this.userRole === 'production' || this.userRole === 'procurement' || this.userRole === 'admin';
+  }
+
+  canShowPoInChat(): boolean {
+    return this.canViewPo() && !!this.chatTable && this.hasPoDocument(this.chatTable);
+  }
+
+  canShowSmInChat(): boolean {
+    return this.canViewSm() && !!this.chatTable && this.hasSmDocument(this.chatTable);
+  }
+
+  private sanitizeTableForRole(table: Table): Table {
+    if (this.userRole === 'user' || this.userRole === 'store') {
+      return {
+        ...table,
+        po_file_url: undefined,
+        po_file_data: undefined,
+        po_file_mime: undefined,
+        po_file_name: undefined,
+        po_file_size: undefined,
+        po_file_type: undefined
+      };
+    }
+    return table;
+  }
+
+  shouldShowChatMessage(msg: ChatMessage): boolean {
+    if (msg.message_type === 'po_upload' && !this.canViewPo()) return false;
+    return true;
+  }
+
+  getDocViewUrl(table: Table | null | undefined, type: 'po' | 'sm'): string {
+    if (!table) return '';
+    const data = type === 'po' ? table.po_file_data : table.sm_file_data;
+    const mime = type === 'po'
+      ? (table.po_file_mime || table.po_file_type)
+      : (table.sm_file_mime || table.sm_file_type);
+    const url = type === 'po' ? table.po_file_url : table.sm_file_url;
+    if (data) {
+      return `data:${mime || 'application/octet-stream'};base64,${data}`;
+    }
+    return url || '';
+  }
+
+  getSafeDocViewUrl(table: Table | null | undefined, type: 'po' | 'sm'): SafeResourceUrl | string {
+    const url = this.getDocViewUrl(table, type);
     return url ? this.sanitizer.bypassSecurityTrustResourceUrl(url) : '';
   }
 
-  getPoMime(table: Table | null | undefined): string {
+  getDocMime(table: Table | null | undefined, type: 'po' | 'sm'): string {
     if (!table) return '';
-    return table.po_file_mime || table.po_file_type || 'application/octet-stream';
+    if (type === 'po') {
+      return table.po_file_mime || table.po_file_type || 'application/octet-stream';
+    }
+    return table.sm_file_mime || table.sm_file_type || 'application/octet-stream';
   }
 
-  isPoImage(table: Table | null | undefined): boolean {
-    return this.getPoMime(table).startsWith('image/');
+  isDocImage(table: Table | null | undefined, type: 'po' | 'sm'): boolean {
+    return this.getDocMime(table, type).startsWith('image/');
   }
 
-  isPoPdf(table: Table | null | undefined): boolean {
-    const mime = this.getPoMime(table).toLowerCase();
-    const name = (table?.po_file_name || '').toLowerCase();
+  isDocPdf(table: Table | null | undefined, type: 'po' | 'sm'): boolean {
+    const mime = this.getDocMime(table, type).toLowerCase();
+    const name = ((type === 'po' ? table?.po_file_name : table?.sm_file_name) || '').toLowerCase();
     return mime.includes('pdf') || name.endsWith('.pdf');
   }
 
+  getDocFileName(table: Table | null | undefined, type: 'po' | 'sm'): string {
+    if (!table) return type === 'po' ? 'Purchase Order' : 'Shipping Manifest';
+    return (type === 'po' ? table.po_file_name : table.sm_file_name) || (type === 'po' ? 'Purchase Order' : 'Shipping Manifest');
+  }
+
+  getPoViewUrl(table: Table | null | undefined): string {
+    return this.getDocViewUrl(table, 'po');
+  }
+
+  getSafePoViewUrl(table: Table | null | undefined): SafeResourceUrl | string {
+    return this.getSafeDocViewUrl(table, 'po');
+  }
+
+  getPoMime(table: Table | null | undefined): string {
+    return this.getDocMime(table, 'po');
+  }
+
+  isPoImage(table: Table | null | undefined): boolean {
+    return this.isDocImage(table, 'po');
+  }
+
+  isPoPdf(table: Table | null | undefined): boolean {
+    return this.isDocPdf(table, 'po');
+  }
+
+  getChatImageUrl(msg: ChatMessage): string {
+    if (!msg.image_data) return '';
+    return `data:${msg.image_mime || 'image/jpeg'};base64,${msg.image_data}`;
+  }
+
+  getSafeChatImageUrl(msg: ChatMessage): SafeResourceUrl | string {
+    const url = this.getChatImageUrl(msg);
+    return url ? this.sanitizer.bypassSecurityTrustResourceUrl(url) : '';
+  }
+
   openPoViewer(table: Table | null | undefined) {
-    if (!table || !this.hasPoDocument(table)) return;
+    this.openDocViewer(table, 'po');
+  }
+
+  openDocViewer(table: Table | null | undefined, type: 'po' | 'sm') {
+    if (!table) return;
+    if (type === 'po' && (!this.canViewPo() || !this.hasPoDocument(table))) return;
+    if (type === 'sm' && (!this.canViewSm() || !this.hasSmDocument(table))) return;
     this.poViewerTable = table;
+    this.docViewerType = type;
     this.showPoViewerModal = true;
   }
 
@@ -2316,43 +2438,6 @@ export class Page3Component implements OnInit, OnDestroy {
     this.selectedSkuCode = selectedItem ? selectedItem.sku_code : '';
   }
 
-  // P.O File Upload Methods
-  triggerPoFileInput(table?: Table | null) {
-    this.poUploadTargetTable = table || this.selectedTable;
-    const fileInput = document.getElementById('poFileInput') as HTMLInputElement;
-    if (fileInput) {
-      fileInput.value = '';
-      fileInput.click();
-    }
-  }
-
-  onPoFileSelected(event: Event) {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (file) {
-      if (file.size > this.maxPoFileBytes) {
-        this.showToast(`File must be less than ${Math.round(this.maxPoFileBytes / 1024)}KB (Firestore limit)`, 'error');
-        this.poFile = null;
-        this.poFileName = '';
-        return;
-      }
-
-      const allowedTypes = ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.jpg', '.jpeg', '.png'];
-      const fileExt = '.' + file.name.split('.').pop()?.toLowerCase();
-      if (!allowedTypes.includes(fileExt)) {
-        this.showToast('Please upload PDF, Word, Excel, or image files only', 'error');
-        this.poFile = null;
-        this.poFileName = '';
-        return;
-      }
-
-      this.poFile = file;
-      this.poFileName = file.name;
-    } else {
-      this.poFile = null;
-      this.poFileName = '';
-    }
-  }
-
   private readFileAsBase64(file: File): Promise<{ base64: string; mime: string }> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2368,121 +2453,6 @@ export class Page3Component implements OnInit, OnDestroy {
       reader.onerror = () => reject(new Error('Failed to read file'));
       reader.readAsDataURL(file);
     });
-  }
-
-  async uploadPoFile(table?: Table | null) {
-    const targetTable = table || this.poUploadTargetTable || this.selectedTable;
-    if (!targetTable) {
-      this.showToast('Please select a table first', 'error');
-      return;
-    }
-    if (!this.canUploadPo()) {
-      this.showToast('Only procurement can upload P.O files', 'error');
-      return;
-    }
-    if (!this.poFile) {
-      this.showToast('Please choose a P.O file first', 'error');
-      return;
-    }
-
-    try {
-      this.isUploadingPo = true;
-      this.showToast('Saving P.O to Firestore...', 'info');
-
-      const { base64, mime } = await this.readFileAsBase64(this.poFile);
-      const tableRef = doc(this.firestore, 'tables', targetTable.id);
-      await this.run(() =>
-        updateDoc(tableRef, {
-          po_file_data: base64,
-          po_file_mime: mime,
-          po_file_name: this.poFile?.name || '',
-          po_file_size: this.poFile?.size || 0,
-          po_file_type: mime,
-          po_file_url: null,
-          po_uploaded_at: new Date().toISOString(),
-          po_uploaded_by: this.userId,
-          updated_at: new Date().toISOString()
-        })
-      );
-
-      targetTable.po_file_data = base64;
-      targetTable.po_file_mime = mime;
-      targetTable.po_file_name = this.poFile?.name || '';
-      targetTable.po_file_size = this.poFile?.size;
-      targetTable.po_file_type = mime;
-      targetTable.po_file_url = undefined;
-
-      const tableIndex = this.tables.findIndex(t => t.id === targetTable.id);
-      if (tableIndex !== -1) {
-        this.tables[tableIndex] = { ...this.tables[tableIndex], ...targetTable };
-      }
-      if (this.selectedTable?.id === targetTable.id) {
-        this.selectedTable = { ...this.selectedTable, ...targetTable };
-      }
-
-      this.poFile = null;
-      this.poFileName = '';
-      this.poUploadTargetTable = null;
-      const fileInput = document.getElementById('poFileInput') as HTMLInputElement;
-      if (fileInput) fileInput.value = '';
-
-      this.showToast('P.O uploaded and saved successfully', 'success');
-    } catch (err: any) {
-      this.showToast(err?.message || 'Failed to save P.O file. Please try again.', 'error');
-    } finally {
-      this.isUploadingPo = false;
-    }
-  }
-
-  async removePoLink(table?: Table | null) {
-    const targetTable = table || this.selectedTable;
-    if (!targetTable) return;
-    if (!this.canUploadPo()) {
-      this.showToast('Only procurement can remove P.O files', 'error');
-      return;
-    }
-    if (!confirm('Remove this P.O document?')) return;
-
-    try {
-      this.isSubmitting = true;
-      this.showToast('Removing P.O document...', 'info');
-
-      const tableRef = doc(this.firestore, 'tables', targetTable.id);
-      await this.run(() =>
-        updateDoc(tableRef, {
-          po_file_data: null,
-          po_file_mime: null,
-          po_file_url: null,
-          po_file_name: null,
-          po_file_size: null,
-          po_file_type: null,
-          po_removed_at: new Date().toISOString(),
-          po_removed_by: this.userId,
-          updated_at: new Date().toISOString()
-        })
-      );
-
-      targetTable.po_file_data = undefined;
-      targetTable.po_file_mime = undefined;
-      targetTable.po_file_url = undefined;
-      targetTable.po_file_name = undefined;
-      targetTable.po_file_size = undefined;
-      targetTable.po_file_type = undefined;
-
-      const tableIndex = this.tables.findIndex(t => t.id === targetTable.id);
-      if (tableIndex !== -1) {
-        this.tables[tableIndex] = { ...this.tables[tableIndex], ...targetTable };
-      }
-      if (this.selectedTable?.id === targetTable.id) {
-        this.selectedTable = { ...this.selectedTable, ...targetTable };
-      }
-
-      this.showToast('P.O document removed successfully', 'success');
-    } catch (err) {
-      this.showToast('Failed to remove P.O document', 'error');
-    } finally {
-      this.isSubmitting = false;
-    }
   }
 
   canUploadMasterData(): boolean {
@@ -2826,6 +2796,45 @@ export class Page3Component implements OnInit, OnDestroy {
     return false;
   }
 
+  hasChatDocuments(): boolean {
+    return this.canShowPoInChat() || this.canShowSmInChat();
+  }
+
+  hasChatWritableToolbar(): boolean {
+    return this.isChatWritable() && (
+      this.canInitiateCloseRequest() || this.canUploadPo() || this.canUploadSm()
+    );
+  }
+
+  showChatToolbar(): boolean {
+    return this.hasChatDocuments() || this.hasChatWritableToolbar();
+  }
+
+  getPageSubtitle(): string {
+    if (this.userRole === 'production') {
+      return this.selectedTable
+        ? `Reviewing ${this.selectedTable.name}`
+        : 'Review submitted requisition tables';
+    }
+    if (this.userRole === 'procurement') {
+      return 'Production-confirmed tables ready for delivery';
+    }
+    if (this.userRole === 'admin') {
+      return 'Full workflow access';
+    }
+    return 'Create tables and track material requests';
+  }
+
+  getTableStatLabel(): string {
+    const count = this.filteredRequisitions.length;
+    if (this.userRole === 'production') return `${count} to review`;
+    return `${count} requisition${count === 1 ? '' : 's'}`;
+  }
+
+  showTableContextBar(): boolean {
+    return !!this.selectedTable && this.userRole !== 'procurement';
+  }
+
   isChatWritable(): boolean {
     return !!this.chatTable && !this.isRequestDone(this.chatTable);
   }
@@ -2841,6 +2850,10 @@ export class Page3Component implements OnInit, OnDestroy {
 
   canUploadPo(): boolean {
     return this.userRole === 'procurement' || this.userRole === 'admin';
+  }
+
+  canUploadSm(): boolean {
+    return this.userRole === 'production' || this.userRole === 'admin';
   }
 
   canRespondToCloseRequest(): boolean {
@@ -2899,11 +2912,12 @@ export class Page3Component implements OnInit, OnDestroy {
       this.showToast('Chat is not available for this table', 'error');
       return;
     }
-    this.chatTable = { ...table };
+    const latest = this.tables.find(t => t.id === table.id) || table;
+    this.chatTable = this.sanitizeTableForRole({ ...latest });
     this.showChatPanel = true;
     this.chatMinimized = false;
-    this.markChatRead(table.id);
-    this.subscribeToChat(table.id);
+    this.markChatRead(latest.id);
+    this.subscribeToChat(latest.id);
   }
 
   closeChatPanel() {
@@ -3174,6 +3188,104 @@ export class Page3Component implements OnInit, OnDestroy {
     await this.run(() => addDoc(messagesRef, payload));
   }
 
+  async onChatSmFileSelected(event: Event) {
+    if (!this.chatTable || !this.isChatWritable() || !this.canUploadSm()) {
+      this.showToast('Only production can upload Shipping Manifest files', 'error');
+      return;
+    }
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (file.size > this.maxPoFileBytes) {
+      this.showToast('S.M. file must be 500KB or smaller', 'error');
+      input.value = '';
+      return;
+    }
+
+    try {
+      this.isUploadingSm = true;
+      const { base64, mime } = await this.readFileAsBase64(file);
+      const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
+      const now = new Date().toISOString();
+
+      await this.run(() => updateDoc(tableRef, {
+        sm_file_data: base64,
+        sm_file_mime: mime,
+        sm_file_name: file.name,
+        sm_file_size: file.size,
+        sm_file_type: mime,
+        sm_uploaded_at: now,
+        sm_uploaded_by: this.userId,
+        updated_at: now
+      }));
+
+      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      await this.run(() => addDoc(messagesRef, {
+        sender_id: this.userId,
+        sender_email: this.userName,
+        sender_role: this.userRole,
+        message: `Uploaded Shipping Manifest: ${file.name}`,
+        message_type: 'sm_upload',
+        created_at: now
+      }));
+
+      this.patchLocalTable(this.chatTable.id, {
+        sm_file_data: base64,
+        sm_file_mime: mime,
+        sm_file_name: file.name,
+        sm_file_size: file.size,
+        sm_file_type: mime
+      });
+      this.showToast('Shipping Manifest uploaded', 'success');
+    } catch {
+      this.showToast('Failed to upload Shipping Manifest', 'error');
+    } finally {
+      this.isUploadingSm = false;
+      input.value = '';
+    }
+  }
+
+  async onChatImageSelected(event: Event) {
+    if (!this.chatTable || !this.isChatWritable()) return;
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      this.showToast('Please select an image file', 'error');
+      input.value = '';
+      return;
+    }
+
+    if (file.size > this.maxChatImageBytes) {
+      this.showToast('Image must be 500KB or smaller', 'error');
+      input.value = '';
+      return;
+    }
+
+    try {
+      const { base64, mime } = await this.readFileAsBase64(file);
+      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      const now = new Date().toISOString();
+      await this.run(() => addDoc(messagesRef, {
+        sender_id: this.userId,
+        sender_email: this.userName,
+        sender_role: this.userRole,
+        message: '',
+        message_type: 'image',
+        image_data: base64,
+        image_mime: mime,
+        created_at: now
+      }));
+    } catch (err) {
+      console.error('onChatImageSelected failed', err);
+      this.showToast('Failed to send image', 'error');
+    } finally {
+      input.value = '';
+    }
+  }
+
   async onChatPoFileSelected(event: Event) {
     if (!this.chatTable || !this.isChatWritable() || !this.canUploadPo()) {
       this.showToast('Only procurement can upload P.O files', 'error');
@@ -3234,15 +3346,19 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   private patchLocalTable(tableId: string, patch: Partial<Table>) {
+    const sanitizedPatch = (this.userRole === 'user' || this.userRole === 'store')
+      ? Object.fromEntries(Object.entries(patch).filter(([key]) => !key.startsWith('po_')))
+      : patch;
+
     const tableIndex = this.tables.findIndex(t => t.id === tableId);
     if (tableIndex !== -1) {
-      this.tables[tableIndex] = { ...this.tables[tableIndex], ...patch };
+      this.tables[tableIndex] = this.sanitizeTableForRole({ ...this.tables[tableIndex], ...sanitizedPatch });
     }
     if (this.selectedTable?.id === tableId) {
-      this.selectedTable = { ...this.selectedTable, ...patch };
+      this.selectedTable = this.sanitizeTableForRole({ ...this.selectedTable, ...sanitizedPatch });
     }
     if (this.chatTable?.id === tableId) {
-      this.chatTable = { ...this.chatTable, ...patch };
+      this.chatTable = this.sanitizeTableForRole({ ...this.chatTable, ...sanitizedPatch });
     }
   }
 

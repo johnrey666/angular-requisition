@@ -2,58 +2,82 @@
   <div class="dashboard-header">
     <div>
       <h1 class="dashboard-title">Overview</h1>
-      <p class="dashboard-subtitle">Live summary from Production, Ordering, and Usage Report</p>
+      <p class="dashboard-subtitle">{{ currentMonthLabel }} · Live summary from Production, Ordering, and Usage Report</p>
     </div>
-    <button class="refresh-btn" (click)="refresh()" [disabled]="isLoading">
+    <button class="refresh-btn" type="button" (click)="refresh()" [disabled]="isLoading">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <path d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6"/>
+      </svg>
       {{ isLoading ? 'Loading...' : 'Refresh' }}
     </button>
   </div>
 
   <div *ngIf="loadError" class="error-banner">{{ loadError }}</div>
 
-  <!-- Key metrics -->
   <div class="stats-grid">
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Production Lines</span>
-        <a routerLink="/dashboard/production" class="stat-link">View</a>
+    <div class="stat-card stat-card-accent">
+      <div class="stat-icon stat-icon-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
       </div>
-      <p class="stat-value">{{ isLoading ? '—' : productionLineCount }}</p>
-      <p class="stat-subtitle">{{ productionItemCount }} items · {{ totalProductionQty | number:'1.0-0' }} total qty</p>
+      <div class="stat-body">
+        <div class="stat-header">
+          <span class="stat-label">Top Item</span>
+          <a routerLink="/dashboard/procurement" class="stat-link">View</a>
+        </div>
+        <p class="stat-value stat-value-text" [title]="topItemName">{{ isLoading ? '—' : (topItemName || '—') }}</p>
+        <p class="stat-subtitle">{{ topItemCode || 'Most ordered SKU this month' }}</p>
+      </div>
+    </div>
+
+    <div class="stat-card stat-card-accent">
+      <div class="stat-icon stat-icon-material">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </div>
+      <div class="stat-body">
+        <div class="stat-header">
+          <span class="stat-label">Top Raw Material</span>
+          <a routerLink="/dashboard/usage-report" class="stat-link">View</a>
+        </div>
+        <p class="stat-value stat-value-text" [title]="topRawMaterial">{{ isLoading ? '—' : (topRawMaterial || '—') }}</p>
+        <p class="stat-subtitle">Most ordered this month</p>
+      </div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Requisitions</span>
-        <a routerLink="/dashboard/procurement" class="stat-link">View</a>
+      <div class="stat-icon stat-icon-slips">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
       </div>
-      <p class="stat-value">{{ isLoading ? '—' : totalRequisitions }}</p>
-      <p class="stat-subtitle">{{ requisitionTableCount }} ordering tables · {{ submittedTablesCount }} submitted</p>
+      <div class="stat-body">
+        <div class="stat-header">
+          <span class="stat-label">Requisition Slips</span>
+          <a routerLink="/dashboard/procurement" class="stat-link">View</a>
+        </div>
+        <p class="stat-value">{{ isLoading ? '—' : monthlyRequisitionSlips }}</p>
+        <p class="stat-subtitle">Submitted this month</p>
+      </div>
     </div>
 
     <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Pending / In Progress</span>
+      <div class="stat-icon stat-icon-pending">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
       </div>
-      <p class="stat-value">{{ isLoading ? '—' : pendingRequisitions + submittedRequisitions }}</p>
-      <p class="stat-subtitle">{{ pendingRequisitions }} pending · {{ submittedRequisitions }} in workflow</p>
-    </div>
-
-    <div class="stat-card">
-      <div class="stat-header">
-        <span class="stat-label">Materials Required</span>
-        <a routerLink="/dashboard/usage-report" class="stat-link">View</a>
+      <div class="stat-body">
+        <div class="stat-header">
+          <span class="stat-label">Pending / In Progress</span>
+        </div>
+        <p class="stat-value">{{ isLoading ? '—' : monthlyPendingInProgress }}</p>
+        <p class="stat-subtitle">Active this month</p>
       </div>
-      <p class="stat-value">{{ isLoading ? '—' : totalMaterials }}</p>
-      <p class="stat-subtitle">{{ totalMaterialQty | number:'1.2-2' }} total units across all requisitions</p>
     </div>
   </div>
 
-  <!-- Module summaries -->
   <div class="module-row">
     <div class="card module-card">
       <div class="module-card-header">
-        <h3 class="card-title">Production</h3>
+        <div class="module-title-wrap">
+          <span class="module-dot module-dot-production"></span>
+          <h3 class="card-title">Production</h3>
+        </div>
         <a routerLink="/dashboard/production" class="stat-link">Open</a>
       </div>
       <ul class="module-stats">
@@ -65,7 +89,10 @@
 
     <div class="card module-card">
       <div class="module-card-header">
-        <h3 class="card-title">Ordering</h3>
+        <div class="module-title-wrap">
+          <span class="module-dot module-dot-ordering"></span>
+          <h3 class="card-title">Ordering</h3>
+        </div>
         <a routerLink="/dashboard/procurement" class="stat-link">Open</a>
       </div>
       <ul class="module-stats">
@@ -77,40 +104,63 @@
 
     <div class="card module-card">
       <div class="module-card-header">
-        <h3 class="card-title">Usage Report</h3>
+        <div class="module-title-wrap">
+          <span class="module-dot module-dot-usage"></span>
+          <h3 class="card-title">Usage Report</h3>
+        </div>
         <a routerLink="/dashboard/usage-report" class="stat-link">Open</a>
       </div>
       <ul class="module-stats">
         <li><span>Unique materials</span><strong>{{ totalMaterials }}</strong></li>
         <li><span>Total required qty</span><strong>{{ totalMaterialQty | number:'1.2-2' }}</strong></li>
-        <li><span>Top material</span><strong>{{ topMaterials[0]?.name || '—' }}</strong></li>
+        <li><span>Top material</span><strong class="truncate">{{ topMaterials[0]?.name || '—' }}</strong></li>
       </ul>
     </div>
   </div>
 
-  <!-- Charts row -->
   <div class="charts-row">
     <div class="card chart-card">
       <div class="chart-header">
-        <h3 class="chart-title">Requisition Activity</h3>
-        <span class="chart-subtitle-inline">Last 7 days · {{ weeklyActivityTotal }} total</span>
+        <div class="chart-header-left">
+          <h3 class="chart-title">Requisition Activity</h3>
+          <span class="chart-subtitle-inline">Last {{ activityDays }} days · {{ weeklyActivityTotal }} total</span>
+        </div>
+        <div class="activity-filters" role="group" aria-label="Activity period">
+          <button
+            type="button"
+            *ngFor="let days of activityDayOptions"
+            class="activity-filter-btn"
+            [class.active]="activityDays === days"
+            (click)="setActivityDays(days)"
+          >
+            {{ days }}d
+          </button>
+        </div>
       </div>
       <div class="chart-body">
-        <div *ngIf="!isLoading && weeklyActivityTotal === 0" class="empty-chart">
-          No requisition activity in the last 7 days.
+        <div *ngIf="!isLoading && weeklyActivity.length && weeklyActivityTotal === 0" class="empty-chart">
+          No requisition activity in the last {{ activityDays }} days.
         </div>
-        <div *ngIf="isLoading || weeklyActivityTotal > 0" class="bar-chart">
-          <div
-            *ngFor="let day of weeklyActivity"
-            class="bar-wrap"
-            [title]="day.label + ': ' + day.count"
-          >
-            <span class="bar-count" *ngIf="day.count > 0">{{ day.count }}</span>
-            <div class="bar" [style.--h.%]="day.height"></div>
+        <div class="bar-chart-area" *ngIf="isLoading || weeklyActivity.length">
+          <div class="bar-chart" [class.bar-chart-loading]="isLoading">
+            <div
+              *ngFor="let day of weeklyActivity"
+              class="bar-wrap"
+              [title]="day.label + ': ' + day.count"
+            >
+              <span class="bar-count">{{ day.count > 0 ? day.count : '' }}</span>
+              <div class="bar-track">
+                <div
+                  class="bar"
+                  [class.bar-empty]="day.count === 0"
+                  [style.height.%]="day.height"
+                ></div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="chart-labels" *ngIf="weeklyActivity.length">
-          <span *ngFor="let day of weeklyActivity">{{ day.label }}</span>
+          <div class="chart-labels" *ngIf="weeklyActivity.length && !isLoading">
+            <span *ngFor="let day of weeklyActivity">{{ day.label }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -130,7 +180,6 @@
     </div>
   </div>
 
-  <!-- Bottom sections -->
   <div class="bottom-row">
     <div class="card table-card">
       <div class="table-card-header">
@@ -145,6 +194,7 @@
           <thead>
             <tr>
               <th>ID</th>
+              <th>Table</th>
               <th>Item</th>
               <th>Status</th>
               <th>Date</th>
@@ -153,9 +203,10 @@
           <tbody>
             <tr *ngFor="let req of recentRequisitions">
               <td class="font-mono">{{ req.reqNumber }}</td>
-              <td>{{ req.skuName }}</td>
+              <td>{{ req.tableName }}</td>
+              <td class="truncate">{{ req.skuName }}</td>
               <td><span class="badge" [ngClass]="getStatusBadgeClass(req.status)">{{ req.status }}</span></td>
-              <td>{{ req.date }}</td>
+              <td class="text-muted">{{ req.date }}</td>
             </tr>
           </tbody>
         </table>
@@ -173,10 +224,7 @@
       <ul class="top-materials-list" *ngIf="topMaterials.length">
         <li *ngFor="let mat of topMaterials; let i = index">
           <span class="rank">{{ i + 1 }}</span>
-          <div class="material-info">
-            <span class="material-name">{{ mat.name }}</span>
-            <span class="material-qty">{{ mat.quantity | number:'1.2-2' }} {{ mat.unit }}</span>
-          </div>
+          <span class="material-name">{{ mat.name }}</span>
         </li>
       </ul>
       <div class="analytics-summary" *ngIf="totalRequisitions > 0">

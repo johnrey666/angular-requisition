@@ -728,6 +728,31 @@ export class DatabaseService {
     }
   }
 
+  async getAllRequisitions(): Promise<any[]> {
+    try {
+      const snapshot = await this.run(() => {
+        const q = query(
+          collection(this.firestore, 'requisitions'),
+          orderBy('created_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.error('getAllRequisitions failed', err);
+      return [];
+    }
+  }
+
+  async getRequisitionsForDashboard(userId: string, role: string): Promise<any[]> {
+    const elevatedRoles = ['admin', 'production', 'procurement'];
+    if (elevatedRoles.includes(role)) {
+      return this.getAllRequisitions();
+    }
+    return this.getUserRequisitions(userId);
+  }
+
   async createRequisition(data: any, materials: any[]): Promise<{ success: boolean; id?: string }> {
     try {
       const requisitionData = {

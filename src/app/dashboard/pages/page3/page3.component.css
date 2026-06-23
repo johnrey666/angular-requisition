@@ -49,28 +49,109 @@ h2 {
 .header {
   display: flex;
   justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.header-title {
+  min-width: 0;
+}
+
+.header-title-row {
+  display: flex;
   align-items: center;
-  margin-bottom: 24px;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.header-title-row .role-badge {
+  margin: 0;
 }
 
 .header-actions {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 /* ==========================================================================
-   Role Header
+   Table Context Bar
    ========================================================================== */
-.role-header {
-  margin-bottom: 24px;
-  padding: 16px 20px;
+.table-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
+}
+
+.table-context-main h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.table-context-stats {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.stat-chip {
+  display: inline-flex;
   align-items: center;
-  gap: 16px;
+  padding: 2px 10px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.stat-chip.stat-closed {
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+}
+
+.stat-chip.stat-transferred {
+  background: hsl(var(--alert-success-bg));
+  color: hsl(var(--success, #16a34a));
+}
+
+.table-context-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.status-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+
+.status-pill.done {
+  background: hsl(var(--destructive) / 0.12);
+  color: hsl(var(--destructive));
+}
+
+/* ==========================================================================
+   Role Header (legacy - badge moved to title row)
+   ========================================================================== */
+.role-header {
+  display: none;
 }
 
 .role-badge {
@@ -2001,6 +2082,7 @@ tr:hover td {
   bottom: 24px;
   width: 360px;
   max-width: calc(100vw - 32px);
+  max-height: min(640px, calc(100vh - 48px));
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: 12px;
@@ -2091,7 +2173,9 @@ tr:hover td {
 }
 
 .chat-messages {
-  height: 280px;
+  flex: 1;
+  min-height: 120px;
+  max-height: 300px;
   overflow-y: auto;
   padding: 12px;
   display: flex;
@@ -2144,9 +2228,18 @@ tr:hover td {
   word-break: break-word;
 }
 
+.chat-message-image img {
+  display: block;
+  max-width: 220px;
+  max-height: 180px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 .chat-close-banner {
+  flex-shrink: 0;
   padding: 10px 12px;
-  border-top: 1px solid hsl(var(--border));
+  border-bottom: 1px solid hsl(var(--border));
   background: hsl(var(--alert-success-bg));
 }
 
@@ -2166,7 +2259,17 @@ tr:hover td {
   flex-wrap: wrap;
   gap: 6px;
   padding: 8px 12px;
-  border-top: 1px solid hsl(var(--border));
+  border-bottom: 1px solid hsl(var(--border));
+  flex-shrink: 0;
+  background: hsl(var(--card));
+  align-items: center;
+}
+
+.chat-toolbar-divider {
+  width: 1px;
+  height: 22px;
+  background: hsl(var(--border));
+  margin: 0 2px;
 }
 
 .chat-upload-btn {
@@ -2179,6 +2282,20 @@ tr:hover td {
   gap: 8px;
   padding: 10px 12px;
   border-top: 1px solid hsl(var(--border));
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.chat-image-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .chat-input-row input {
