@@ -171,7 +171,7 @@ interface RawMaterialModalItem {
   standalone: true,
   imports: [CommonModule, FormsModule, HttpClientModule],
   templateUrl: './page3.component.html',
-  styleUrls: ['./page3.component.css']
+  styleUrls: ['./page3.component.css', '../../styles/dashboard-pages.enhancements.css']
 })
 export class Page3Component implements OnInit, OnDestroy {
 

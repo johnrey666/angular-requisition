@@ -2,12 +2,12 @@
    Base
    ========================================================================== */
 .page-content {
-  max-width: 1440px;
+  max-width: 1320px;
   margin: 0 auto;
-  padding: 24px;
-  font-family: -apple-system, 'Inter', 'Segoe UI', Roboto, sans-serif;
-  background: hsl(var(--background));
-  min-height: 100vh;
+  padding: 0 0 2rem;
+  font-family: inherit;
+  background: transparent;
+  min-height: auto;
   color: hsl(var(--foreground));
 }
 
@@ -19,9 +19,9 @@ h1, h2, h3, h4, p {
 }
 
 h1 {
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 1.625rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
   color: hsl(var(--foreground));
 }
 
@@ -50,12 +50,26 @@ h3 {
 .page-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
 }
 
 .header-title {
   flex: 1;
+  min-width: 0;
+}
+
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.header-title-row .role-badge {
+  margin: 0;
 }
 
 /* ==========================================================================
@@ -63,11 +77,11 @@ h3 {
    ========================================================================== */
 .card {
   background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  margin-bottom: 20px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.875rem;
+  margin-bottom: 1rem;
   overflow: hidden;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: none;
 }
 
 .card-header {
@@ -229,22 +243,28 @@ h3 {
 
 .summary-card {
   background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 8px;
-  padding: 16px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.875rem;
+  padding: 1.125rem 1.25rem;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0.875rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.summary-card:hover {
+  border-color: hsl(var(--border));
+  box-shadow: 0 4px 20px rgb(0 0 0 / 0.04);
 }
 
 .summary-icon {
-  width: 40px;
-  height: 40px;
+  width: 2.5rem;
+  height: 2.5rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: hsl(var(--muted));
-  border-radius: 8px;
+  background: hsl(var(--primary) / 0.1);
+  border-radius: 0.625rem;
   color: hsl(var(--primary));
 }
 
@@ -590,18 +610,19 @@ tbody tr:hover td {
   transform: translateX(-50%) translateY(100px);
   z-index: 10000;
   min-width: 320px;
-  padding: 12px 20px;
+  padding: 0.75rem 1rem;
   background: hsl(var(--card));
-  border-radius: 8px;
+  border-radius: 0.75rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
   opacity: 0;
   visibility: hidden;
   transition: all 0.2s;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  border: 1px solid hsl(var(--border));
-  font-size: 13px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.12);
+  border: 1px solid hsl(var(--border) / 0.7);
+  font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .snackbar.show {

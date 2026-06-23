@@ -44,7 +44,7 @@ interface ProductionTable {
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './page2.component.html',
-  styleUrls: ['./page2.component.css']
+  styleUrls: ['./page2.component.css', '../../styles/dashboard-pages.enhancements.css']
 })
 export class Page2Component implements OnInit {
   newItem = {

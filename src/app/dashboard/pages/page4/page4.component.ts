@@ -40,7 +40,7 @@ interface TypeBreakdown {
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './page4.component.html',
-  styleUrls: ['./page4.component.css']
+  styleUrls: ['./page4.component.css', '../../styles/dashboard-pages.enhancements.css']
 })
 export class Page4Component implements OnInit {
   private static cache: {

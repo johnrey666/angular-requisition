@@ -1,17 +1,4 @@
 <div class="page-content">
-  <!-- Role Badge -->
-  <div class="role-header" *ngIf="userRole">
-    <span class="role-badge" [class]="'role-' + userRole">
-      {{ userRole | titlecase }} Access
-    </span>
-    <span class="role-description" *ngIf="userRole === 'production'">
-      Production Dashboard - Monitor material usage and requirements
-    </span>
-    <span class="role-description" *ngIf="userRole === 'admin'">
-      Administrator - Full access to usage reports
-    </span>
-  </div>
-
   <!-- Notification -->
   <div class="snackbar" [class.show]="showNotification" [class]="'snackbar-' + notificationType">
     <span class="snackbar-message">{{ notificationMessage }}</span>
@@ -21,7 +8,10 @@
   <!-- Header -->
   <div class="page-header">
     <div class="header-title">
-      <h1>Production Material Usage</h1>
+      <div class="header-title-row">
+        <h1>Production Material Usage</h1>
+        <span class="role-badge" *ngIf="userRole" [class]="'role-' + userRole">{{ userRole | titlecase }}</span>
+      </div>
       <span class="subtitle">View aggregated material consumption across production tables</span>
     </div>
   </div>

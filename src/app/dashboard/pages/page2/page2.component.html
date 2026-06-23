@@ -1,12 +1,4 @@
 <div class="page-content">
-  <!-- Role Badge -->
-  <div class="role-header" *ngIf="userRole">
-    <span class="role-badge" [class]="'role-' + userRole">
-      {{ userRole | titlecase }} Access
-    </span>
-    <span class="role-description">Production Management - Track material requirements</span>
-  </div>
-
   <!-- Snackbar -->
   <div class="snackbar" [class.show]="showSnackbar" [class]="snackbarType">
     <span class="snackbar-message">{{ snackbarMessage }}</span>
@@ -16,7 +8,10 @@
   <!-- Header -->
   <div class="page-header">
     <div class="header-title">
-      <h1>Production Material Requirements</h1>
+      <div class="header-title-row">
+        <h1>Production Material Requirements</h1>
+        <span class="role-badge" *ngIf="userRole" [class]="'role-' + userRole">{{ userRole | titlecase }}</span>
+      </div>
       <span class="subtitle">Track raw material requirements for production batches</span>
     </div>
     <div class="header-actions">
@@ -73,7 +68,7 @@
           <polyline points="8 12 12 16 16 12"/>
           <line x1="12" y1="2" x2="12" y2="16"/>
         </svg>
-        Export Requirementsk
+        Export Requirements
       </button>
     </div>
   </div>
