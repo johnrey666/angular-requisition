@@ -1,4 +1,4 @@
-import { Component, OnInit, HostListener, Injector, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, HostListener, Injector, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClientModule } from '@angular/common/http';
@@ -9,9 +9,10 @@ import { NotificationService } from '../../../core/services/notification.service
 import { EmailNotificationService } from '../../../core/services/email-notification.service';
 import {
   Firestore, doc, collection, query, where, getDocs,
-  writeBatch, getDoc, updateDoc, orderBy
+  writeBatch, getDoc, updateDoc, orderBy, addDoc, onSnapshot, Unsubscribe, limit
 } from '@angular/fire/firestore';
 import { Router, ActivatedRoute } from '@angular/router';
+import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import * as XLSX from 'xlsx';
 
 interface Material {
@@ -20,6 +21,7 @@ interface Material {
   unit: string;
   type: string;
   production_action?: 'confirmed' | 'removed';
+  procurement_action?: 'approved' | 'rejected';
 }
 
 interface Requisition {
@@ -51,6 +53,7 @@ interface Requisition {
   production_action_at?: string;
   production_action_by?: string;
   production_action_notes?: string;
+  production_notes?: string;
   procurement_action?: 'reviewed' | 'pending';
   procurement_action_at?: string;
   procurement_action_by?: string;
@@ -82,6 +85,24 @@ interface Table {
   request_closed?: boolean;
   request_closed_at?: string;
   request_closed_by?: string;
+  request_status?: 'PENDING' | 'DONE';
+  close_request_pending?: boolean;
+  close_request_user_accepted?: boolean;
+  close_request_production_accepted?: boolean;
+  close_request_initiated_at?: string;
+  close_request_initiated_by?: string;
+}
+
+interface ChatMessage {
+  id: string;
+  sender_id: string;
+  sender_email: string;
+  sender_role: string;
+  message: string;
+  message_type: 'text' | 'close_request' | 'close_response' | 'po_upload' | 'system';
+  created_at: string;
+  close_response?: 'accepted' | 'rejected';
+  po_file_name?: string;
 }
 
 interface SkuOption {
@@ -142,7 +163,7 @@ interface RawMaterialModalItem {
   templateUrl: './page3.component.html',
   styleUrls: ['./page3.component.css']
 })
-export class Page3Component implements OnInit {
+export class Page3Component implements OnInit, OnDestroy {
 
   categories: string[] = [];
   availableSkus: SkuOption[] = [];
@@ -161,6 +182,8 @@ export class Page3Component implements OnInit {
 
   procurementReviewed: Requisition[] = [];
   procurementTableSummaries: ProcurementTableSummary[] = [];
+  paginatedProcurementSummaries: ProcurementTableSummary[] = [];
+  procurementTotalPages = 1;
   expandedProcurementOriginalItems: { [tableId: string]: boolean } = {};
   showProcurementOriginalItemsModal = false;
   currentProcurementTableId = '';
@@ -197,6 +220,23 @@ export class Page3Component implements OnInit {
   showDeliveryModal = false;
   showMissingNotesModal = false;
   showProductionActionModal = false;
+  showProductionNotesModal = false;
+  productionNotesText = '';
+  productionNotesReadOnly = false;
+
+  showChatPanel = false;
+  chatMinimized = false;
+  chatTable: Table | null = null;
+  chatMessages: ChatMessage[] = [];
+  chatInput = '';
+  chatLoading = false;
+  private chatUnsubscribe: Unsubscribe | null = null;
+  unreadChatByTableId: Record<string, boolean> = {};
+  private unreadChatUnsubscribes: Unsubscribe[] = [];
+
+  showPoViewerModal = false;
+  poViewerTable: Table | null = null;
+
   viewMode: 'my_tables' | 'store_submissions' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
   selectedProductionView: 'submissions' | 'reviewed' = 'submissions';
   showAllPending = false;
@@ -214,7 +254,6 @@ export class Page3Component implements OnInit {
   private readonly maxPoFileBytes = 500 * 1024;
 
   formData: any = {
-    type: '',
     category: '',
     skuName: '',
     quantity: null,
@@ -277,7 +316,8 @@ export class Page3Component implements OnInit {
     private injector: Injector,
     private cdr: ChangeDetectorRef,
     private notificationService: NotificationService,
-    private emailNotificationService: EmailNotificationService
+    private emailNotificationService: EmailNotificationService,
+    private sanitizer: DomSanitizer
   ) {}
 
   private run<T>(fn: () => Promise<T>): Promise<T> {
@@ -446,7 +486,13 @@ export class Page3Component implements OnInit {
           production_reviewed_by: data['production_reviewed_by'],
           request_closed: data['request_closed'] || false,
           request_closed_at: data['request_closed_at'],
-          request_closed_by: data['request_closed_by']
+          request_closed_by: data['request_closed_by'],
+          request_status: data['request_status'] || (data['request_closed'] ? 'DONE' : 'PENDING'),
+          close_request_pending: data['close_request_pending'] || false,
+          close_request_user_accepted: data['close_request_user_accepted'] || false,
+          close_request_production_accepted: data['close_request_production_accepted'] || false,
+          close_request_initiated_at: data['close_request_initiated_at'],
+          close_request_initiated_by: data['close_request_initiated_by']
         };
 
         if (table.user_id) {
@@ -527,6 +573,7 @@ export class Page3Component implements OnInit {
       this.showToast('Failed to load tables', 'error');
     } finally {
       this.isLoading = false;
+      this.setupUnreadChatListeners();
     }
   }
 
@@ -588,7 +635,8 @@ export class Page3Component implements OnInit {
 
           req.materials = loadedMaterials.map(mat => ({
             ...mat,
-            production_action: existingActions[mat.raw_material.toLowerCase()]?.production_action
+            production_action: existingActions[mat.raw_material.toLowerCase()]?.production_action,
+            procurement_action: existingActions[mat.raw_material.toLowerCase()]?.procurement_action
           }));
         } else {
           req.materials = loadedMaterials;
@@ -759,8 +807,8 @@ export class Page3Component implements OnInit {
   }
 
   getColspan(): number {
-    let baseCols = 13;
-    if (this.userRole === 'production') baseCols = 14;
+    let baseCols = 12;
+    if (this.userRole === 'production') baseCols = 13;
     return baseCols;
   }
 
@@ -926,7 +974,13 @@ export class Page3Component implements OnInit {
           po_file_name: data['po_file_name'],
           request_closed: data['request_closed'] || false,
           request_closed_at: data['request_closed_at'],
-          request_closed_by: data['request_closed_by']
+          request_closed_by: data['request_closed_by'],
+          request_status: data['request_status'] || (data['request_closed'] ? 'DONE' : 'PENDING'),
+          close_request_pending: data['close_request_pending'] || false,
+          close_request_user_accepted: data['close_request_user_accepted'] || false,
+          close_request_production_accepted: data['close_request_production_accepted'] || false,
+          close_request_initiated_at: data['close_request_initiated_at'],
+          close_request_initiated_by: data['close_request_initiated_by']
         };
       }
     } catch (err) {}
@@ -1129,7 +1183,6 @@ export class Page3Component implements OnInit {
     this.resetForm();
 
     this.formData = {
-      type: req.type || '',
       category: req.category || '',
       skuName: req.skuName || '',
       quantity: req.quantity || null,
@@ -1201,7 +1254,6 @@ export class Page3Component implements OnInit {
 
       const requisitionData: any = {
         reqNumber,
-        type: this.formData.type,
         dateNeeded: this.formData.dateNeeded || 'ASAP',
         skuCode,
         skuName,
@@ -1359,52 +1411,12 @@ export class Page3Component implements OnInit {
   }
 
   // ============================================================
-  // Close Request (Procurement only)
+  // Close Request (via Chat — legacy direct close kept for admin)
   // ============================================================
   async closeRequest(table: Table) {
-    if (this.userRole !== 'procurement' && this.userRole !== 'admin') {
-      this.showToast('Only procurement can close requests', 'error');
-      return;
-    }
-
-    if (table.request_closed) {
-      this.showToast('This request is already closed', 'info');
-      return;
-    }
-
-    if (!confirm(`Close request for table "${table.name}"? This will mark it as resolved for all users.`)) return;
-
-    try {
-      this.isSubmitting = true;
-      const tableRef = doc(this.firestore, 'tables', table.id);
-      await this.run(() =>
-        updateDoc(tableRef, {
-          request_closed: true,
-          request_closed_at: new Date().toISOString(),
-          request_closed_by: this.userId,
-          updated_at: new Date().toISOString()
-        })
-      );
-
-      // Update local state
-      table.request_closed = true;
-      table.request_closed_at = new Date().toISOString();
-      table.request_closed_by = this.userId;
-
-      const tableIndex = this.tables.findIndex(t => t.id === table.id);
-      if (tableIndex !== -1) {
-        this.tables[tableIndex] = { ...this.tables[tableIndex], ...table };
-      }
-
-      if (this.selectedTable?.id === table.id) {
-        this.selectedTable = { ...this.selectedTable, ...table };
-      }
-
-      this.showToast(`Request for "${table.name}" has been closed`, 'success');
-    } catch (err) {
-      this.showToast('Failed to close request', 'error');
-    } finally {
-      this.isSubmitting = false;
+    this.openChat(table);
+    if (this.userRole === 'procurement' || this.userRole === 'admin') {
+      await this.initiateCloseRequestInChat();
     }
   }
 
@@ -1930,6 +1942,10 @@ export class Page3Component implements OnInit {
 
   private async setAllMaterialsAction(req: Requisition, action: 'confirmed' | 'removed') {
     if (!req) return;
+    if (this.isProductionActionsLocked(req)) {
+      this.showToast('Production actions are locked after transfer to Procurement', 'error');
+      return;
+    }
 
     if (!req.materials || req.materials.length === 0) {
       const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
@@ -1973,6 +1989,10 @@ export class Page3Component implements OnInit {
 
   async setMaterialAction(req: Requisition, material: Material, action: 'confirmed' | 'removed') {
     if (!req || !req.materials) return;
+    if (this.isProductionActionsLocked(req)) {
+      this.showToast('Production actions are locked after transfer to Procurement', 'error');
+      return;
+    }
 
     material.production_action = action;
     req.materials = [...req.materials];
@@ -2095,9 +2115,15 @@ export class Page3Component implements OnInit {
       uniqueMaterialsCount: summary.materials.length,
       totalRequestedQuantity: summary.materials.reduce((sum, mat) => sum + (mat.totalQuantity || 0), 0)
     }));
+    this.updateProcurementPagination();
   }
 
   setProcurementMaterialAction(item: ProcurementMaterialSummary, action: 'approved' | 'rejected') {
+    const table = this.tables.find(t => t.id === item.table_id);
+    if (this.isRequestDone(table)) {
+      this.showToast('Request is DONE — procurement actions are locked', 'error');
+      return;
+    }
     item.procurement_action = action;
     // Persist to the actions map so other views can read it
     const key = `${item.table_id}|${item.raw_material.toLowerCase()}`;
@@ -2177,6 +2203,41 @@ export class Page3Component implements OnInit {
       return `data:${mime};base64,${table.po_file_data}`;
     }
     return table.po_file_url || '';
+  }
+
+  getSafePoViewUrl(table: Table | null | undefined): SafeResourceUrl | string {
+    const url = this.getPoViewUrl(table);
+    return url ? this.sanitizer.bypassSecurityTrustResourceUrl(url) : '';
+  }
+
+  getPoMime(table: Table | null | undefined): string {
+    if (!table) return '';
+    return table.po_file_mime || table.po_file_type || 'application/octet-stream';
+  }
+
+  isPoImage(table: Table | null | undefined): boolean {
+    return this.getPoMime(table).startsWith('image/');
+  }
+
+  isPoPdf(table: Table | null | undefined): boolean {
+    const mime = this.getPoMime(table).toLowerCase();
+    const name = (table?.po_file_name || '').toLowerCase();
+    return mime.includes('pdf') || name.endsWith('.pdf');
+  }
+
+  openPoViewer(table: Table | null | undefined) {
+    if (!table || !this.hasPoDocument(table)) return;
+    this.poViewerTable = table;
+    this.showPoViewerModal = true;
+  }
+
+  closePoViewerModal() {
+    this.showPoViewerModal = false;
+    this.poViewerTable = null;
+  }
+
+  private getTableMessagesRef(tableId: string) {
+    return collection(this.firestore, 'tables', tableId, 'messages');
   }
 
   private getMaterialsFromLoadedData(skuCode: string, skuName: string): Material[] {
@@ -2315,6 +2376,10 @@ export class Page3Component implements OnInit {
       this.showToast('Please select a table first', 'error');
       return;
     }
+    if (!this.canUploadPo()) {
+      this.showToast('Only procurement can upload P.O files', 'error');
+      return;
+    }
     if (!this.poFile) {
       this.showToast('Please choose a P.O file first', 'error');
       return;
@@ -2372,6 +2437,10 @@ export class Page3Component implements OnInit {
   async removePoLink(table?: Table | null) {
     const targetTable = table || this.selectedTable;
     if (!targetTable) return;
+    if (!this.canUploadPo()) {
+      this.showToast('Only procurement can remove P.O files', 'error');
+      return;
+    }
     if (!confirm('Remove this P.O document?')) return;
 
     try {
@@ -2618,7 +2687,6 @@ export class Page3Component implements OnInit {
 
   validateForm(): boolean {
     return !!(
-      this.formData.type &&
       this.formData.category &&
       this.formData.skuName &&
       this.formData.quantity &&
@@ -2634,7 +2702,6 @@ export class Page3Component implements OnInit {
 
   resetForm() {
     this.formData = {
-      type: '',
       category: '',
       skuName: '',
       quantity: null,
@@ -2716,7 +2783,475 @@ export class Page3Component implements OnInit {
   }
 
   canProductionAction(req: Requisition): boolean {
-    return this.userRole === 'production' && req.status === 'Submitted';
+    return this.userRole === 'production' && req.status === 'Submitted' && !this.isProductionActionsLocked(req);
+  }
+
+  canProductionEditMaterials(req: Requisition): boolean {
+    return this.canProductionAction(req);
+  }
+
+  getTableForRequisition(req: Requisition): Table | null {
+    if (req.table_id) {
+      const found = this.tables.find(t => t.id === req.table_id);
+      if (found) return found;
+    }
+    if (this.selectedTable && this.selectedTable.id === req.table_id) {
+      return this.selectedTable;
+    }
+    return null;
+  }
+
+  isProductionActionsLocked(req: Requisition): boolean {
+    const table = this.getTableForRequisition(req);
+    return !!table?.production_reviewed;
+  }
+
+  isRequestDone(table: Table | null | undefined): boolean {
+    if (!table) return false;
+    return table.request_status === 'DONE' || !!table.request_closed;
+  }
+
+  getRequestStatusLabel(table: Table | null | undefined): 'PENDING' | 'DONE' {
+    return this.isRequestDone(table) ? 'DONE' : 'PENDING';
+  }
+
+  canOpenChat(table: Table | null | undefined): boolean {
+    if (!table) return false;
+    if (this.userRole === 'admin') return true;
+    if ((this.userRole === 'user' || this.userRole === 'store') && table.user_id === this.userId) {
+      return !!table.submitted;
+    }
+    if (this.userRole === 'production') return !!table.submitted;
+    if (this.userRole === 'procurement') return !!table.production_reviewed;
+    return false;
+  }
+
+  isChatWritable(): boolean {
+    return !!this.chatTable && !this.isRequestDone(this.chatTable);
+  }
+
+  canInitiateCloseRequest(): boolean {
+    return (
+      !!this.chatTable &&
+      (this.userRole === 'procurement' || this.userRole === 'admin') &&
+      !this.isRequestDone(this.chatTable) &&
+      !this.chatTable.close_request_pending
+    );
+  }
+
+  canUploadPo(): boolean {
+    return this.userRole === 'procurement' || this.userRole === 'admin';
+  }
+
+  canRespondToCloseRequest(): boolean {
+    if (!this.chatTable?.close_request_pending || this.isRequestDone(this.chatTable)) return false;
+    if (this.userRole === 'user' || this.userRole === 'store') {
+      return this.chatTable.user_id === this.userId && !this.chatTable.close_request_user_accepted;
+    }
+    if (this.userRole === 'production') {
+      return !this.chatTable.close_request_production_accepted;
+    }
+    return false;
+  }
+
+  openProductionNotesModal(req: Requisition, readOnly = false) {
+    this.selectedRequisition = req;
+    this.productionNotesText = req.production_notes || '';
+    this.productionNotesReadOnly = readOnly;
+    this.showProductionNotesModal = true;
+  }
+
+  closeProductionNotesModal() {
+    this.showProductionNotesModal = false;
+    this.selectedRequisition = null;
+    this.productionNotesText = '';
+    this.productionNotesReadOnly = false;
+  }
+
+  async saveProductionNotes() {
+    if (!this.selectedRequisition || this.productionNotesReadOnly) return;
+    if (!this.productionNotesText.trim()) {
+      this.showToast('Please enter a note', 'error');
+      return;
+    }
+    try {
+      const success = await this.db.updateRequisitionStatus(
+        this.selectedRequisition.id,
+        this.selectedRequisition.status,
+        this.userId,
+        this.selectedRequisition.table_id || '',
+        { production_notes: this.productionNotesText.trim() }
+      );
+      if (success) {
+        this.selectedRequisition.production_notes = this.productionNotesText.trim();
+        this.closeProductionNotesModal();
+        this.showToast('Production note saved', 'success');
+      } else {
+        this.showToast('Failed to save note', 'error');
+      }
+    } catch {
+      this.showToast('Failed to save note', 'error');
+    }
+  }
+
+  openChat(table: Table) {
+    if (!this.canOpenChat(table)) {
+      this.showToast('Chat is not available for this table', 'error');
+      return;
+    }
+    this.chatTable = { ...table };
+    this.showChatPanel = true;
+    this.chatMinimized = false;
+    this.markChatRead(table.id);
+    this.subscribeToChat(table.id);
+  }
+
+  closeChatPanel() {
+    this.showChatPanel = false;
+    this.chatMinimized = false;
+    if (this.chatUnsubscribe) {
+      this.chatUnsubscribe();
+      this.chatUnsubscribe = null;
+    }
+    this.chatTable = null;
+    this.chatMessages = [];
+    this.chatInput = '';
+  }
+
+  toggleChatMinimize() {
+    this.chatMinimized = !this.chatMinimized;
+    if (!this.chatMinimized && this.chatTable) {
+      this.markChatRead(this.chatTable.id);
+    }
+  }
+
+  hasUnreadChat(table: Table | null | undefined): boolean {
+    if (!table) return false;
+    return !!this.unreadChatByTableId[table.id];
+  }
+
+  private chatReadAtKey(tableId: string): string {
+    return `chatReadAt_${this.userId}_${tableId}`;
+  }
+
+  private getChatLastReadAt(tableId: string): string | null {
+    return localStorage.getItem(this.chatReadAtKey(tableId));
+  }
+
+  private markChatRead(tableId: string) {
+    localStorage.setItem(this.chatReadAtKey(tableId), new Date().toISOString());
+    this.unreadChatByTableId[tableId] = false;
+  }
+
+  private teardownUnreadChatListeners() {
+    this.unreadChatUnsubscribes.forEach(unsub => unsub());
+    this.unreadChatUnsubscribes = [];
+  }
+
+  private setupUnreadChatListeners() {
+    this.teardownUnreadChatListeners();
+    if (!this.userId) return;
+
+    const tables = this.tables.filter(t => this.canOpenChat(t));
+    for (const table of tables) {
+      const messagesRef = this.getTableMessagesRef(table.id);
+      const q = query(messagesRef, orderBy('created_at', 'desc'), limit(1));
+      const unsub = onSnapshot(q, (snap) => {
+        if (snap.empty) {
+          this.unreadChatByTableId[table.id] = false;
+          return;
+        }
+        const msg = snap.docs[0].data();
+        if (msg['sender_id'] === this.userId) {
+          this.unreadChatByTableId[table.id] = false;
+          return;
+        }
+        const isOpen = this.showChatPanel && this.chatTable?.id === table.id && !this.chatMinimized;
+        if (isOpen) {
+          this.markChatRead(table.id);
+          return;
+        }
+        const lastRead = this.getChatLastReadAt(table.id);
+        this.unreadChatByTableId[table.id] = !lastRead || msg['created_at'] > lastRead;
+        this.cdr.detectChanges();
+      });
+      this.unreadChatUnsubscribes.push(unsub);
+    }
+  }
+
+  private subscribeToChat(tableId: string) {
+    if (this.chatUnsubscribe) {
+      this.chatUnsubscribe();
+      this.chatUnsubscribe = null;
+    }
+    this.chatLoading = true;
+    const messagesRef = this.getTableMessagesRef(tableId);
+    const q = query(messagesRef, orderBy('created_at', 'asc'));
+    this.chatUnsubscribe = onSnapshot(q, (snap) => {
+      this.chatMessages = snap.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<ChatMessage, 'id'>)
+      }));
+      this.chatLoading = false;
+      if (this.chatTable && this.showChatPanel && !this.chatMinimized) {
+        this.markChatRead(tableId);
+      }
+      this.cdr.detectChanges();
+    }, () => {
+      this.chatLoading = false;
+    });
+  }
+
+  async sendChatMessage() {
+    if (!this.chatTable || !this.chatInput.trim() || !this.isChatWritable()) return;
+    try {
+      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      await this.run(() => addDoc(messagesRef, {
+        sender_id: this.userId,
+        sender_email: this.userName,
+        sender_role: this.userRole,
+        message: this.chatInput.trim(),
+        message_type: 'text',
+        created_at: new Date().toISOString()
+      }));
+      this.chatInput = '';
+    } catch (err) {
+      console.error('sendChatMessage failed', err);
+      this.showToast('Failed to send message. Deploy latest Firestore rules if this persists.', 'error');
+    }
+  }
+
+  async initiateCloseRequestInChat() {
+    if (!this.chatTable || !this.canInitiateCloseRequest()) return;
+    if (!confirm('Initiate Close Request? User and Production must both accept to mark this request as DONE.')) return;
+
+    try {
+      const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
+      const initiatedAt = new Date().toISOString();
+      await this.run(() => updateDoc(tableRef, {
+        close_request_pending: true,
+        close_request_user_accepted: false,
+        close_request_production_accepted: false,
+        close_request_initiated_at: initiatedAt,
+        close_request_initiated_by: this.userId,
+        updated_at: initiatedAt
+      }));
+
+      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      await this.run(() => addDoc(messagesRef, {
+        sender_id: this.userId,
+        sender_email: this.userName,
+        sender_role: this.userRole,
+        message: 'Procurement initiated a Close Request. User and Production must accept to mark this request as DONE.',
+        message_type: 'close_request',
+        created_at: initiatedAt
+      }));
+
+      this.patchLocalTable(this.chatTable.id, {
+        close_request_pending: true,
+        close_request_user_accepted: false,
+        close_request_production_accepted: false,
+        close_request_initiated_at: initiatedAt,
+        close_request_initiated_by: this.userId
+      });
+      this.showToast('Close request initiated', 'success');
+    } catch (err) {
+      console.error('initiateCloseRequestInChat failed', err);
+      this.showToast('Failed to initiate close request. Deploy latest Firestore rules if this persists.', 'error');
+    }
+  }
+
+  async respondToCloseRequest(accept: boolean) {
+    if (!this.chatTable?.close_request_pending || !this.canRespondToCloseRequest()) return;
+
+    try {
+      const tableId = this.chatTable.id;
+      const tableRef = doc(this.firestore, 'tables', tableId);
+      const now = new Date().toISOString();
+      const roleLabel = this.userRole === 'production' ? 'Production' : 'User';
+
+      if (!accept) {
+        await this.run(() => updateDoc(tableRef, {
+          close_request_pending: false,
+          close_request_user_accepted: false,
+          close_request_production_accepted: false,
+          updated_at: now
+        }));
+        await this.addChatSystemMessage(
+          tableId,
+          `${roleLabel} rejected the close request. Request remains PENDING.`,
+          'close_response',
+          'rejected'
+        );
+        this.patchLocalTable(tableId, {
+          close_request_pending: false,
+          close_request_user_accepted: false,
+          close_request_production_accepted: false
+        });
+        this.showToast('Close request rejected', 'info');
+        return;
+      }
+
+      const updates = {
+        updated_at: now,
+        ...(this.userRole === 'user' || this.userRole === 'store'
+          ? { close_request_user_accepted: true as const }
+          : this.userRole === 'production'
+            ? { close_request_production_accepted: true as const }
+            : {})
+      };
+
+      await this.run(() => updateDoc(tableRef, updates));
+      await this.addChatSystemMessage(
+        tableId,
+        `${roleLabel} accepted the close request.`,
+        'close_response',
+        'accepted'
+      );
+
+      const tableSnap = await this.run(() => getDoc(tableRef));
+      const data = tableSnap.data() || {};
+      const userAccepted = data['close_request_user_accepted'] === true;
+      const productionAccepted = data['close_request_production_accepted'] === true;
+
+      this.patchLocalTable(tableId, {
+        close_request_user_accepted: userAccepted,
+        close_request_production_accepted: productionAccepted
+      });
+
+      if (userAccepted && productionAccepted) {
+        await this.finalizeCloseRequest(tableId);
+      } else {
+        this.showToast('Your acceptance was recorded', 'success');
+      }
+    } catch {
+      this.showToast('Failed to respond to close request', 'error');
+    }
+  }
+
+  private async finalizeCloseRequest(tableId: string) {
+    const now = new Date().toISOString();
+    const tableRef = doc(this.firestore, 'tables', tableId);
+    await this.run(() => updateDoc(tableRef, {
+      request_status: 'DONE',
+      request_closed: true,
+      request_closed_at: now,
+      request_closed_by: this.userId,
+      close_request_pending: false,
+      updated_at: now
+    }));
+    await this.addChatSystemMessage(
+      tableId,
+      'Request marked as DONE. Chat is now read-only.',
+      'system'
+    );
+    this.patchLocalTable(tableId, {
+      request_status: 'DONE',
+      request_closed: true,
+      request_closed_at: now,
+      request_closed_by: this.userId,
+      close_request_pending: false
+    });
+    this.showToast('Request marked as DONE', 'success');
+  }
+
+  private async addChatSystemMessage(
+    tableId: string,
+    message: string,
+    messageType: ChatMessage['message_type'],
+    closeResponse?: 'accepted' | 'rejected'
+  ) {
+    const messagesRef = this.getTableMessagesRef(tableId);
+    const payload: Record<string, unknown> = {
+      sender_id: this.userId,
+      sender_email: this.userName,
+      sender_role: this.userRole,
+      message,
+      message_type: messageType,
+      created_at: new Date().toISOString()
+    };
+    if (closeResponse) payload['close_response'] = closeResponse;
+    await this.run(() => addDoc(messagesRef, payload));
+  }
+
+  async onChatPoFileSelected(event: Event) {
+    if (!this.chatTable || !this.isChatWritable() || !this.canUploadPo()) {
+      this.showToast('Only procurement can upload P.O files', 'error');
+      return;
+    }
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    if (file.size > this.maxPoFileBytes) {
+      this.showToast('P.O file must be 500KB or smaller', 'error');
+      input.value = '';
+      return;
+    }
+
+    try {
+      this.isUploadingPo = true;
+      const { base64, mime } = await this.readFileAsBase64(file);
+      const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
+      const now = new Date().toISOString();
+
+      await this.run(() => updateDoc(tableRef, {
+        po_file_data: base64,
+        po_file_mime: mime,
+        po_file_name: file.name,
+        po_file_size: file.size,
+        po_file_type: mime,
+        po_uploaded_at: now,
+        po_uploaded_by: this.userId,
+        updated_at: now
+      }));
+
+      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      await this.run(() => addDoc(messagesRef, {
+        sender_id: this.userId,
+        sender_email: this.userName,
+        sender_role: this.userRole,
+        message: `Uploaded P.O: ${file.name}`,
+        message_type: 'po_upload',
+        po_file_name: file.name,
+        created_at: now
+      }));
+
+      this.patchLocalTable(this.chatTable.id, {
+        po_file_data: base64,
+        po_file_mime: mime,
+        po_file_name: file.name,
+        po_file_size: file.size,
+        po_file_type: mime
+      });
+      this.showToast('P.O uploaded to chat', 'success');
+    } catch {
+      this.showToast('Failed to upload P.O', 'error');
+    } finally {
+      this.isUploadingPo = false;
+      input.value = '';
+    }
+  }
+
+  private patchLocalTable(tableId: string, patch: Partial<Table>) {
+    const tableIndex = this.tables.findIndex(t => t.id === tableId);
+    if (tableIndex !== -1) {
+      this.tables[tableIndex] = { ...this.tables[tableIndex], ...patch };
+    }
+    if (this.selectedTable?.id === tableId) {
+      this.selectedTable = { ...this.selectedTable, ...patch };
+    }
+    if (this.chatTable?.id === tableId) {
+      this.chatTable = { ...this.chatTable, ...patch };
+    }
+  }
+
+  ngOnDestroy() {
+    if (this.chatUnsubscribe) {
+      this.chatUnsubscribe();
+      this.chatUnsubscribe = null;
+    }
+    this.teardownUnreadChatListeners();
   }
 
   canMarkDelivered(req: Requisition): boolean {
@@ -2814,9 +3349,26 @@ export class Page3Component implements OnInit {
     this.totalPages = Math.max(1, Math.ceil(this.filteredRequisitions.length / this.pageSize));
     const start = (this.currentPage - 1) * this.pageSize;
     this.paginatedRequisitions = this.filteredRequisitions.slice(start, start + this.pageSize);
+    this.updateProcurementPagination();
+  }
+
+  updateProcurementPagination() {
+    this.procurementTotalPages = Math.max(1, Math.ceil(this.procurementTableSummaries.length / this.pageSize));
+    if (this.currentPage > this.procurementTotalPages) {
+      this.currentPage = this.procurementTotalPages;
+    }
+    const start = (this.currentPage - 1) * this.pageSize;
+    this.paginatedProcurementSummaries = this.procurementTableSummaries.slice(start, start + this.pageSize);
   }
 
   goToPage(page: number) {
+    if (this.userRole === 'procurement') {
+      if (page >= 1 && page <= this.procurementTotalPages) {
+        this.currentPage = page;
+        this.updateProcurementPagination();
+      }
+      return;
+    }
     if (page >= 1 && page <= this.totalPages) {
       this.currentPage = page;
       this.updatePagination();
@@ -2826,6 +3378,7 @@ export class Page3Component implements OnInit {
   onPageSizeChange() {
     this.currentPage = 1;
     this.updatePagination();
+    this.updateProcurementPagination();
   }
 
   showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {

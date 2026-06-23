@@ -797,42 +797,45 @@ export class DatabaseService {
       }
 
       const updateData: any = {
-        status,
         updated_at: new Date().toISOString(),
         ...additionalData
       };
 
-      switch (status) {
-        case 'Submitted':
-          updateData.submitted_at = new Date().toISOString();
-          break;
-        case 'Scheduled':
-          updateData.scheduled_at = new Date().toISOString();
-          updateData.scheduled_by = userId;
-          if (additionalData.scheduled_date) {
-            updateData.scheduled_date = additionalData.scheduled_date;
-          }
-          break;
-        case 'Approved':
-          updateData.approved_at = new Date().toISOString();
-          updateData.approved_by = userId;
-          break;
-        case 'Rejected':
-          updateData.rejected_at = new Date().toISOString();
-          updateData.rejected_by = userId;
-          break;
-        case 'Production_Confirmed':
-          updateData.production_confirmed_at = new Date().toISOString();
-          updateData.production_confirmed_by = userId;
-          break;
-        case 'Delivered':
-          updateData.delivered_at = new Date().toISOString();
-          updateData.delivered_by = userId;
-          break;
-        case 'Partially_Delivered':
-          updateData.partially_delivered_at = new Date().toISOString();
-          updateData.partially_delivered_by = userId;
-          break;
+      const statusChanging = status !== reqData['status'];
+      if (statusChanging) {
+        updateData.status = status;
+        switch (status) {
+          case 'Submitted':
+            updateData.submitted_at = new Date().toISOString();
+            break;
+          case 'Scheduled':
+            updateData.scheduled_at = new Date().toISOString();
+            updateData.scheduled_by = userId;
+            if (additionalData.scheduled_date) {
+              updateData.scheduled_date = additionalData.scheduled_date;
+            }
+            break;
+          case 'Approved':
+            updateData.approved_at = new Date().toISOString();
+            updateData.approved_by = userId;
+            break;
+          case 'Rejected':
+            updateData.rejected_at = new Date().toISOString();
+            updateData.rejected_by = userId;
+            break;
+          case 'Production_Confirmed':
+            updateData.production_confirmed_at = new Date().toISOString();
+            updateData.production_confirmed_by = userId;
+            break;
+          case 'Delivered':
+            updateData.delivered_at = new Date().toISOString();
+            updateData.delivered_by = userId;
+            break;
+          case 'Partially_Delivered':
+            updateData.partially_delivered_at = new Date().toISOString();
+            updateData.partially_delivered_by = userId;
+            break;
+        }
       }
 
       await this.run(() => updateDoc(reqRef, updateData));

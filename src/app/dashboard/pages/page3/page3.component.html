@@ -66,6 +66,20 @@
         Transferred to Procurement
       </span>
 
+      <button
+        *ngIf="selectedTable && canOpenChat(selectedTable)"
+        class="btn btn-outline"
+        (click)="openChat(selectedTable)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        Chat
+        <span class="chat-unread-dot" *ngIf="hasUnreadChat(selectedTable)" title="New messages"></span>
+        <span class="badge" [class.badge-closed]="isRequestDone(selectedTable)">
+          {{ getRequestStatusLabel(selectedTable) }}
+        </span>
+      </button>
+
       <!-- Tables Dropdown - Only for store/user with their tables -->
       <div class="dropdown" [class.open]="showTableDropdown" *ngIf="viewMode === 'my_tables'">
         <button class="btn btn-outline" (click)="toggleTableDropdown()">
@@ -414,49 +428,24 @@
         </div>
 
         <div class="table-actions-group">
-          <!-- Close Request Button for Procurement -->
           <button
-            *ngIf="!selectedTable.request_closed"
-            class="btn btn-sm btn-outline-danger"
-            (click)="closeRequest(selectedTable)"
-            title="Close this request once all materials are resolved">
+            *ngIf="canOpenChat(selectedTable)"
+            class="btn btn-sm btn-outline"
+            (click)="openChat(selectedTable)"
+            title="Open table chat">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
-            Close Request
+            Chat ({{ getRequestStatusLabel(selectedTable) }})
+            <span class="chat-unread-dot" *ngIf="hasUnreadChat(selectedTable)" title="New messages"></span>
           </button>
-          <span *ngIf="selectedTable.request_closed" class="badge badge-closed">
+          <span *ngIf="isRequestDone(selectedTable)" class="badge badge-closed">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
             </svg>
             Request Closed
           </span>
-
-          <div class="po-upload-inline" *ngIf="selectedTable">
-            <ng-container *ngIf="!hasPoDocument(selectedTable)">
-              <button class="btn btn-outline btn-sm" type="button" (click)="triggerPoFileInput(selectedTable)">
-                Choose File
-              </button>
-              <span class="po-file-name">{{ poUploadTargetTable?.id === selectedTable.id && poFileName ? poFileName : 'No file chosen' }}</span>
-              <button
-                class="btn btn-primary btn-sm po-upload-btn"
-                type="button"
-                (click)="uploadPoFile(selectedTable)"
-                [disabled]="!poFile || poUploadTargetTable?.id !== selectedTable.id || isUploadingPo">
-                {{ isUploadingPo ? 'Saving...' : 'Upload P.O' }}
-              </button>
-            </ng-container>
-            <ng-container *ngIf="hasPoDocument(selectedTable)">
-              <a [href]="getPoViewUrl(selectedTable)" target="_blank" rel="noopener" class="po-file-link">
-                {{ selectedTable.po_file_name || 'View P.O' }}
-              </a>
-              <button class="btn btn-outline btn-sm" type="button" (click)="removePoLink(selectedTable)" title="Remove P.O">
-                Remove
-              </button>
-            </ng-container>
-          </div>
         </div>
       </div>
     </div>
@@ -525,7 +514,6 @@
               <th *ngIf="userRole === 'production' || userRole === 'procurement'">Table</th>
               <th *ngIf="userRole === 'production'">Submitted By</th>
               <th>Req #</th>
-              <th>Type</th>
               <th>Date</th>
               <th>SKU Code</th>
               <th>SKU Name</th>
@@ -556,11 +544,6 @@
                   <span class="submitted-by" [title]="req.user_email || ''">{{ req.user_email || '—' }}</span>
                 </td>
                 <td><span class="req-number">{{ req.reqNumber || req.id || 'N/A' }}</span></td>
-                <td>
-                  <span class="type" [class.perishable]="req.type === 'Perishable'">
-                    {{ req.type }}
-                  </span>
-                </td>
                 <td>{{ req.dateNeeded || 'ASAP' }}</td>
                 <td><span class="sku" title="{{ req.skuCode || req['sku_code'] || '' }}">{{ req.skuCode || req['sku_code'] }}</span></td>
                 <td class="limit" title="{{ req.skuName || req['sku_name'] || '—' }}">{{ req.skuName || req['sku_name'] || '—' }}</td>
@@ -583,7 +566,7 @@
                 <td>
                   <div class="action-buttons">
                     <!-- Production bulk material action buttons -->
-                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
+                    <button *ngIf="canProductionEditMaterials(req)"
                             class="btn-icon success"
                             (click)="confirmAllMaterials(req); $event.stopPropagation()"
                             title="Accept all materials for this requisition">
@@ -592,7 +575,7 @@
                       </svg>
                     </button>
 
-                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !req.production_action"
+                    <button *ngIf="canProductionEditMaterials(req)"
                             class="btn-icon danger"
                             (click)="rejectAllMaterials(req); $event.stopPropagation()"
                             title="Reject all materials for this requisition">
@@ -601,6 +584,33 @@
                         <line x1="6" y1="6" x2="18" y2="18"/>
                       </svg>
                     </button>
+
+                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !isProductionActionsLocked(req)"
+                            class="btn-icon primary"
+                            (click)="openProductionNotesModal(req); $event.stopPropagation()"
+                            title="Add production note">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </button>
+
+                    <button *ngIf="req.production_notes && (userRole === 'user' || userRole === 'store' || userRole === 'production' || userRole === 'procurement' || userRole === 'admin')"
+                            class="btn-icon primary"
+                            (click)="openProductionNotesModal(req, true); $event.stopPropagation()"
+                            title="View production note">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                      </svg>
+                    </button>
+
+                    <!-- Locked indicator after transfer -->
+                    <span *ngIf="userRole === 'production' && isProductionActionsLocked(req)" class="action-marked locked" title="Locked after transfer to Procurement">
+                      Locked
+                    </span>
 
                     <!-- Status Indicators -->
                     <span *ngIf="req.production_action === 'confirmed'" class="action-marked confirmed" title="Confirmed by production">
@@ -654,6 +664,9 @@
                           <span class="material-note">
                             Based on requisition quantity: {{ (req.quantity || req['qty_needed'] || 0) | number }} {{ req.unit || '—' }}
                           </span>
+                          <div class="production-note-display" *ngIf="req.production_notes">
+                            <strong>Production Note:</strong> {{ req.production_notes }}
+                          </div>
                         </div>
                       </div>
                       
@@ -666,7 +679,7 @@
                               <th>Unit</th>
                               <th>Type</th>
                               <th>Total Required</th>
-                              <th *ngIf="userRole === 'production' && req.status === 'Submitted'">Action</th>
+                              <th *ngIf="canProductionEditMaterials(req)">Action</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -678,7 +691,7 @@
                               <td class="number primary">
                                 {{ calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch) | number:'1.2-2' }}
                               </td>
-                              <td class="material-action-cell" *ngIf="userRole === 'production' && req.status === 'Submitted'">
+                              <td class="material-action-cell" *ngIf="canProductionEditMaterials(req)">
                                 <button class="btn btn-icon success" [class.active]="mat.production_action === 'confirmed'" aria-label="Accept material" (click)="setMaterialAction(req, mat, 'confirmed'); $event.stopPropagation()">
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                                     <path d="M20 6L9 17l-5-5"/>
@@ -774,7 +787,7 @@
         </tr>
       </thead>
       <tbody>
-        <ng-container *ngFor="let summary of procurementTableSummaries">
+        <ng-container *ngFor="let summary of paginatedProcurementSummaries">
           <tr class="procurement-summary-row">
             <td>
               {{ summary.table_name }}
@@ -788,40 +801,20 @@
                   View Exact Requisition Items
                 </button>
                 <ng-container *ngIf="getTableForSummary(summary) as table">
-                  <!-- Close Request Button -->
                   <button
-                    *ngIf="!table.request_closed"
-                    class="btn btn-sm btn-outline-danger"
-                    (click)="closeRequest(table)"
-                    title="Close this request once all materials are resolved">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                    </svg>
-                    Close Request
+                    *ngIf="canOpenChat(table)"
+                    class="btn btn-sm btn-outline"
+                    (click)="openChat(table)">
+                    Chat ({{ getRequestStatusLabel(table) }})
+                    <span class="chat-unread-dot" *ngIf="hasUnreadChat(table)" title="New messages"></span>
                   </button>
-                  <span *ngIf="table.request_closed" class="badge badge-closed">
+                  <span *ngIf="isRequestDone(table)" class="badge badge-closed">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                       <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                     </svg>
                     Closed
                   </span>
-
-                  <div class="po-upload-inline po-upload-row" *ngIf="!hasPoDocument(table)">
-                    <button class="btn btn-outline btn-sm" type="button" (click)="triggerPoFileInput(table)">Choose File</button>
-                    <button
-                      class="btn btn-primary btn-sm po-upload-btn"
-                      type="button"
-                      (click)="uploadPoFile(table)"
-                      [disabled]="!poFile || poUploadTargetTable?.id !== table.id || isUploadingPo">
-                      {{ isUploadingPo && poUploadTargetTable?.id === table.id ? 'Saving...' : 'Upload P.O' }}
-                    </button>
-                  </div>
-                  <div class="po-upload-inline po-upload-row" *ngIf="hasPoDocument(table)">
-                    <a [href]="getPoViewUrl(table)" target="_blank" rel="noopener" class="po-file-link">{{ table.po_file_name || 'View P.O' }}</a>
-                    <button class="btn btn-outline btn-sm" type="button" (click)="removePoLink(table)">Remove</button>
-                  </div>
                 </ng-container>
               </div>
             </td>
@@ -865,12 +858,12 @@
                         <span *ngIf="!item.production_status" class="text-muted">—</span>
                       </td>
                       <td class="material-action-cell">
-                        <button class="btn btn-icon success" [class.active]="item.procurement_action === 'approved'" aria-label="Approve raw material" (click)="setProcurementMaterialAction(item, 'approved')">
+                        <button class="btn btn-icon success" [class.active]="item.procurement_action === 'approved'" [disabled]="isRequestDone(getTableForSummary(summary))" aria-label="Approve raw material" (click)="setProcurementMaterialAction(item, 'approved')">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                             <path d="M20 6L9 17l-5-5"/>
                           </svg>
                         </button>
-                        <button class="btn btn-icon danger" [class.active]="item.procurement_action === 'rejected'" aria-label="Reject raw material" (click)="setProcurementMaterialAction(item, 'rejected')">
+                        <button class="btn btn-icon danger" [class.active]="item.procurement_action === 'rejected'" [disabled]="isRequestDone(getTableForSummary(summary))" aria-label="Reject raw material" (click)="setProcurementMaterialAction(item, 'rejected')">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                             <line x1="18" y1="6" x2="6" y2="18"/>
                             <line x1="6" y1="6" x2="18" y2="18"/>
@@ -906,6 +899,31 @@
         </tr>
       </tbody>
     </table>
+
+    <div class="pagination" *ngIf="procurementTableSummaries.length > 0 && !isLoading">
+      <span class="info">
+        {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, procurementTableSummaries.length) }} of {{ procurementTableSummaries.length }}
+      </span>
+      <div class="controls">
+        <button [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+        <span class="page">{{ currentPage }}/{{ procurementTotalPages }}</span>
+        <button [disabled]="currentPage === procurementTotalPages" (click)="goToPage(currentPage + 1)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </button>
+      </div>
+      <select [(ngModel)]="pageSize" (change)="onPageSizeChange()">
+        <option value="10">10</option>
+        <option value="25">25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
   </div>
 
   <!-- Procurement Exact Requisition Items Modal -->
@@ -1174,16 +1192,6 @@
         <form>
           <div class="row">
             <div class="field">
-              <label>Type *</label>
-              <select [(ngModel)]="formData.type" name="type">
-                <option value="" disabled>Select type</option>
-                <option value="Perishable">Perishable</option>
-                <option value="Shelf-Stable">Shelf-Stable</option>
-              </select>
-              <span class="error" *ngIf="submitted && !formData.type">Required</span>
-            </div>
-
-            <div class="field">
               <label>Category *</label>
               <select 
                 [(ngModel)]="formData.category" 
@@ -1246,6 +1254,8 @@
               <label>Unit *</label>
               <select [(ngModel)]="formData.unit" name="unit">
                 <option value="" disabled>Select unit</option>
+                <option value="per unit">per unit</option>
+                <option value="per pack">per pack</option>
                 <option value="kg">kg</option>
                 <option value="g">g</option>
                 <option value="units">units</option>
@@ -1420,6 +1430,34 @@
         <button class="btn" [class.btn-success]="productionActionType === 'confirmed'" [class.btn-danger]="productionActionType === 'removed'" (click)="confirmProductionAction()">
           {{ productionActionType === 'confirmed' ? 'Confirm' : 'Remove' }}
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Production Notes Modal -->
+  <div class="modal" [class.active]="showProductionNotesModal">
+    <div class="backdrop" (click)="closeProductionNotesModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>{{ productionNotesReadOnly ? 'Production Note' : 'Add Production Note' }}</h3>
+        <button class="close" (click)="closeProductionNotesModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle" *ngIf="selectedRequisition">
+          Requisition <strong>{{ selectedRequisition.reqNumber }}</strong>
+        </p>
+        <div class="field">
+          <label>{{ productionNotesReadOnly ? 'Note' : 'Note *' }}</label>
+          <textarea
+            [(ngModel)]="productionNotesText"
+            rows="4"
+            [readonly]="productionNotesReadOnly"
+            placeholder="Add notes visible to User and Procurement..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeProductionNotesModal()">Close</button>
+        <button *ngIf="!productionNotesReadOnly" class="btn btn-primary" (click)="saveProductionNotes()">Save Note</button>
       </div>
     </div>
   </div>
@@ -1599,6 +1637,96 @@
           </svg>
           Export XLSX
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table Chat Panel -->
+  <div class="chat-panel" *ngIf="showChatPanel && chatTable" [class.minimized]="chatMinimized">
+    <div class="chat-header" (click)="chatMinimized ? toggleChatMinimize() : null">
+      <div class="chat-header-info">
+        <strong>{{ chatTable.name }}</strong>
+        <span class="chat-status" [class.done]="isRequestDone(chatTable)">{{ getRequestStatusLabel(chatTable) }}</span>
+      </div>
+      <div class="chat-header-actions">
+        <button class="chat-icon-btn" type="button" (click)="toggleChatMinimize(); $event.stopPropagation()" [title]="chatMinimized ? 'Expand' : 'Minimize'">
+          {{ chatMinimized ? '▲' : '▼' }}
+        </button>
+        <button class="chat-icon-btn" type="button" (click)="closeChatPanel(); $event.stopPropagation()" title="Close">✕</button>
+      </div>
+    </div>
+
+    <ng-container *ngIf="!chatMinimized">
+      <div class="chat-messages">
+        <div *ngIf="chatLoading" class="chat-loading">Loading messages...</div>
+        <div *ngFor="let msg of chatMessages" class="chat-message" [class.system]="msg.message_type !== 'text'" [class.own]="msg.sender_id === userId">
+          <div class="chat-message-meta">
+            <span class="chat-sender">{{ msg.sender_role | titlecase }}</span>
+            <span class="chat-time">{{ msg.created_at | date:'short' }}</span>
+          </div>
+          <div class="chat-message-body">{{ msg.message }}</div>
+        </div>
+        <div *ngIf="!chatLoading && !chatMessages.length" class="chat-empty">No messages yet. Start the conversation.</div>
+      </div>
+
+      <div class="chat-close-banner" *ngIf="chatTable.close_request_pending && canRespondToCloseRequest()">
+        <p>Procurement requested to close this table. Accept or reject:</p>
+        <div class="chat-close-actions">
+          <button class="btn btn-sm btn-success" (click)="respondToCloseRequest(true)">Accept Close</button>
+          <button class="btn btn-sm btn-danger" (click)="respondToCloseRequest(false)">Reject Close</button>
+        </div>
+      </div>
+
+      <div class="chat-toolbar" *ngIf="isChatWritable()">
+        <button *ngIf="canInitiateCloseRequest()" class="btn btn-sm btn-outline" type="button" (click)="initiateCloseRequestInChat()">
+          Close Request
+        </button>
+        <label *ngIf="canUploadPo()" class="btn btn-sm btn-outline chat-upload-btn">
+          Upload P.O
+          <input type="file" accept=".pdf,.png,.jpg,.jpeg,.doc,.docx,.xlsx,.xls" hidden (change)="onChatPoFileSelected($event)">
+        </label>
+        <button *ngIf="hasPoDocument(chatTable)" type="button" class="btn btn-sm btn-outline" (click)="openPoViewer(chatTable)">View P.O</button>
+      </div>
+
+      <div class="chat-input-row" *ngIf="isChatWritable()">
+        <input type="text" [(ngModel)]="chatInput" placeholder="Type a message..." (keyup.enter)="sendChatMessage()">
+        <button class="btn btn-primary btn-sm" type="button" (click)="sendChatMessage()" [disabled]="!chatInput.trim()">Send</button>
+      </div>
+
+      <div class="chat-readonly" *ngIf="!isChatWritable()">
+        Chat is read-only. Request is DONE.
+      </div>
+    </ng-container>
+  </div>
+
+  <!-- P.O Viewer Modal -->
+  <div class="modal" [class.active]="showPoViewerModal">
+    <div class="backdrop" (click)="closePoViewerModal()"></div>
+    <div class="modal-container modal-lg po-viewer-modal">
+      <div class="modal-header">
+        <h3>{{ poViewerTable?.po_file_name || 'Purchase Order' }}</h3>
+        <button class="close" type="button" (click)="closePoViewerModal()">✕</button>
+      </div>
+      <div class="modal-body po-viewer-body">
+        <img
+          *ngIf="isPoImage(poViewerTable)"
+          [src]="getSafePoViewUrl(poViewerTable)"
+          [alt]="poViewerTable?.po_file_name || 'Purchase order'"
+          class="po-viewer-image" />
+        <iframe
+          *ngIf="isPoPdf(poViewerTable)"
+          [src]="getSafePoViewUrl(poViewerTable)"
+          title="Purchase order document"
+          class="po-viewer-frame"></iframe>
+        <div *ngIf="poViewerTable && !isPoImage(poViewerTable) && !isPoPdf(poViewerTable)" class="po-viewer-fallback">
+          <p>Preview is not available for this file type.</p>
+          <a class="btn btn-primary" [href]="getPoViewUrl(poViewerTable)" [download]="poViewerTable.po_file_name || 'purchase-order'">
+            Download file
+          </a>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" type="button" (click)="closePoViewerModal()">Close</button>
       </div>
     </div>
   </div>
