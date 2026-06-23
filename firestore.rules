@@ -101,22 +101,32 @@ service cloud.firestore {
     function closeInitKeys() {
       return [
         'close_request_pending', 'close_request_user_accepted', 'close_request_production_accepted',
-        'close_request_initiated_at', 'close_request_initiated_by', 'updated_at'
+        'close_request_initiated_at', 'close_request_initiated_by', 'close_request_mode', 'updated_at'
       ];
     }
 
     function closeRejectKeys() {
       return [
         'close_request_pending', 'close_request_user_accepted',
-        'close_request_production_accepted', 'updated_at'
+        'close_request_production_accepted', 'close_request_mode', 'updated_at'
       ];
     }
 
     function closeFinalizeKeys() {
       return [
         'request_status', 'request_closed', 'request_closed_at', 'request_closed_by',
-        'close_request_pending', 'updated_at'
+        'close_request_pending', 'close_request_mode', 'updated_at'
       ];
+    }
+
+    function notTransferredToProcurement() {
+      return resource.data.get('production_reviewed', false) != true;
+    }
+
+    function canInitiateDeliveryRequest() {
+      return resource.data.submitted == true &&
+             hasOnlyKeys(closeInitKeys()) &&
+             request.resource.data.close_request_pending == true;
     }
 
     function procurementWorkflowTable() {
@@ -194,17 +204,21 @@ service cloud.firestore {
           resource.data.submitted == true &&
           resource.data.close_request_pending == true &&
           hasOnlyKeys(closeRejectKeys())) ||
+        // Production: initiate delivery when fulfilling from stock (no procurement transfer)
+        (isProduction() &&
+          canInitiateDeliveryRequest() &&
+          notTransferredToProcurement() &&
+          request.resource.data.get('close_request_mode', '') == 'production') ||
         // Production: Shipping Manifest upload/remove
         (isProduction() &&
           resource.data.submitted == true &&
           hasOnlyKeys(smUploadKeys())) ||
         // Procurement/admin: workflow updates (P.O., close request, etc.)
         (procurementWorkflowTable()) ||
-        // Procurement/admin: initiate close request (explicit keys, no tableIsOpen gate)
+        // Procurement/admin: initiate delivery request after transfer (explicit keys, no tableIsOpen gate)
         ((isProcurement() || isAdmin()) &&
-          resource.data.submitted == true &&
-          hasOnlyKeys(closeInitKeys()) &&
-          request.resource.data.close_request_pending == true) ||
+          canInitiateDeliveryRequest() &&
+          resource.data.get('production_reviewed', false) == true) ||
         // Procurement/admin: reset close request fields
         ((isProcurement() || isAdmin()) &&
           resource.data.submitted == true &&

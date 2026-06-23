@@ -117,7 +117,7 @@
               <span class="name">{{ table.name || 'Untitled' }}</span>
               <span class="count">{{ table.item_count || 0 }}</span>
               <span *ngIf="table.submitted" class="submitted-badge" title="Submitted">✓</span>
-              <span *ngIf="table.request_closed" class="closed-badge" title="Closed">Closed</span>
+              <span *ngIf="table.request_closed" class="closed-badge" title="Delivered">Delivered</span>
               <span class="submitted-by" *ngIf="table.user_email">by {{ table.user_email }}</span>
             </div>
             
@@ -277,7 +277,7 @@
           <span class="stat-chip" *ngIf="selectedTable!.user_email && userRole === 'production'">
             by {{ selectedTable!.user_email }}
           </span>
-          <span class="stat-chip stat-closed" *ngIf="isRequestDone(selectedTable)">Closed</span>
+          <span class="stat-chip stat-closed" *ngIf="isRequestDone(selectedTable)">Delivered</span>
           <span class="stat-chip stat-transferred" *ngIf="selectedTable!.production_reviewed && userRole === 'production'">
             Transferred
           </span>
@@ -290,6 +290,13 @@
         <button class="btn btn-sm btn-outline-danger" (click)="deleteTable(selectedTable!)" [disabled]="tables.length <= 1 || selectedTable!.submitted">
           Delete
         </button>
+      </div>
+      <div class="table-context-actions" *ngIf="userRole === 'procurement' && selectedTable">
+        <button class="btn btn-sm btn-outline" (click)="openProcurementOriginalItemsModalForSelectedTable()">
+          View Exact Requisition Items
+        </button>
+        <span class="stat-chip" *ngIf="hasPoDocument(selectedTable)">P.O Uploaded</span>
+        <span class="stat-chip stat-pending" *ngIf="!hasPoDocument(selectedTable)">P.O Pending</span>
       </div>
     </div>
 
@@ -629,7 +636,6 @@
           <th *ngIf="!selectedTable">Table</th>
           <th>Unique Materials</th>
           <th>Total Requested Qty</th>
-          <th class="actions-col">Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -637,27 +643,10 @@
           <tr class="procurement-summary-row">
             <td *ngIf="!selectedTable">
               {{ summary.table_name }}
-              <span *ngIf="getTableForSummary(summary)?.request_closed" class="closed-badge-inline">Closed</span>
+              <span *ngIf="getTableForSummary(summary)?.request_closed" class="closed-badge-inline">Delivered</span>
             </td>
             <td>{{ summary.uniqueMaterialsCount }}</td>
             <td>{{ summary.totalRequestedQuantity | number:'1.2-2' }}</td>
-            <td class="actions-col">
-              <div class="procurement-row-actions">
-                <button class="btn btn-sm btn-outline" (click)="openProcurementOriginalItemsModal(summary)">
-                  View Exact Requisition Items
-                </button>
-                <ng-container *ngIf="getTableForSummary(summary) as table">
-                  <button
-                    *ngIf="canOpenChat(table)"
-                    class="btn btn-sm btn-outline"
-                    (click)="openChat(table)">
-                    Chat
-                    <span class="status-pill" [class.done]="isRequestDone(table)">{{ getRequestStatusLabel(table) }}</span>
-                    <span class="chat-unread-dot" *ngIf="hasUnreadChat(table)" title="New messages"></span>
-                  </button>
-                </ng-container>
-              </div>
-            </td>
           </tr>
           <tr class="procurement-detail-row">
             <td [attr.colspan]="getProcurementSummaryColspan()">
@@ -671,13 +660,10 @@
                       <th>Total Requested Qty</th>
                       <th>Unit</th>
                       <th>Production</th>
-                      <th>Procurement Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    <tr *ngFor="let item of summary.materials"
-                        [class.material-approved]="item.procurement_action === 'approved'"
-                        [class.material-rejected]="item.procurement_action === 'rejected'">
+                    <tr *ngFor="let item of summary.materials">
                       <td>{{ item.raw_material }}</td>
                       <td>{{ item.type }}</td>
                       <td class="number">{{ item.totalQuantity | number:'1.2-2' }}</td>
@@ -697,24 +683,9 @@
                         </span>
                         <span *ngIf="!item.production_status" class="text-muted">—</span>
                       </td>
-                      <td>
-                        <div class="material-action-cell">
-                        <button class="btn-icon success" [class.active]="item.procurement_action === 'approved'" [disabled]="isRequestDone(getTableForSummary(summary))" aria-label="Approve raw material" (click)="setProcurementMaterialAction(item, 'approved')">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                            <path d="M20 6L9 17l-5-5"/>
-                          </svg>
-                        </button>
-                        <button class="btn-icon danger" [class.active]="item.procurement_action === 'rejected'" [disabled]="isRequestDone(getTableForSummary(summary))" aria-label="Reject raw material" (click)="setProcurementMaterialAction(item, 'rejected')">
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                            <line x1="18" y1="6" x2="6" y2="18"/>
-                            <line x1="6" y1="6" x2="18" y2="18"/>
-                          </svg>
-                        </button>
-                        </div>
-                      </td>
                     </tr>
                     <tr *ngIf="!summary.materials.length">
-                      <td colspan="6" class="empty">
+                      <td colspan="5" class="empty">
                         <div>
                           <p>No requested materials available.</p>
                         </div>
@@ -909,7 +880,7 @@
           <h3>Raw Materials Overview</h3>
           <p class="modal-subtitle">
             All raw materials for table: <strong>{{ selectedTable?.name }}</strong>
-            <span *ngIf="selectedTable?.request_closed" class="closed-badge-inline">Closed</span>
+            <span *ngIf="selectedTable?.request_closed" class="closed-badge-inline">Delivered</span>
           </p>
         </div>
         <button class="close" (click)="closeRawMaterialsModal()">✕</button>
@@ -1531,17 +1502,17 @@
 
     <ng-container *ngIf="!chatMinimized">
       <div class="chat-close-banner" *ngIf="chatTable.close_request_pending && canRespondToCloseRequest()">
-        <p>Procurement requested to close this table. Accept or reject:</p>
+        <p>{{ getDeliveryRequestBannerText() }}</p>
         <div class="chat-close-actions">
-          <button class="btn btn-sm btn-success" type="button" (click)="respondToCloseRequest(true)">Accept Close</button>
-          <button class="btn btn-sm btn-danger" type="button" (click)="respondToCloseRequest(false)">Reject Close</button>
+          <button class="btn btn-sm btn-success" type="button" (click)="respondToCloseRequest(true)">Accept Delivery</button>
+          <button class="btn btn-sm btn-danger" type="button" (click)="respondToCloseRequest(false)">Reject Delivery</button>
         </div>
       </div>
 
       <div class="chat-toolbar" *ngIf="showChatToolbar()">
         <ng-container *ngIf="hasChatWritableToolbar()">
           <button *ngIf="canInitiateCloseRequest()" class="btn btn-sm btn-outline" type="button" (click)="initiateCloseRequestInChat()">
-            Close Request
+            Request Delivered
           </button>
           <label *ngIf="canUploadPo()" class="btn btn-sm btn-outline chat-upload-btn">
             Upload P.O
@@ -1593,7 +1564,7 @@
       </div>
 
       <div class="chat-readonly" *ngIf="!isChatWritable()">
-        Request is closed. Chat is read-only — documents above remain available.
+        Request is delivered. Chat is read-only — documents above remain available.
       </div>
     </ng-container>
   </div>

@@ -100,6 +100,7 @@ interface Table {
   close_request_production_accepted?: boolean;
   close_request_initiated_at?: string;
   close_request_initiated_by?: string;
+  close_request_mode?: 'procurement' | 'production';
 }
 
 interface ChatMessage {
@@ -513,7 +514,8 @@ export class Page3Component implements OnInit, OnDestroy {
           close_request_user_accepted: data['close_request_user_accepted'] || false,
           close_request_production_accepted: data['close_request_production_accepted'] || false,
           close_request_initiated_at: data['close_request_initiated_at'],
-          close_request_initiated_by: data['close_request_initiated_by']
+          close_request_initiated_by: data['close_request_initiated_by'],
+          close_request_mode: data['close_request_mode']
         };
 
         if (table.user_id) {
@@ -840,7 +842,7 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   getProcurementSummaryColspan(): number {
-    return this.selectedTable ? 3 : 4;
+    return this.selectedTable ? 2 : 3;
   }
 
   async onTableChange() {
@@ -1026,7 +1028,8 @@ export class Page3Component implements OnInit, OnDestroy {
           close_request_user_accepted: data['close_request_user_accepted'] || false,
           close_request_production_accepted: data['close_request_production_accepted'] || false,
           close_request_initiated_at: data['close_request_initiated_at'],
-          close_request_initiated_by: data['close_request_initiated_by']
+          close_request_initiated_by: data['close_request_initiated_by'],
+          close_request_mode: data['close_request_mode']
         });
       }
     } catch (err) {}
@@ -1457,11 +1460,10 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   // ============================================================
-  // Close Request (via Chat — legacy direct close kept for admin)
-  // ============================================================
+  // Request Delivered (via Chat)
   async closeRequest(table: Table) {
     this.openChat(table);
-    if (this.userRole === 'procurement' || this.userRole === 'admin') {
+    if (this.userRole === 'procurement' || this.userRole === 'production' || this.userRole === 'admin') {
       await this.initiateCloseRequestInChat();
     }
   }
@@ -2226,6 +2228,14 @@ export class Page3Component implements OnInit, OnDestroy {
     this.showProcurementOriginalItemsModal = true;
   }
 
+  openProcurementOriginalItemsModalForSelectedTable() {
+    if (!this.selectedTable) return;
+    const summary = this.procurementTableSummaries.find(s => s.table_id === this.selectedTable!.id);
+    if (summary) {
+      this.openProcurementOriginalItemsModal(summary);
+    }
+  }
+
   closeProcurementOriginalItemsModal() {
     this.showProcurementOriginalItemsModal = false;
     this.currentProcurementTableId = '';
@@ -2255,7 +2265,23 @@ export class Page3Component implements OnInit, OnDestroy {
     return !!(table.sm_file_data || table.sm_file_url);
   }
 
+  isProcurementInWorkflow(table: Table | null | undefined): boolean {
+    return !!table?.production_reviewed;
+  }
+
+  getCloseRequestMode(table: Table | null | undefined): 'procurement' | 'production' {
+    if (table?.close_request_mode) return table.close_request_mode;
+    return this.isProcurementInWorkflow(table) ? 'procurement' : 'production';
+  }
+
+  getDeliveryRequestBannerText(): string {
+    const mode = this.getCloseRequestMode(this.chatTable);
+    const initiator = mode === 'procurement' ? 'Procurement' : 'Production';
+    return `${initiator} requested delivery confirmation. Please accept or reject:`;
+  }
+
   canViewPo(): boolean {
+    if (!this.isProcurementInWorkflow(this.chatTable)) return false;
     return this.userRole === 'procurement' || this.userRole === 'production' || this.userRole === 'admin';
   }
 
@@ -2289,6 +2315,9 @@ export class Page3Component implements OnInit, OnDestroy {
 
   shouldShowChatMessage(msg: ChatMessage): boolean {
     if (msg.message_type === 'po_upload' && !this.canViewPo()) return false;
+    if (!this.isProcurementInWorkflow(this.chatTable)) {
+      if (msg.sender_role === 'procurement' || msg.message_type === 'po_upload') return false;
+    }
     return true;
   }
 
@@ -2888,16 +2917,33 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   canInitiateCloseRequest(): boolean {
-    return (
-      !!this.chatTable &&
-      (this.userRole === 'procurement' || this.userRole === 'admin') &&
-      !this.isRequestDone(this.chatTable) &&
-      !this.chatTable.close_request_pending
+    if (!this.chatTable || this.isRequestDone(this.chatTable) || this.chatTable.close_request_pending) {
+      return false;
+    }
+    if (this.userRole === 'admin') return true;
+    if (this.userRole === 'procurement') {
+      return this.isProcurementInWorkflow(this.chatTable) && this.hasPoDocument(this.chatTable);
+    }
+    if (this.userRole === 'production') {
+      return this.canProductionInitiateDelivery(this.chatTable);
+    }
+    return false;
+  }
+
+  private canProductionInitiateDelivery(table: Table): boolean {
+    if (!table.submitted || table.production_reviewed) return false;
+    const tableSubmissions = this.productionSubmissions.filter(r => r.table_id === table.id);
+    if (tableSubmissions.length === 0) return false;
+    return tableSubmissions.every(
+      r => r.production_action === 'confirmed' || r.production_action === 'removed'
     );
   }
 
   canUploadPo(): boolean {
-    return this.userRole === 'procurement' || this.userRole === 'admin';
+    return (
+      (this.userRole === 'procurement' || this.userRole === 'admin') &&
+      this.isProcurementInWorkflow(this.chatTable)
+    );
   }
 
   canUploadSm(): boolean {
@@ -2906,10 +2952,11 @@ export class Page3Component implements OnInit, OnDestroy {
 
   canRespondToCloseRequest(): boolean {
     if (!this.chatTable?.close_request_pending || this.isRequestDone(this.chatTable)) return false;
+    const mode = this.getCloseRequestMode(this.chatTable);
     if (this.userRole === 'user' || this.userRole === 'store') {
       return this.chatTable.user_id === this.userId && !this.chatTable.close_request_user_accepted;
     }
-    if (this.userRole === 'production') {
+    if (this.userRole === 'production' && mode === 'procurement') {
       return !this.chatTable.close_request_production_accepted;
     }
     return false;
@@ -3085,17 +3132,28 @@ export class Page3Component implements OnInit, OnDestroy {
 
   async initiateCloseRequestInChat() {
     if (!this.chatTable || !this.canInitiateCloseRequest()) return;
-    if (!confirm('Initiate Close Request? User and Production must both accept to mark this request as DONE.')) return;
 
+    const mode: 'procurement' | 'production' =
+      this.userRole === 'procurement' ||
+      (this.userRole === 'admin' && this.isProcurementInWorkflow(this.chatTable))
+        ? 'procurement'
+        : 'production';
+    const confirmMessage = mode === 'procurement'
+      ? 'Mark request as delivered? User and Production must both accept to confirm delivery.'
+      : 'Mark request as delivered? User must accept to confirm delivery.';
+    if (!confirm(confirmMessage)) return;
+
+    const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
+    const initiatedAt = new Date().toISOString();
+    const systemMessage = mode === 'procurement'
+      ? 'Procurement requested delivery (P.O uploaded). User and Production must accept to confirm all items as delivered.'
+      : 'Production requested delivery. User must accept to confirm all items as delivered.';
     try {
-      const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
-      const initiatedAt = new Date().toISOString();
       await this.run(() => updateDoc(tableRef, {
         close_request_pending: true,
-        close_request_user_accepted: false,
-        close_request_production_accepted: false,
         close_request_initiated_at: initiatedAt,
         close_request_initiated_by: this.userId,
+        close_request_mode: mode,
         updated_at: initiatedAt
       }));
 
@@ -3104,7 +3162,7 @@ export class Page3Component implements OnInit, OnDestroy {
         sender_id: this.userId,
         sender_email: this.userName,
         sender_role: this.userRole,
-        message: 'Procurement initiated a Close Request. User and Production must accept to mark this request as DONE.',
+        message: systemMessage,
         message_type: 'close_request',
         created_at: initiatedAt
       }));
@@ -3114,12 +3172,16 @@ export class Page3Component implements OnInit, OnDestroy {
         close_request_user_accepted: false,
         close_request_production_accepted: false,
         close_request_initiated_at: initiatedAt,
-        close_request_initiated_by: this.userId
+        close_request_initiated_by: this.userId,
+        close_request_mode: mode
       });
-      this.showToast('Close request initiated', 'success');
+      this.showToast('Delivery request initiated', 'success');
     } catch (err) {
       console.error('initiateCloseRequestInChat failed', err);
-      this.showToast('Failed to initiate close request. Deploy latest Firestore rules if this persists.', 'error');
+      this.showToast(
+        'Failed to initiate delivery request. Deploy the latest firestore.rules to Firebase, then try again.',
+        'error'
+      );
     }
   }
 
@@ -3137,20 +3199,22 @@ export class Page3Component implements OnInit, OnDestroy {
           close_request_pending: false,
           close_request_user_accepted: false,
           close_request_production_accepted: false,
+          close_request_mode: null,
           updated_at: now
         }));
         await this.addChatSystemMessage(
           tableId,
-          `${roleLabel} rejected the close request. Request remains PENDING.`,
+          `${roleLabel} rejected the delivery request. Request remains PENDING.`,
           'close_response',
           'rejected'
         );
         this.patchLocalTable(tableId, {
           close_request_pending: false,
           close_request_user_accepted: false,
-          close_request_production_accepted: false
+          close_request_production_accepted: false,
+          close_request_mode: undefined
         });
-        this.showToast('Close request rejected', 'info');
+        this.showToast('Delivery request rejected', 'info');
         return;
       }
 
@@ -3166,7 +3230,7 @@ export class Page3Component implements OnInit, OnDestroy {
       await this.run(() => updateDoc(tableRef, updates));
       await this.addChatSystemMessage(
         tableId,
-        `${roleLabel} accepted the close request.`,
+        `${roleLabel} accepted the delivery request.`,
         'close_response',
         'accepted'
       );
@@ -3175,36 +3239,46 @@ export class Page3Component implements OnInit, OnDestroy {
       const data = tableSnap.data() || {};
       const userAccepted = data['close_request_user_accepted'] === true;
       const productionAccepted = data['close_request_production_accepted'] === true;
+      const mode: 'procurement' | 'production' =
+        data['close_request_mode'] === 'production' ? 'production' : 'procurement';
 
       this.patchLocalTable(tableId, {
         close_request_user_accepted: userAccepted,
         close_request_production_accepted: productionAccepted
       });
 
-      if (userAccepted && productionAccepted) {
+      const deliveryConfirmed = mode === 'production'
+        ? userAccepted
+        : userAccepted && productionAccepted;
+
+      if (deliveryConfirmed) {
         await this.finalizeCloseRequest(tableId);
       } else {
         this.showToast('Your acceptance was recorded', 'success');
       }
     } catch {
-      this.showToast('Failed to respond to close request', 'error');
+      this.showToast('Failed to respond to delivery request', 'error');
     }
   }
 
   private async finalizeCloseRequest(tableId: string) {
     const now = new Date().toISOString();
     const tableRef = doc(this.firestore, 'tables', tableId);
+
+    await this.markTableRequisitionsDelivered(tableId);
+
     await this.run(() => updateDoc(tableRef, {
       request_status: 'DONE',
       request_closed: true,
       request_closed_at: now,
       request_closed_by: this.userId,
       close_request_pending: false,
+      close_request_mode: null,
       updated_at: now
     }));
     await this.addChatSystemMessage(
       tableId,
-      'Request marked as DONE. Chat is now read-only.',
+      'Request delivered. All items marked as delivered. Chat is now read-only.',
       'system'
     );
     this.patchLocalTable(tableId, {
@@ -3212,9 +3286,36 @@ export class Page3Component implements OnInit, OnDestroy {
       request_closed: true,
       request_closed_at: now,
       request_closed_by: this.userId,
-      close_request_pending: false
+      close_request_pending: false,
+      close_request_mode: undefined
     });
-    this.showToast('Request marked as DONE', 'success');
+    this.showToast('Request delivered', 'success');
+  }
+
+  private async markTableRequisitionsDelivered(tableId: string) {
+    const reqs = [
+      ...this.requisitions,
+      ...this.productionSubmissions,
+      ...this.productionReviewed,
+      ...this.procurementReviewed
+    ].filter(r => r.table_id === tableId);
+
+    const seen = new Set<string>();
+    for (const req of reqs) {
+      if (!req.id || seen.has(req.id)) continue;
+      seen.add(req.id);
+      if (req.status === 'Delivered' || req.status === 'Removed') continue;
+      const success = await this.db.updateRequisitionStatus(
+        req.id,
+        'Delivered',
+        this.userId,
+        tableId,
+        {}
+      );
+      if (success) {
+        req.status = 'Delivered';
+      }
+    }
   }
 
   private async addChatSystemMessage(
