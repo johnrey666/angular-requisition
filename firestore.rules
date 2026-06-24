@@ -14,30 +14,28 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
-    function getUserRole() {
-      return isAuthenticated() && userDocExists()
-        ? userDoc().data.role
-        : null;
-    }
-
-    function hasRole(role) {
-      return isAuthenticated() && getUserRole() == role;
+    function userRole() {
+      return userDocExists() ? userDoc().data.role : '';
     }
 
     function isAdmin() {
-      return hasRole('admin');
+      return isAuthenticated() && userRole() == 'admin';
     }
 
     function isProduction() {
-      return hasRole('production');
+      return isAuthenticated() && userRole() == 'production';
     }
 
     function isProcurement() {
-      return hasRole('procurement');
+      return isAuthenticated() && userRole() == 'procurement';
     }
 
     function isStore() {
-      return hasRole('store') || hasRole('user');
+      return isAuthenticated() && (userRole() == 'store' || userRole() == 'user');
+    }
+
+    function isProductionTeam() {
+      return isProduction() || isAdmin();
     }
 
     function canViewAllSubmissions() {
@@ -52,34 +50,8 @@ service cloud.firestore {
       return !(resource.data.request_status == 'DONE' || resource.data.request_closed == true);
     }
 
-    function tableDoc(tableId) {
-      return get(/databases/$(database)/documents/tables/$(tableId));
-    }
-
-    function tableExists(tableId) {
-      return exists(/databases/$(database)/documents/tables/$(tableId));
-    }
-
-    function isTableOwner(tableId) {
-      return tableExists(tableId) &&
-             tableDoc(tableId).data.user_id == request.auth.uid;
-    }
-
-    function canReadTable(tableId) {
-      return isAuthenticated() && tableExists(tableId) && (
-        tableDoc(tableId).data.user_id == request.auth.uid ||
-        (canViewAllSubmissions() && tableDoc(tableId).data.submitted == true) ||
-        isAdmin()
-      );
-    }
-
-    function isChatClosed(tableId) {
-      return tableDoc(tableId).data.request_status == 'DONE' ||
-             tableDoc(tableId).data.request_closed == true;
-    }
-
-    function canParticipateInTableChat(tableId) {
-      return canReadTable(tableId);
+    function isSubmittedOrReviewedTable() {
+      return resource.data.submitted == true || resource.data.production_reviewed == true;
     }
 
     function poUploadKeys() {
@@ -119,20 +91,38 @@ service cloud.firestore {
       ];
     }
 
-    function notTransferredToProcurement() {
-      return resource.data.get('production_reviewed', false) != true;
+    function batchCloseRejectKeys() {
+      return [
+        'close_request_pending', 'close_request_production_accepted',
+        'close_request_mode', 'updated_at'
+      ];
     }
 
-    function canInitiateDeliveryRequest() {
-      return resource.data.submitted == true &&
-             hasOnlyKeys(closeInitKeys()) &&
+    function productionTransferKeys() {
+      return [
+        'production_reviewed', 'production_reviewed_at', 'production_reviewed_by',
+        'procurement_date_needed', 'procurement_batch_id', 'procurement_batch_closed',
+        'submitted', 'updated_at'
+      ];
+    }
+
+    function productionUserDeliveryKeys() {
+      return [
+        'procurement_batch_closed', 'user_delivery_chat_started_at',
+        'close_request_pending', 'close_request_user_accepted',
+        'close_request_production_accepted', 'close_request_mode', 'updated_at'
+      ];
+    }
+
+    function canInitiateBatchDeliveryRequest() {
+      return hasOnlyKeys(closeInitKeys()) &&
              request.resource.data.close_request_pending == true;
     }
 
-    function procurementWorkflowTable() {
-      return (isProcurement() || isAdmin()) &&
-             resource.data.submitted == true &&
-             resource.data.production_reviewed == true;
+    function canFinalizeBatchDelivery() {
+      return hasOnlyKeys(closeFinalizeKeys()) &&
+             request.resource.data.request_status == 'DONE' &&
+             request.resource.data.request_closed == true;
     }
 
     match /users/{userId} {
@@ -156,7 +146,7 @@ service cloud.firestore {
     match /tables/{tableId} {
       allow read: if isAuthenticated() && (
         resource.data.user_id == request.auth.uid ||
-        (canViewAllSubmissions() && resource.data.submitted == true) ||
+        (canViewAllSubmissions() && isSubmittedOrReviewedTable()) ||
         isAdmin()
       );
 
@@ -192,45 +182,38 @@ service cloud.firestore {
           hasOnlyKeys(closeFinalizeKeys()) &&
           request.resource.data.request_status == 'DONE' &&
           request.resource.data.request_closed == true) ||
-        (isProduction() &&
-          resource.data.submitted == true &&
-          'production_reviewed' in request.resource.data.diff(resource.data).affectedKeys()) ||
-        (isProduction() &&
-          resource.data.submitted == true &&
-          resource.data.close_request_pending == true &&
-          tableIsOpen() &&
-          hasOnlyKeys(['close_request_production_accepted', 'updated_at'])) ||
-        (isProduction() &&
-          resource.data.submitted == true &&
-          resource.data.close_request_pending == true &&
-          hasOnlyKeys(closeRejectKeys())) ||
-        // Production: initiate delivery when fulfilling from stock (no procurement transfer)
-        (isProduction() &&
-          canInitiateDeliveryRequest() &&
-          notTransferredToProcurement() &&
-          request.resource.data.get('close_request_mode', '') == 'production') ||
-        // Production: Shipping Manifest upload/remove
-        (isProduction() &&
-          resource.data.submitted == true &&
-          hasOnlyKeys(smUploadKeys())) ||
-        // Procurement/admin: workflow updates (P.O., close request, etc.)
-        (procurementWorkflowTable()) ||
-        // Procurement/admin: initiate delivery request after transfer (explicit keys, no tableIsOpen gate)
-        ((isProcurement() || isAdmin()) &&
-          canInitiateDeliveryRequest() &&
-          resource.data.get('production_reviewed', false) == true) ||
-        // Procurement/admin: reset close request fields
+        (isProductionTeam() &&
+          isSubmittedOrReviewedTable() &&
+          (
+            hasOnlyKeys(smUploadKeys()) ||
+            (hasOnlyKeys(closeInitKeys()) &&
+              request.resource.data.close_request_pending == true) ||
+            (resource.data.close_request_pending == true &&
+              tableIsOpen() &&
+              hasOnlyKeys(['close_request_production_accepted', 'updated_at'])) ||
+            (resource.data.close_request_pending == true &&
+              hasOnlyKeys(closeRejectKeys())) ||
+            (resource.data.close_request_pending == true &&
+              hasOnlyKeys(closeFinalizeKeys()) &&
+              request.resource.data.request_status == 'DONE' &&
+              request.resource.data.request_closed == true) ||
+            hasOnlyKeys(productionUserDeliveryKeys()) ||
+            hasOnlyKeys(productionTransferKeys())
+          )) ||
         ((isProcurement() || isAdmin()) &&
           resource.data.submitted == true &&
-          resource.data.close_request_pending == true &&
-          hasOnlyKeys(closeRejectKeys())) ||
-        // Procurement/admin: finalize close request
-        ((isProcurement() || isAdmin()) &&
-          resource.data.submitted == true &&
-          resource.data.close_request_pending == true &&
-          hasOnlyKeys(closeFinalizeKeys()) &&
-          request.resource.data.request_status == 'DONE' &&
-          request.resource.data.request_closed == true) ||
+          resource.data.production_reviewed == true &&
+          (
+            hasOnlyKeys(poUploadKeys()) ||
+            (hasOnlyKeys(closeInitKeys()) &&
+              request.resource.data.close_request_pending == true) ||
+            (resource.data.close_request_pending == true &&
+              hasOnlyKeys(closeRejectKeys())) ||
+            (resource.data.close_request_pending == true &&
+              hasOnlyKeys(closeFinalizeKeys()) &&
+              request.resource.data.request_status == 'DONE' &&
+              request.resource.data.request_closed == true)
+          )) ||
         isAdmin()
       );
 
@@ -241,28 +224,24 @@ service cloud.firestore {
         isAdmin()
       );
 
-      // Table chat messages (User, Production, Procurement)
       match /messages/{messageId} {
-        function parentTableData() {
-          return get(/databases/$(database)/documents/tables/$(tableId)).data;
-        }
+        allow read: if isAuthenticated() && (
+          isProductionTeam() ||
+          isProcurement() ||
+          isAdmin() ||
+          get(/databases/$(database)/documents/tables/$(tableId)).data.user_id == request.auth.uid
+        );
 
-        function canAccessChat() {
-          return isAuthenticated() &&
-                 exists(/databases/$(database)/documents/tables/$(tableId)) &&
-                 (
-                   parentTableData().user_id == request.auth.uid ||
-                   (canViewAllSubmissions() && parentTableData().submitted == true) ||
-                   isAdmin()
-                 );
-        }
-
-        allow read: if canAccessChat();
-
-        allow create: if canAccessChat() &&
+        allow create: if isAuthenticated() &&
           request.resource.data.sender_id == request.auth.uid &&
           request.resource.data.created_at is string &&
           request.resource.data.message_type is string &&
+          (
+            isProductionTeam() ||
+            isProcurement() ||
+            isAdmin() ||
+            get(/databases/$(database)/documents/tables/$(tableId)).data.user_id == request.auth.uid
+          ) &&
           (
             (request.resource.data.message_type == 'image' &&
               request.resource.data.image_data is string &&
@@ -363,6 +342,55 @@ service cloud.firestore {
         (isStore() && resource.data.user_id == request.auth.uid) ||
         isAdmin()
       );
+    }
+
+    match /procurement_batches/{batchId} {
+      allow read: if isAuthenticated() && (isProduction() || isProcurement() || isAdmin());
+
+      allow create: if isAuthenticated() && (isProduction() || isAdmin()) &&
+        request.resource.data.created_by == request.auth.uid &&
+        request.resource.data.table_ids is list;
+
+      allow update: if isAuthenticated() && (
+        (isProduction() &&
+          resource.data.close_request_pending == true &&
+          hasOnlyKeys(['close_request_production_accepted', 'updated_at'])) ||
+        (isProduction() &&
+          resource.data.close_request_pending == true &&
+          hasOnlyKeys(batchCloseRejectKeys())) ||
+        (isProduction() &&
+          resource.data.close_request_pending == true &&
+          canFinalizeBatchDelivery()) ||
+        ((isProcurement() || isAdmin()) &&
+          canInitiateBatchDeliveryRequest()) ||
+        ((isProcurement() || isAdmin()) &&
+          resource.data.close_request_pending == true &&
+          hasOnlyKeys(batchCloseRejectKeys())) ||
+        ((isProcurement() || isAdmin()) &&
+          resource.data.close_request_pending == true &&
+          canFinalizeBatchDelivery()) ||
+        ((isProcurement() || isAdmin()) &&
+          hasOnlyKeys(poUploadKeys())) ||
+        isAdmin()
+      );
+
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && (isProduction() || isProcurement() || isAdmin());
+
+        allow create: if isAuthenticated() && (isProduction() || isProcurement() || isAdmin()) &&
+          request.resource.data.sender_id == request.auth.uid &&
+          request.resource.data.created_at is string &&
+          request.resource.data.message_type is string &&
+          (
+            (request.resource.data.message_type == 'image' &&
+              request.resource.data.image_data is string &&
+              request.resource.data.image_mime is string) ||
+            (request.resource.data.message_type != 'image' &&
+              request.resource.data.message is string)
+          );
+
+        allow update, delete: if false;
+      }
     }
   }
 }

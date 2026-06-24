@@ -101,6 +101,37 @@ interface Table {
   close_request_initiated_at?: string;
   close_request_initiated_by?: string;
   close_request_mode?: 'procurement' | 'production';
+  procurement_batch_id?: string;
+  procurement_batch_closed?: boolean;
+  user_delivery_chat_started_at?: string;
+}
+
+interface ProcurementBatch {
+  id: string;
+  name: string;
+  table_ids: string[];
+  table_names?: string[];
+  procurement_date_needed: string;
+  created_at: string;
+  created_by: string;
+  po_file_url?: string;
+  po_file_data?: string;
+  po_file_mime?: string;
+  po_file_name?: string;
+  po_file_size?: number;
+  po_file_type?: string;
+  po_uploaded_at?: string;
+  po_uploaded_by?: string;
+  request_closed?: boolean;
+  request_closed_at?: string;
+  request_closed_by?: string;
+  request_status?: 'PENDING' | 'DONE';
+  close_request_pending?: boolean;
+  close_request_production_accepted?: boolean;
+  close_request_initiated_at?: string;
+  close_request_initiated_by?: string;
+  close_request_mode?: 'procurement';
+  transfer_materials?: BatchTransferMaterial[];
 }
 
 interface ChatMessage {
@@ -115,6 +146,7 @@ interface ChatMessage {
   po_file_name?: string;
   image_data?: string;
   image_mime?: string;
+  _source?: 'batch' | 'table';
 }
 
 interface SkuOption {
@@ -143,6 +175,8 @@ interface ProcurementMaterialSummary {
   raw_material: string;
   unit: string;
   type: string;
+  brand?: string;
+  supplier?: string;
   totalQuantity: number;
   table_id: string;
   table_name: string;
@@ -156,6 +190,31 @@ interface ProcurementTableSummary {
   uniqueMaterialsCount: number;
   totalRequestedQuantity: number;
   materials: ProcurementMaterialSummary[];
+}
+
+interface TransferMaterialPreview {
+  key: string;
+  raw_material: string;
+  unit: string;
+  type: string;
+  brand: string;
+  supplier: string;
+  quantity: number;
+  originalQuantity: number;
+  originalUnit: string;
+  excluded: boolean;
+}
+
+interface BatchTransferMaterial {
+  raw_material: string;
+  unit: string;
+  type: string;
+  brand?: string;
+  supplier?: string;
+  quantity: number;
+  original_quantity: number;
+  original_unit: string;
+  excluded: boolean;
 }
 
 // For the raw materials modal (user/production view)
@@ -235,21 +294,36 @@ export class Page3Component implements OnInit, OnDestroy {
   showProductionNotesModal = false;
   showTransferToProcurementModal = false;
   transferDateNeeded = '';
+  transferSelectedTableIds: Set<string> = new Set();
+  transferMaterialPreview: TransferMaterialPreview[] = [];
   productionNotesText = '';
   productionNotesReadOnly = false;
 
+  tableStatusFilter: 'pending' | 'done' | 'all' = 'pending';
+
+  procurementBatches: ProcurementBatch[] = [];
+  selectedBatchId = '';
+  selectedBatch: ProcurementBatch | null = null;
+  procurementBatchSummaries: ProcurementTableSummary[] = [];
+  procurementConsolidatedMaterials: ProcurementMaterialSummary[] = [];
+  paginatedProcurementMaterials: ProcurementMaterialSummary[] = [];
+
   showChatPanel = false;
   chatMinimized = false;
+  chatContextType: 'table' | 'batch' | 'unified' = 'table';
   chatTable: Table | null = null;
+  chatBatch: ProcurementBatch | null = null;
   chatMessages: ChatMessage[] = [];
   chatInput = '';
   chatLoading = false;
   private chatUnsubscribe: Unsubscribe | null = null;
+  private unifiedBatchUnsubscribe: Unsubscribe | null = null;
   unreadChatByTableId: Record<string, boolean> = {};
+  unreadChatByBatchId: Record<string, boolean> = {};
   private unreadChatUnsubscribes: Unsubscribe[] = [];
 
   showPoViewerModal = false;
-  poViewerTable: Table | null = null;
+  poViewerTable: Table | ProcurementBatch | null = null;
   docViewerType: 'po' | 'sm' = 'po';
 
   viewMode: 'my_tables' | 'store_submissions' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
@@ -357,27 +431,12 @@ export class Page3Component implements OnInit, OnDestroy {
       if (this.userRole === 'production') {
         await this.loadTablesDirectly();
         await this.loadProductionSubmissions();
-        if (!this.pendingRouteTableId && this.selectedTable) {
-          this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === this.selectedTable!.id);
-        }
+        await this.loadProcurementBatches();
       } else if (this.userRole === 'procurement') {
         await this.loadTablesDirectly();
+        await this.loadProcurementBatches();
       } else {
         await this.loadTablesDirectly();
-
-        if (this.tables.length > 0 && !this.selectedTable && !this.pendingRouteTableId) {
-          const lastTableId = localStorage.getItem(`lastSelectedRequisitionTable_${this.userId}`);
-          if (lastTableId && this.tables.some(t => t.id === lastTableId)) {
-            this.selectedTable = this.tables.find(t => t.id === lastTableId) || null;
-          } else {
-            this.selectedTable = this.tables[0];
-          }
-
-          if (this.selectedTable) {
-            this.selectedTableId = this.selectedTable.id;
-            await this.loadRequisitionsDirectly();
-          }
-        }
       }
 
       if (this.pendingRouteTableId) {
@@ -515,7 +574,10 @@ export class Page3Component implements OnInit, OnDestroy {
           close_request_production_accepted: data['close_request_production_accepted'] || false,
           close_request_initiated_at: data['close_request_initiated_at'],
           close_request_initiated_by: data['close_request_initiated_by'],
-          close_request_mode: data['close_request_mode']
+          close_request_mode: data['close_request_mode'],
+          procurement_batch_id: data['procurement_batch_id'],
+          procurement_batch_closed: data['procurement_batch_closed'] || false,
+          user_delivery_chat_started_at: data['user_delivery_chat_started_at']
         };
 
         if (table.user_id) {
@@ -543,54 +605,16 @@ export class Page3Component implements OnInit, OnDestroy {
 
       this.tables = loadedTables;
 
-      if (this.userRole === 'production') {
-        if (this.tables.length > 0 && !this.selectedTable && !this.pendingRouteTableId) {
-          this.selectedTable = this.tables[0];
-          this.selectedTableId = this.tables[0].id;
-
-          if (this.selectedTable.production_reviewed) {
-            this.selectedProductionView = 'reviewed';
-            if (this.productionReviewed.length === 0) {
-              await this.loadProductionReviewed();
-            }
-            this.filteredRequisitions = this.productionReviewed.filter(r => r.table_id === this.selectedTableId);
-          } else {
-            this.selectedProductionView = 'submissions';
-            this.filteredRequisitions = this.productionSubmissions.filter(r => r.table_id === this.selectedTableId);
-          }
-
-          this.updatePagination();
-        }
-      } else if (this.userRole === 'procurement') {
-        if (this.tables.length > 0 && !this.pendingRouteTableId) {
-          this.selectedTable = this.tables[0];
-          this.selectedTableId = this.tables[0].id;
-        } else if (!this.pendingRouteTableId) {
-          this.selectedTable = null;
-          this.selectedTableId = '';
-        }
-
+      if (this.userRole === 'procurement') {
         await this.loadProcurementReviewed();
-
-        if (this.selectedTableId) {
-          this.filteredRequisitions = this.procurementReviewed.filter(r => r.table_id === this.selectedTableId);
+        if (this.selectedBatchId) {
+          this.computeProcurementBatchSummaries();
         } else {
-          this.filteredRequisitions = [...this.procurementReviewed];
+          this.procurementBatchSummaries = [];
+          this.procurementConsolidatedMaterials = [];
+          this.filteredRequisitions = [];
         }
         this.updatePagination();
-      } else if (this.tables.length > 0) {
-        const lastTableId = localStorage.getItem(`lastSelectedRequisitionTable_${this.userId}`);
-        if (lastTableId && this.tables.some(t => t.id === lastTableId)) {
-          this.selectedTableId = lastTableId;
-          this.selectedTable = this.tables.find(t => t.id === this.selectedTableId) || null;
-        } else {
-          this.selectedTableId = this.tables[0].id;
-          this.selectedTable = this.tables[0];
-        }
-
-        if (this.selectedTable) {
-          await this.loadRequisitionsDirectly();
-        }
       }
     } catch (err) {
       this.showToast('Failed to load tables', 'error');
@@ -829,6 +853,309 @@ export class Page3Component implements OnInit, OnDestroy {
     return 'Unknown';
   }
 
+  isTableDone(table: Table | null | undefined): boolean {
+    if (!table) return false;
+    return table.request_status === 'DONE' || !!table.request_closed;
+  }
+
+  isBatchDone(batch: ProcurementBatch | null | undefined): boolean {
+    if (!batch) return false;
+    return batch.request_status === 'DONE' || !!batch.request_closed;
+  }
+
+  getFilteredTables(): Table[] {
+    if (this.tableStatusFilter === 'all') return this.tables;
+    if (this.tableStatusFilter === 'done') {
+      return this.tables.filter(t => this.isTableDone(t));
+    }
+    return this.tables.filter(t => !this.isTableDone(t));
+  }
+
+  getFilteredBatches(): ProcurementBatch[] {
+    if (this.tableStatusFilter === 'all') return this.procurementBatches;
+    if (this.tableStatusFilter === 'done') {
+      return this.procurementBatches.filter(b => this.isBatchDone(b));
+    }
+    return this.procurementBatches.filter(b => !this.isBatchDone(b));
+  }
+
+  setTableStatusFilter(filter: 'pending' | 'done' | 'all') {
+    this.tableStatusFilter = filter;
+    if (this.selectedTable && !this.getFilteredTables().some(t => t.id === this.selectedTable!.id)) {
+      this.selectedTableId = '';
+      this.selectedTable = null;
+      this.filteredRequisitions = [];
+    }
+    if (this.selectedBatch && !this.getFilteredBatches().some(b => b.id === this.selectedBatch!.id)) {
+      this.selectedBatchId = '';
+      this.selectedBatch = null;
+      this.procurementBatchSummaries = [];
+      this.procurementConsolidatedMaterials = [];
+    }
+  }
+
+  async loadProcurementBatches() {
+    try {
+      const batchesRef = collection(this.firestore, 'procurement_batches');
+      const snapshot = await this.run(() => getDocs(query(batchesRef, orderBy('created_at', 'desc'))));
+      const batches: ProcurementBatch[] = [];
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        batches.push({
+          id: docSnap.id,
+          name: data['name'] || 'Procurement Batch',
+          table_ids: data['table_ids'] || [],
+          table_names: data['table_names'] || [],
+          procurement_date_needed: data['procurement_date_needed'] || '',
+          created_at: data['created_at'] || '',
+          created_by: data['created_by'] || '',
+          po_file_url: data['po_file_url'],
+          po_file_data: data['po_file_data'],
+          po_file_mime: data['po_file_mime'],
+          po_file_name: data['po_file_name'],
+          po_file_size: data['po_file_size'],
+          po_file_type: data['po_file_type'],
+          po_uploaded_at: data['po_uploaded_at'],
+          po_uploaded_by: data['po_uploaded_by'],
+          request_closed: data['request_closed'] || false,
+          request_closed_at: data['request_closed_at'],
+          request_closed_by: data['request_closed_by'],
+          request_status: data['request_status'] || (data['request_closed'] ? 'DONE' : 'PENDING'),
+          close_request_pending: data['close_request_pending'] || false,
+          close_request_production_accepted: data['close_request_production_accepted'] || false,
+          close_request_initiated_at: data['close_request_initiated_at'],
+          close_request_initiated_by: data['close_request_initiated_by'],
+          close_request_mode: data['close_request_mode'],
+          transfer_materials: data['transfer_materials'] || []
+        });
+      });
+      this.procurementBatches = batches;
+    } catch (err) {
+      console.error('Failed to load procurement batches', err);
+    }
+  }
+
+  getBatchById(batchId: string): ProcurementBatch | null {
+    return this.procurementBatches.find(b => b.id === batchId) || null;
+  }
+
+  isTableInActiveProcurementBatch(table: Table | null | undefined): boolean {
+    if (!table?.production_reviewed || !table.procurement_batch_id) return false;
+    return !table.procurement_batch_closed;
+  }
+
+  isTableInUserDeliveryPhase(table: Table | null | undefined): boolean {
+    return !!table?.production_reviewed && !!table.procurement_batch_closed && !this.isTableDone(table);
+  }
+
+  toggleTransferSelection(table: Table, event?: Event) {
+    event?.stopPropagation();
+    if (!this.isTableReadyForTransfer(table)) return;
+    if (this.transferSelectedTableIds.has(table.id)) {
+      this.transferSelectedTableIds.delete(table.id);
+    } else {
+      this.transferSelectedTableIds.add(table.id);
+    }
+    this.transferSelectedTableIds = new Set(this.transferSelectedTableIds);
+  }
+
+  isTransferSelected(table: Table): boolean {
+    return this.transferSelectedTableIds.has(table.id);
+  }
+
+  getTransferSelectedTables(): Table[] {
+    return this.tables.filter(t => this.transferSelectedTableIds.has(t.id));
+  }
+
+  isTableReadyForTransfer(table: Table): boolean {
+    if (this.userRole !== 'production' || table.production_reviewed) return false;
+    return this.productionSubmissions.some(r => r.table_id === table.id);
+  }
+
+  canTransferSelectedTables(): boolean {
+    return this.getTransferSelectedTables().length > 0 &&
+      this.getTransferSelectedTables().every(t => this.isTableReadyForTransfer(t));
+  }
+
+  private getTransferMaterialKey(rawMaterial: string, unit: string, type: string): string {
+    return `${rawMaterial.toLowerCase()}|${unit}|${type}`;
+  }
+
+  buildTransferMaterialPreview() {
+    const tables = this.getTransferSelectedTables();
+    const map = new Map<string, TransferMaterialPreview>();
+
+    for (const table of tables) {
+      const reqs = this.productionSubmissions.filter(r => r.table_id === table.id);
+      for (const req of reqs) {
+        if (!req.materials?.length) {
+          const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
+          const skuName = String(req.skuName ?? req['sku_name'] ?? '').trim();
+          req.materials = this.getMaterialsFromLoadedData(skuCode, skuName);
+        }
+
+        for (const mat of req.materials || []) {
+          const unit = mat.unit || '—';
+          const type = mat.type || 'N/A';
+          const key = this.getTransferMaterialKey(mat.raw_material, unit, type);
+          const qty = this.calculateMaterialTotal(
+            req.quantity || req['qty_needed'] || 0,
+            mat.quantity_per_batch
+          );
+
+          const existing = map.get(key);
+          if (!existing) {
+            map.set(key, {
+              key,
+              raw_material: mat.raw_material,
+              unit,
+              type,
+              brand: '',
+              supplier: '',
+              quantity: qty,
+              originalQuantity: qty,
+              originalUnit: unit,
+              excluded: false
+            });
+          } else {
+            existing.quantity += qty;
+            existing.originalQuantity += qty;
+          }
+        }
+      }
+    }
+
+    this.transferMaterialPreview = Array.from(map.values()).sort((a, b) =>
+      a.raw_material.localeCompare(b.raw_material)
+    );
+  }
+
+  toggleTransferMaterialExcluded(item: TransferMaterialPreview) {
+    item.excluded = !item.excluded;
+  }
+
+  getActiveTransferMaterialCount(): number {
+    return this.transferMaterialPreview.filter(m => !m.excluded).length;
+  }
+
+  canConfirmTransfer(): boolean {
+    return !!this.transferDateNeeded && this.getActiveTransferMaterialCount() > 0 && !this.isSubmitting;
+  }
+
+  private getTransferPreviewMap(): Map<string, TransferMaterialPreview> {
+    return new Map(this.transferMaterialPreview.map(m => [m.key, m]));
+  }
+
+  getChatContextForTable(table: Table): { type: 'table' | 'batch'; batchId?: string } {
+    if (
+      this.isTableInActiveProcurementBatch(table) &&
+      (this.userRole === 'production' || this.userRole === 'procurement' || this.userRole === 'admin')
+    ) {
+      return { type: 'batch', batchId: table.procurement_batch_id };
+    }
+    return { type: 'table' };
+  }
+
+  getChatTitle(): string {
+    if (this.chatContextType === 'batch' && this.chatBatch) {
+      const names = this.chatBatch.table_names?.length
+        ? this.chatBatch.table_names.join(', ')
+        : `${this.chatBatch.table_ids.length} tables`;
+      return `${this.chatBatch.name} (${names})`;
+    }
+    if (this.chatContextType === 'unified' && this.chatTable) {
+      return `${this.chatTable.name} — Delivery`;
+    }
+    return this.chatTable?.name || '';
+  }
+
+  shouldUseUnifiedTableChat(table: Table): boolean {
+    return !!table.procurement_batch_id && !!table.procurement_batch_closed;
+  }
+
+  async selectBatch(batch: ProcurementBatch) {
+    this.selectedBatchId = batch.id;
+    this.selectedBatch = batch;
+    this.selectedTableId = '';
+    this.selectedTable = null;
+    this.showTableDropdown = false;
+    this.computeProcurementBatchSummaries();
+    this.currentPage = 1;
+    this.updatePagination();
+  }
+
+  computeProcurementBatchSummaries() {
+    if (!this.selectedBatch) {
+      this.procurementBatchSummaries = [];
+      this.procurementConsolidatedMaterials = [];
+      this.updateProcurementPagination();
+      return;
+    }
+
+    const batchTransferMaterials = this.selectedBatch.transfer_materials || [];
+    if (batchTransferMaterials.length > 0) {
+      this.procurementConsolidatedMaterials = batchTransferMaterials
+        .filter(tm => !tm.excluded)
+        .map(tm => ({
+          raw_material: tm.raw_material,
+          unit: tm.unit || '—',
+          type: tm.type || 'N/A',
+          brand: (tm.brand || '').trim(),
+          supplier: (tm.supplier || '').trim(),
+          totalQuantity: tm.quantity,
+          table_id: 'consolidated',
+          table_name: this.selectedBatch!.name,
+          production_status: 'confirmed' as const
+        }));
+      this.procurementBatchSummaries = [];
+      this.updateProcurementPagination();
+      return;
+    }
+
+    const tableIds = new Set(this.selectedBatch.table_ids);
+    const reqs = this.procurementReviewed.filter(r => r.table_id && tableIds.has(r.table_id));
+    const consolidatedMap = new Map<string, ProcurementMaterialSummary>();
+
+    for (const req of reqs) {
+      if (!req.table_id) continue;
+      if (req.status === 'Removed' || req.production_action === 'removed') continue;
+
+      if (!req.materials?.length) {
+        const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
+        const skuName = String(req.skuName ?? req['sku_name'] ?? '').trim();
+        req.materials = this.getMaterialsFromLoadedData(skuCode, skuName);
+      }
+
+      for (const mat of req.materials || []) {
+        if (mat.production_action === 'removed') continue;
+
+        const qty = this.calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch);
+        const key = `${mat.raw_material.toLowerCase()}|${mat.unit}|${mat.type}`;
+
+        let existing = consolidatedMap.get(key);
+        if (!existing) {
+          consolidatedMap.set(key, {
+            raw_material: mat.raw_material,
+            unit: mat.unit || '—',
+            type: mat.type || 'N/A',
+            totalQuantity: qty,
+            table_id: 'consolidated',
+            table_name: this.selectedBatch!.name,
+            production_status: mat.production_action ?? null
+          });
+        } else {
+          existing.totalQuantity += qty;
+        }
+      }
+    }
+
+    this.procurementConsolidatedMaterials = Array.from(consolidatedMap.values()).sort((a, b) =>
+      a.raw_material.localeCompare(b.raw_material)
+    );
+    this.procurementBatchSummaries = [];
+    this.updateProcurementPagination();
+  }
+
   showRequisitionTableColumn(): boolean {
     return (this.userRole === 'production' || this.userRole === 'procurement') && !this.selectedTable;
   }
@@ -837,12 +1164,13 @@ export class Page3Component implements OnInit, OnDestroy {
     let cols = 1;
     if (this.showRequisitionTableColumn()) cols++;
     if (this.userRole === 'production') cols++;
-    cols += 11;
+    cols += 9;
+    if (this.userRole !== 'production') cols += 2;
     return cols;
   }
 
   getProcurementSummaryColspan(): number {
-    return this.selectedTable ? 2 : 3;
+    return 5;
   }
 
   async onTableChange() {
@@ -921,7 +1249,9 @@ export class Page3Component implements OnInit, OnDestroy {
         procurement_date_needed: data['procurement_date_needed'],
         request_closed: data['request_closed'] || false,
         request_closed_at: data['request_closed_at'],
-        request_closed_by: data['request_closed_by']
+        request_closed_by: data['request_closed_by'],
+        procurement_batch_id: data['procurement_batch_id'],
+        procurement_batch_closed: data['procurement_batch_closed'] || false
       };
 
       if (table.user_id) {
@@ -1881,97 +2211,165 @@ export class Page3Component implements OnInit, OnDestroy {
     this.approvalNotes = '';
   }
 
-  async submitReviewedTable() {
-    if (!this.canSubmitReviewedTable() || !this.selectedTable || !this.transferDateNeeded) return;
+  async submitReviewedTables() {
+    let tablesToTransfer = this.getTransferSelectedTables();
+    if (tablesToTransfer.length === 0 && this.selectedTable && this.isTableReadyForTransfer(this.selectedTable)) {
+      tablesToTransfer = [this.selectedTable];
+    }
+    if (tablesToTransfer.length === 0 || !this.transferDateNeeded) return;
+    if (this.getActiveTransferMaterialCount() === 0) {
+      this.showToast('Include at least one raw material in the transfer', 'error');
+      return;
+    }
 
     try {
       this.isSubmitting = true;
       this.isLoading = true;
 
-      const tableSubmissions = this.productionSubmissions.filter(r => r.table_id === this.selectedTable!.id);
-      const confirmedItems = tableSubmissions.filter(r => r.production_action === 'confirmed').length;
-      const removedItems = tableSubmissions.filter(r => r.production_action === 'removed').length;
+      const batchName = `Procurement Batch ${this.formatTableDate(new Date())}`;
+      const tableIds = tablesToTransfer.map(t => t.id);
+      const tableNames = tablesToTransfer.map(t => t.name);
+      const now = new Date().toISOString();
+      const excludedMaterialNames = new Set(
+        this.transferMaterialPreview.filter(p => p.excluded).map(p => p.raw_material.toLowerCase())
+      );
+      const transferMaterials: BatchTransferMaterial[] = this.transferMaterialPreview.map(m => ({
+        raw_material: m.raw_material,
+        unit: m.unit,
+        type: m.type,
+        brand: (m.brand || '').trim(),
+        supplier: (m.supplier || '').trim(),
+        quantity: m.quantity,
+        original_quantity: m.originalQuantity,
+        original_unit: m.originalUnit,
+        excluded: m.excluded
+      }));
 
-      const updatePromises = tableSubmissions.map(async (req) => {
-        const action = req.production_action === 'removed' ? 'removed' : 'confirmed';
-        const newStatus = action === 'removed' ? 'Removed' : 'Production_Confirmed';
-
-        const updateData: any = {
-          production_action: action,
-          production_action_at: req.production_action_at || new Date().toISOString(),
-          production_action_by: req.production_action_by || this.userId
-        };
-
-        if (action === 'removed') {
-          updateData.production_action_notes = req.production_action_notes || '';
-        }
-
-        const needsUpdate = req.status !== newStatus || req.production_action !== action;
-        if (!needsUpdate) return true;
-
-        const tableId = req.table_id || this.selectedTableId || '';
-        return this.db.updateRequisitionStatus(req.id, newStatus, this.userId, tableId, updateData);
-      });
-
-      await Promise.all(updatePromises);
-
-      const tableRef = doc(this.firestore, 'tables', this.selectedTable.id);
-      await this.run(() =>
-        updateDoc(tableRef, {
-          production_reviewed: true,
-          production_reviewed_at: new Date().toISOString(),
-          production_reviewed_by: this.userId,
+      const batchDocRef = await this.run(() =>
+        addDoc(collection(this.firestore, 'procurement_batches'), {
+          name: batchName,
+          table_ids: tableIds,
+          table_names: tableNames,
           procurement_date_needed: this.transferDateNeeded,
-          updated_at: new Date().toISOString(),
-          submitted: true
+          transfer_materials: transferMaterials,
+          created_at: now,
+          created_by: this.userId,
+          request_status: 'PENDING',
+          request_closed: false
         })
       );
+
+      let totalItems = 0;
+      let confirmedItems = 0;
+      let removedItems = 0;
+
+      for (const table of tablesToTransfer) {
+        const tableSubmissions = this.productionSubmissions.filter(r => r.table_id === table.id);
+        totalItems += tableSubmissions.length;
+
+        const updatePromises = tableSubmissions.map(async (req) => {
+          if (!req.materials?.length) {
+            const skuCode = String(req.skuCode ?? req['sku_code'] ?? '').trim();
+            const skuName = String(req.skuName ?? req['sku_name'] ?? '').trim();
+            req.materials = this.getMaterialsFromLoadedData(skuCode, skuName);
+          }
+
+          const materials = (req.materials || []).map(mat => {
+            const excluded = excludedMaterialNames.has(mat.raw_material.toLowerCase());
+            return {
+              ...mat,
+              production_action: excluded ? 'removed' as const : 'confirmed' as const
+            };
+          });
+
+          const allRemoved = materials.length > 0 && materials.every(m => m.production_action === 'removed');
+          const action = allRemoved ? 'removed' : 'confirmed';
+          const newStatus = action === 'removed' ? 'Removed' : 'Production_Confirmed';
+
+          if (action === 'confirmed') confirmedItems++;
+          else removedItems++;
+
+          const updateData: any = {
+            materials,
+            production_action: action,
+            production_action_at: now,
+            production_action_by: this.userId
+          };
+
+          return this.db.updateRequisitionStatus(req.id, newStatus, this.userId, table.id, updateData);
+        });
+
+        await Promise.all(updatePromises);
+
+        const tableRef = doc(this.firestore, 'tables', table.id);
+        await this.run(() =>
+          updateDoc(tableRef, {
+            production_reviewed: true,
+            production_reviewed_at: now,
+            production_reviewed_by: this.userId,
+            procurement_date_needed: this.transferDateNeeded,
+            procurement_batch_id: batchDocRef.id,
+            procurement_batch_closed: false,
+            updated_at: now,
+            submitted: true
+          })
+        );
+
+        table.production_reviewed = true;
+        table.procurement_date_needed = this.transferDateNeeded;
+        table.procurement_batch_id = batchDocRef.id;
+        table.procurement_batch_closed = false;
+        const tableIndex = this.tables.findIndex(t => t.id === table.id);
+        if (tableIndex !== -1) {
+          this.tables[tableIndex] = { ...this.tables[tableIndex], ...table };
+        }
+
+        await this.notificationService.sendTableReviewedByProductionNotification(
+          table.id,
+          table.name,
+          this.userId
+        );
+      }
 
       const currentUser = await this.auth.getCurrentUserPromise();
       const reviewerEmail = currentUser?.email || 'unknown@example.com';
 
       try {
         await this.emailNotificationService.sendTableReviewedNotification({
-          tableName: this.selectedTable.name,
-          reviewerEmail: reviewerEmail,
-          reviewedAt: new Date().toISOString(),
-          totalItems: tableSubmissions.length,
-          confirmedItems: confirmedItems,
-          removedItems: removedItems,
-          tableId: this.selectedTable.id,
-          reviewLink: `${window.location.origin}/requisitions?tableId=${this.selectedTable.id}&role=procurement`
+          tableName: batchName,
+          reviewerEmail,
+          reviewedAt: now,
+          totalItems,
+          confirmedItems,
+          removedItems,
+          tableId: batchDocRef.id,
+          reviewLink: `${window.location.origin}/requisitions?batchId=${batchDocRef.id}&role=procurement`
         });
-        this.showToast(`Table "${this.selectedTable.name}" transferred to procurement – they have been notified`, 'success');
-      } catch (emailError) {
-        this.showToast(`Table "${this.selectedTable.name}" transferred to procurement (email notification failed)`, 'info');
+        this.showToast(
+          `${tablesToTransfer.length} table(s) transferred to procurement as one consolidated batch`,
+          'success'
+        );
+      } catch {
+        this.showToast(
+          `${tablesToTransfer.length} table(s) transferred (email notification failed)`,
+          'info'
+        );
       }
 
-      await this.notificationService.sendTableReviewedByProductionNotification(
-        this.selectedTable.id,
-        this.selectedTable.name,
-        this.userId
-      );
-
-      if (this.selectedTable) {
-        this.selectedTable.production_reviewed = true;
-        this.selectedTable.procurement_date_needed = this.transferDateNeeded;
-        const tableIndex = this.tables.findIndex(t => t.id === this.selectedTable!.id);
-        if (tableIndex !== -1) {
-          this.tables[tableIndex].production_reviewed = true;
-          this.tables[tableIndex].procurement_date_needed = this.transferDateNeeded;
-        }
-      }
-
+      this.transferSelectedTableIds = new Set();
       this.closeTransferToProcurementModal();
-
       await this.loadProductionSubmissions();
       await this.loadProductionReviewed();
+      await this.loadProcurementBatches();
 
-      this.selectedProductionView = 'reviewed';
-      this.filteredRequisitions = this.productionReviewed.filter(r => r.table_id === this.selectedTable!.id);
+      if (this.selectedTable) {
+        this.selectedProductionView = 'reviewed';
+        this.filteredRequisitions = this.productionReviewed.filter(r => r.table_id === this.selectedTable!.id);
+      }
       this.updatePagination();
+      this.setupUnreadChatListeners();
     } catch (err) {
-      this.showToast('Failed to submit table', 'error');
+      this.showToast('Failed to submit tables to procurement', 'error');
     } finally {
       this.isSubmitting = false;
       this.isLoading = false;
@@ -2255,7 +2653,7 @@ export class Page3Component implements OnInit, OnDestroy {
     return this.tables.find(t => t.id === summary.table_id);
   }
 
-  hasPoDocument(table: Table | null | undefined): boolean {
+  hasPoDocument(table: Table | ProcurementBatch | null | undefined): boolean {
     if (!table) return false;
     return !!(table.po_file_data || table.po_file_url);
   }
@@ -2266,7 +2664,12 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   isProcurementInWorkflow(table: Table | null | undefined): boolean {
-    return !!table?.production_reviewed;
+    if (this.chatContextType === 'batch') return true;
+    return !!table?.production_reviewed && !this.isTableInActiveProcurementBatch(table);
+  }
+
+  isBatchProcurementWorkflow(): boolean {
+    return this.chatContextType === 'batch' && !!this.chatBatch && !this.isBatchDone(this.chatBatch);
   }
 
   getCloseRequestMode(table: Table | null | undefined): 'procurement' | 'production' {
@@ -2275,23 +2678,19 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   getDeliveryRequestBannerText(): string {
+    if (this.chatContextType === 'batch') {
+      return 'Procurement requested batch delivery confirmation. Production must accept or reject:';
+    }
     const mode = this.getCloseRequestMode(this.chatTable);
     const initiator = mode === 'procurement' ? 'Procurement' : 'Production';
     return `${initiator} requested delivery confirmation. Please accept or reject:`;
   }
 
-  canViewPo(): boolean {
-    if (!this.isProcurementInWorkflow(this.chatTable)) return false;
-    return this.userRole === 'procurement' || this.userRole === 'production' || this.userRole === 'admin';
-  }
-
-  canViewSm(): boolean {
-    return this.userRole === 'user' || this.userRole === 'store' ||
-      this.userRole === 'production' || this.userRole === 'procurement' || this.userRole === 'admin';
-  }
-
-  canShowPoInChat(): boolean {
-    return this.canViewPo() && !!this.chatTable && this.hasPoDocument(this.chatTable);
+  getChatStatusLabel(): 'PENDING' | 'DONE' {
+    if (this.chatContextType === 'batch' && this.chatBatch) {
+      return this.isBatchDone(this.chatBatch) ? 'DONE' : 'PENDING';
+    }
+    return this.getRequestStatusLabel(this.chatTable);
   }
 
   canShowSmInChat(): boolean {
@@ -2313,53 +2712,128 @@ export class Page3Component implements OnInit, OnDestroy {
     return table;
   }
 
-  shouldShowChatMessage(msg: ChatMessage): boolean {
-    if (msg.message_type === 'po_upload' && !this.canViewPo()) return false;
-    if (!this.isProcurementInWorkflow(this.chatTable)) {
-      if (msg.sender_role === 'procurement' || msg.message_type === 'po_upload') return false;
+  canViewPo(): boolean {
+    if (this.chatContextType === 'batch' || this.chatContextType === 'unified') {
+      return this.userRole === 'procurement' || this.userRole === 'production' || this.userRole === 'admin';
     }
+    if (!this.isProcurementInWorkflow(this.chatTable)) return false;
+    return this.userRole === 'procurement' || this.userRole === 'production' || this.userRole === 'admin';
+  }
+
+  canViewSm(): boolean {
+    if (this.chatContextType === 'batch') return false;
+    return this.userRole === 'user' || this.userRole === 'store' ||
+      this.userRole === 'production' || this.userRole === 'procurement' || this.userRole === 'admin';
+  }
+
+  shouldShowChatMessage(msg: ChatMessage): boolean {
+    const source: 'batch' | 'table' = msg._source || (this.chatContextType === 'batch' ? 'batch' : 'table');
+
+    if (this.userRole === 'production' || this.userRole === 'admin') {
+      if (msg.message_type === 'po_upload' && source === 'table' && !this.isProcurementInWorkflow(this.chatTable)) {
+        return false;
+      }
+      if (msg.message_type === 'po_upload' && !this.canViewPo()) return false;
+      return true;
+    }
+
+    if (this.userRole === 'procurement') {
+      return source === 'batch';
+    }
+
+    if (this.userRole === 'user' || this.userRole === 'store') {
+      if (source === 'batch') return false;
+      const startedAt = this.chatTable?.user_delivery_chat_started_at;
+      if (startedAt && msg.created_at < startedAt) return false;
+      if (msg.message_type === 'po_upload') return false;
+      if (msg.sender_role === 'procurement') return false;
+      return true;
+    }
+
+    if (msg.message_type === 'po_upload' && !this.canViewPo()) return false;
     return true;
   }
 
-  getDocViewUrl(table: Table | null | undefined, type: 'po' | 'sm'): string {
+  shouldShowChatPhaseDivider(msg: ChatMessage, index: number): boolean {
+    if (this.chatContextType !== 'unified') return false;
+    if (this.userRole !== 'production' && this.userRole !== 'admin') return false;
+    const source: 'batch' | 'table' = msg._source || 'table';
+    if (source !== 'table' || !this.shouldShowChatMessage(msg)) return false;
+
+    for (let i = index - 1; i >= 0; i--) {
+      const prev = this.chatMessages[i];
+      if (!this.shouldShowChatMessage(prev)) continue;
+      const prevSource: 'batch' | 'table' = prev._source || 'table';
+      return prevSource === 'batch';
+    }
+    return false;
+  }
+
+  getPoViewerTarget(): Table | ProcurementBatch | null {
+    if ((this.chatContextType === 'batch' || this.chatContextType === 'unified') && this.chatBatch) {
+      return this.chatBatch;
+    }
+    return this.chatTable;
+  }
+
+  canShowPoInChat(): boolean {
+    if (this.chatContextType === 'batch' || this.chatContextType === 'unified') {
+      return this.canViewPo() && !!this.chatBatch && this.hasPoDocument(this.chatBatch);
+    }
+    return this.canViewPo() && !!this.chatTable && this.hasPoDocument(this.chatTable);
+  }
+
+  getDocViewUrl(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm'): string {
     if (!table) return '';
-    const data = type === 'po' ? table.po_file_data : table.sm_file_data;
-    const mime = type === 'po'
-      ? (table.po_file_mime || table.po_file_type)
-      : (table.sm_file_mime || table.sm_file_type);
-    const url = type === 'po' ? table.po_file_url : table.sm_file_url;
+    if (type === 'sm') {
+      const t = table as Table;
+      const data = t.sm_file_data;
+      const mime = t.sm_file_mime || t.sm_file_type;
+      const url = t.sm_file_url;
+      if (data) {
+        return `data:${mime || 'application/octet-stream'};base64,${data}`;
+      }
+      return url || '';
+    }
+    const data = table.po_file_data;
+    const mime = table.po_file_mime || table.po_file_type;
+    const url = table.po_file_url;
     if (data) {
       return `data:${mime || 'application/octet-stream'};base64,${data}`;
     }
     return url || '';
   }
 
-  getSafeDocViewUrl(table: Table | null | undefined, type: 'po' | 'sm'): SafeResourceUrl | string {
+  getSafeDocViewUrl(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm'): SafeResourceUrl | string {
     const url = this.getDocViewUrl(table, type);
     return url ? this.sanitizer.bypassSecurityTrustResourceUrl(url) : '';
   }
 
-  getDocMime(table: Table | null | undefined, type: 'po' | 'sm'): string {
+  getDocMime(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm'): string {
     if (!table) return '';
     if (type === 'po') {
       return table.po_file_mime || table.po_file_type || 'application/octet-stream';
     }
-    return table.sm_file_mime || table.sm_file_type || 'application/octet-stream';
+    const t = table as Table;
+    return t.sm_file_mime || t.sm_file_type || 'application/octet-stream';
   }
 
-  isDocImage(table: Table | null | undefined, type: 'po' | 'sm'): boolean {
+  isDocImage(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm'): boolean {
     return this.getDocMime(table, type).startsWith('image/');
   }
 
-  isDocPdf(table: Table | null | undefined, type: 'po' | 'sm'): boolean {
+  isDocPdf(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm'): boolean {
     const mime = this.getDocMime(table, type).toLowerCase();
-    const name = ((type === 'po' ? table?.po_file_name : table?.sm_file_name) || '').toLowerCase();
+    const name = ((type === 'po' ? table?.po_file_name : (table as Table)?.sm_file_name) || '').toLowerCase();
     return mime.includes('pdf') || name.endsWith('.pdf');
   }
 
-  getDocFileName(table: Table | null | undefined, type: 'po' | 'sm'): string {
+  getDocFileName(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm'): string {
     if (!table) return type === 'po' ? 'Purchase Order' : 'Shipping Manifest';
-    return (type === 'po' ? table.po_file_name : table.sm_file_name) || (type === 'po' ? 'Purchase Order' : 'Shipping Manifest');
+    if (type === 'po') {
+      return table.po_file_name || 'Purchase Order';
+    }
+    return (table as Table).sm_file_name || 'Shipping Manifest';
   }
 
   getPoViewUrl(table: Table | null | undefined): string {
@@ -2396,10 +2870,11 @@ export class Page3Component implements OnInit, OnDestroy {
     this.openDocViewer(table, 'po');
   }
 
-  openDocViewer(table: Table | null | undefined, type: 'po' | 'sm') {
+  openDocViewer(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm') {
     if (!table) return;
     if (type === 'po' && (!this.canViewPo() || !this.hasPoDocument(table))) return;
-    if (type === 'sm' && (!this.canViewSm() || !this.hasSmDocument(table))) return;
+    if (type === 'sm' && (!(table as Table).sm_file_data && !(table as Table).sm_file_url)) return;
+    if (type === 'sm' && (!this.canViewSm() || !this.hasSmDocument(table as Table))) return;
     this.poViewerTable = table;
     this.docViewerType = type;
     this.showPoViewerModal = true;
@@ -2412,6 +2887,10 @@ export class Page3Component implements OnInit, OnDestroy {
 
   private getTableMessagesRef(tableId: string) {
     return collection(this.firestore, 'tables', tableId, 'messages');
+  }
+
+  private getBatchMessagesRef(batchId: string) {
+    return collection(this.firestore, 'procurement_batches', batchId, 'messages');
   }
 
   private getMaterialsFromLoadedData(skuCode: string, skuName: string): Material[] {
@@ -2783,15 +3262,7 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   canSubmitReviewedTable(): boolean {
-    if (this.userRole !== 'production' || !this.selectedTable) return false;
-    if (this.selectedTable.production_reviewed) return false;
-
-    const tableSubmissions = this.productionSubmissions.filter(r => r.table_id === this.selectedTable!.id);
-    if (tableSubmissions.length === 0) return false;
-
-    return tableSubmissions.every(
-      r => r.production_action === 'confirmed' || r.production_action === 'removed'
-    );
+    return this.canTransferSelectedTables();
   }
 
   canSubmitRequisition(req: Requisition): boolean {
@@ -2809,7 +3280,7 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   canProductionEditMaterials(req: Requisition): boolean {
-    return this.canProductionAction(req);
+    return false;
   }
 
   getTableForRequisition(req: Requisition): Table | null {
@@ -2848,6 +3319,21 @@ export class Page3Component implements OnInit, OnDestroy {
     return false;
   }
 
+  canOpenBatchChat(batch: ProcurementBatch | null | undefined): boolean {
+    if (!batch) return false;
+    return this.userRole === 'production' || this.userRole === 'procurement' || this.userRole === 'admin';
+  }
+
+  openChatForCurrentContext() {
+    if (this.userRole === 'procurement' && this.selectedBatch) {
+      this.openBatchChat(this.selectedBatch);
+      return;
+    }
+    if (this.selectedTable) {
+      this.openChat(this.selectedTable);
+    }
+  }
+
   hasChatDocuments(): boolean {
     return this.canShowPoInChat() || this.canShowSmInChat();
   }
@@ -2884,24 +3370,40 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   getProcurementMaterialCount(): number {
+    if (this.userRole === 'procurement' && this.selectedBatch) {
+      return this.procurementConsolidatedMaterials.length;
+    }
     if (!this.selectedTable) return 0;
     const summary = this.procurementTableSummaries.find(s => s.table_id === this.selectedTable!.id);
     return summary?.uniqueMaterialsCount ?? 0;
   }
 
   showTableContextBar(): boolean {
-    return !!this.selectedTable;
+    return !!this.selectedTable || !!this.selectedBatch;
   }
 
   openTransferToProcurementModal() {
-    if (!this.canSubmitReviewedTable() || !this.selectedTable) return;
+    if (!this.canTransferSelectedTables()) {
+      if (this.selectedTable && this.isTableReadyForTransfer(this.selectedTable)) {
+        this.transferSelectedTableIds = new Set([this.selectedTable.id]);
+      } else {
+        this.showToast('Select one or more submitted tables to transfer', 'error');
+        return;
+      }
+    }
     this.transferDateNeeded = '';
+    this.buildTransferMaterialPreview();
+    if (this.transferMaterialPreview.length === 0) {
+      this.showToast('No raw materials found for the selected tables', 'error');
+      return;
+    }
     this.showTransferToProcurementModal = true;
   }
 
   closeTransferToProcurementModal() {
     this.showTransferToProcurementModal = false;
     this.transferDateNeeded = '';
+    this.transferMaterialPreview = [];
   }
 
   confirmTransferToProcurement() {
@@ -2909,15 +3411,42 @@ export class Page3Component implements OnInit, OnDestroy {
       this.showToast('Please set a date needed before transferring', 'error');
       return;
     }
-    this.submitReviewedTable();
+    if (this.getActiveTransferMaterialCount() === 0) {
+      this.showToast('Include at least one raw material in the transfer', 'error');
+      return;
+    }
+    this.submitReviewedTables();
   }
 
   isChatWritable(): boolean {
-    return !!this.chatTable && !this.isRequestDone(this.chatTable);
+    if (this.chatContextType === 'batch') {
+      return !!this.chatBatch && !this.isBatchDone(this.chatBatch);
+    }
+    if (this.chatContextType === 'unified' || this.chatContextType === 'table') {
+      if (!this.chatTable) return false;
+      if (this.isTableInActiveProcurementBatch(this.chatTable)) {
+        return false;
+      }
+      return !this.isRequestDone(this.chatTable);
+    }
+    return false;
   }
 
   canInitiateCloseRequest(): boolean {
+    if (this.chatContextType === 'batch') {
+      if (!this.chatBatch || this.isBatchDone(this.chatBatch) || this.chatBatch.close_request_pending) {
+        return false;
+      }
+      if (this.userRole === 'procurement' || this.userRole === 'admin') {
+        return this.hasPoDocument(this.chatBatch);
+      }
+      return false;
+    }
+
     if (!this.chatTable || this.isRequestDone(this.chatTable) || this.chatTable.close_request_pending) {
+      return false;
+    }
+    if (this.isTableInActiveProcurementBatch(this.chatTable)) {
       return false;
     }
     if (this.userRole === 'admin') return true;
@@ -2931,7 +3460,11 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   private canProductionInitiateDelivery(table: Table): boolean {
-    if (!table.submitted || table.production_reviewed) return false;
+    if (!table.submitted) return false;
+    if (this.isTableInUserDeliveryPhase(table)) {
+      return true;
+    }
+    if (table.production_reviewed) return false;
     const tableSubmissions = this.productionSubmissions.filter(r => r.table_id === table.id);
     if (tableSubmissions.length === 0) return false;
     return tableSubmissions.every(
@@ -2940,6 +3473,9 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   canUploadPo(): boolean {
+    if (this.chatContextType === 'batch') {
+      return this.userRole === 'procurement' || this.userRole === 'admin';
+    }
     return (
       (this.userRole === 'procurement' || this.userRole === 'admin') &&
       this.isProcurementInWorkflow(this.chatTable)
@@ -2947,17 +3483,35 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   canUploadSm(): boolean {
-    return this.userRole === 'production' || this.userRole === 'admin';
+    if (this.chatContextType === 'batch') return false;
+    if (!this.chatTable) return false;
+    if (this.isTableInActiveProcurementBatch(this.chatTable)) return false;
+    return (
+      (this.userRole === 'production' || this.userRole === 'admin') &&
+      (!this.chatTable.production_reviewed || this.isTableInUserDeliveryPhase(this.chatTable))
+    );
   }
 
   canRespondToCloseRequest(): boolean {
+    if (this.chatContextType === 'batch') {
+      if (!this.chatBatch?.close_request_pending || this.isBatchDone(this.chatBatch)) return false;
+      if (this.userRole === 'production') {
+        return !this.chatBatch.close_request_production_accepted;
+      }
+      return false;
+    }
+
     if (!this.chatTable?.close_request_pending || this.isRequestDone(this.chatTable)) return false;
+    if (this.isTableInActiveProcurementBatch(this.chatTable)) return false;
     const mode = this.getCloseRequestMode(this.chatTable);
     if (this.userRole === 'user' || this.userRole === 'store') {
       return this.chatTable.user_id === this.userId && !this.chatTable.close_request_user_accepted;
     }
     if (this.userRole === 'production' && mode === 'procurement') {
       return !this.chatTable.close_request_production_accepted;
+    }
+    if (this.userRole === 'production' && mode === 'production') {
+      return false;
     }
     return false;
   }
@@ -3008,11 +3562,78 @@ export class Page3Component implements OnInit, OnDestroy {
       return;
     }
     const latest = this.tables.find(t => t.id === table.id) || table;
+    const ctx = this.getChatContextForTable(latest);
+
+    if (ctx.type === 'batch' && ctx.batchId) {
+      const batch = this.getBatchById(ctx.batchId);
+      if (batch) {
+        this.openBatchChat(batch, latest);
+        return;
+      }
+    }
+
+    if (this.shouldUseUnifiedTableChat(latest)) {
+      this.openUnifiedTableChat(latest);
+      return;
+    }
+
+    this.chatContextType = 'table';
+    this.chatBatch = null;
     this.chatTable = this.sanitizeTableForRole({ ...latest });
     this.showChatPanel = true;
     this.chatMinimized = false;
     this.markChatRead(latest.id);
-    this.subscribeToChat(latest.id);
+    this.subscribeToChatContext('table', latest.id);
+  }
+
+  openUnifiedTableChat(table: Table) {
+    const latest = this.tables.find(t => t.id === table.id) || table;
+    this.chatContextType = 'unified';
+    this.chatTable = this.sanitizeTableForRole({ ...latest });
+    this.chatBatch = null;
+    if (latest.procurement_batch_id) {
+      const batch = this.getBatchById(latest.procurement_batch_id);
+      if (batch) {
+        this.chatBatch = { ...batch };
+      }
+    }
+    this.showChatPanel = true;
+    this.chatMinimized = false;
+    this.markChatRead(latest.id);
+    this.subscribeToUnifiedChat(latest);
+  }
+
+  private autoOpenUserDeliveryChat(batchId: string) {
+    if (this.userRole !== 'production') return;
+    const batch = this.getBatchById(batchId);
+    if (!batch?.table_ids.length) return;
+
+    const preferredId =
+      this.chatTable?.id && batch.table_ids.includes(this.chatTable.id)
+        ? this.chatTable.id
+        : this.selectedTableId && batch.table_ids.includes(this.selectedTableId)
+          ? this.selectedTableId
+          : batch.table_ids[0];
+
+    const table = this.tables.find(t => t.id === preferredId);
+    if (table) {
+      this.openUnifiedTableChat(table);
+    }
+  }
+
+  openBatchChat(batch: ProcurementBatch, contextTable?: Table) {
+    if (!this.canOpenBatchChat(batch)) {
+      this.showToast('Chat is not available for this batch', 'error');
+      return;
+    }
+    const latest = this.getBatchById(batch.id) || batch;
+    this.chatContextType = 'batch';
+    this.chatBatch = { ...latest };
+    this.chatTable = contextTable ? this.sanitizeTableForRole({ ...contextTable }) : null;
+    this.showChatPanel = true;
+    this.chatMinimized = false;
+    this.markBatchChatRead(latest.id);
+    this.subscribeToChatContext('batch', latest.id);
   }
 
   closeChatPanel() {
@@ -3022,34 +3643,65 @@ export class Page3Component implements OnInit, OnDestroy {
       this.chatUnsubscribe();
       this.chatUnsubscribe = null;
     }
+    if (this.unifiedBatchUnsubscribe) {
+      this.unifiedBatchUnsubscribe();
+      this.unifiedBatchUnsubscribe = null;
+    }
+    this.chatContextType = 'table';
     this.chatTable = null;
+    this.chatBatch = null;
     this.chatMessages = [];
     this.chatInput = '';
   }
 
   toggleChatMinimize() {
     this.chatMinimized = !this.chatMinimized;
-    if (!this.chatMinimized && this.chatTable) {
-      this.markChatRead(this.chatTable.id);
+    if (!this.chatMinimized) {
+      if (this.chatContextType === 'batch' && this.chatBatch) {
+        this.markBatchChatRead(this.chatBatch.id);
+      } else if (this.chatTable) {
+        this.markChatRead(this.chatTable.id);
+      }
     }
   }
 
   hasUnreadChat(table: Table | null | undefined): boolean {
     if (!table) return false;
+    if (this.isTableInActiveProcurementBatch(table) && table.procurement_batch_id) {
+      return !!this.unreadChatByBatchId[table.procurement_batch_id];
+    }
     return !!this.unreadChatByTableId[table.id];
+  }
+
+  hasUnreadBatchChat(batch: ProcurementBatch | null | undefined): boolean {
+    if (!batch) return false;
+    return !!this.unreadChatByBatchId[batch.id];
   }
 
   private chatReadAtKey(tableId: string): string {
     return `chatReadAt_${this.userId}_${tableId}`;
   }
 
+  private batchChatReadAtKey(batchId: string): string {
+    return `chatReadAt_batch_${this.userId}_${batchId}`;
+  }
+
   private getChatLastReadAt(tableId: string): string | null {
     return localStorage.getItem(this.chatReadAtKey(tableId));
+  }
+
+  private getBatchChatLastReadAt(batchId: string): string | null {
+    return localStorage.getItem(this.batchChatReadAtKey(batchId));
   }
 
   private markChatRead(tableId: string) {
     localStorage.setItem(this.chatReadAtKey(tableId), new Date().toISOString());
     this.unreadChatByTableId[tableId] = false;
+  }
+
+  private markBatchChatRead(batchId: string) {
+    localStorage.setItem(this.batchChatReadAtKey(batchId), new Date().toISOString());
+    this.unreadChatByBatchId[batchId] = false;
   }
 
   private teardownUnreadChatListeners() {
@@ -3061,7 +3713,7 @@ export class Page3Component implements OnInit, OnDestroy {
     this.teardownUnreadChatListeners();
     if (!this.userId) return;
 
-    const tables = this.tables.filter(t => this.canOpenChat(t));
+    const tables = this.tables.filter(t => this.canOpenChat(t) && !this.isTableInActiveProcurementBatch(t));
     for (const table of tables) {
       const messagesRef = this.getTableMessagesRef(table.id);
       const q = query(messagesRef, orderBy('created_at', 'desc'), limit(1));
@@ -3075,7 +3727,9 @@ export class Page3Component implements OnInit, OnDestroy {
           this.unreadChatByTableId[table.id] = false;
           return;
         }
-        const isOpen = this.showChatPanel && this.chatTable?.id === table.id && !this.chatMinimized;
+        const isOpen = this.showChatPanel &&
+          (this.chatContextType === 'table' || this.chatContextType === 'unified') &&
+          this.chatTable?.id === table.id && !this.chatMinimized;
         if (isOpen) {
           this.markChatRead(table.id);
           return;
@@ -3086,24 +3740,71 @@ export class Page3Component implements OnInit, OnDestroy {
       });
       this.unreadChatUnsubscribes.push(unsub);
     }
+
+    const batchIds = new Set<string>();
+    this.tables.forEach(t => {
+      if (t.procurement_batch_id && this.isTableInActiveProcurementBatch(t)) {
+        batchIds.add(t.procurement_batch_id);
+      }
+    });
+    this.procurementBatches.forEach(b => {
+      if (!this.isBatchDone(b)) batchIds.add(b.id);
+    });
+
+    for (const batchId of batchIds) {
+      const messagesRef = this.getBatchMessagesRef(batchId);
+      const q = query(messagesRef, orderBy('created_at', 'desc'), limit(1));
+      const unsub = onSnapshot(q, (snap) => {
+        if (snap.empty) {
+          this.unreadChatByBatchId[batchId] = false;
+          return;
+        }
+        const msg = snap.docs[0].data();
+        if (msg['sender_id'] === this.userId) {
+          this.unreadChatByBatchId[batchId] = false;
+          return;
+        }
+        const isOpen = this.showChatPanel && this.chatContextType === 'batch' &&
+          this.chatBatch?.id === batchId && !this.chatMinimized;
+        if (isOpen) {
+          this.markBatchChatRead(batchId);
+          return;
+        }
+        const lastRead = this.getBatchChatLastReadAt(batchId);
+        this.unreadChatByBatchId[batchId] = !lastRead || msg['created_at'] > lastRead;
+        this.cdr.detectChanges();
+      });
+      this.unreadChatUnsubscribes.push(unsub);
+    }
   }
 
-  private subscribeToChat(tableId: string) {
+  private subscribeToChatContext(contextType: 'table' | 'batch', contextId: string) {
+    if (this.unifiedBatchUnsubscribe) {
+      this.unifiedBatchUnsubscribe();
+      this.unifiedBatchUnsubscribe = null;
+    }
     if (this.chatUnsubscribe) {
       this.chatUnsubscribe();
       this.chatUnsubscribe = null;
     }
     this.chatLoading = true;
-    const messagesRef = this.getTableMessagesRef(tableId);
+    const messagesRef = contextType === 'batch'
+      ? this.getBatchMessagesRef(contextId)
+      : this.getTableMessagesRef(contextId);
     const q = query(messagesRef, orderBy('created_at', 'asc'));
     this.chatUnsubscribe = onSnapshot(q, (snap) => {
       this.chatMessages = snap.docs.map(docSnap => ({
         id: docSnap.id,
-        ...(docSnap.data() as Omit<ChatMessage, 'id'>)
+        ...(docSnap.data() as Omit<ChatMessage, 'id'>),
+        _source: contextType
       }));
       this.chatLoading = false;
-      if (this.chatTable && this.showChatPanel && !this.chatMinimized) {
-        this.markChatRead(tableId);
+      if (this.showChatPanel && !this.chatMinimized) {
+        if (contextType === 'batch') {
+          this.markBatchChatRead(contextId);
+        } else {
+          this.markChatRead(contextId);
+        }
       }
       this.cdr.detectChanges();
     }, () => {
@@ -3111,10 +3812,74 @@ export class Page3Component implements OnInit, OnDestroy {
     });
   }
 
+  private subscribeToUnifiedChat(table: Table) {
+    if (this.chatUnsubscribe) {
+      this.chatUnsubscribe();
+      this.chatUnsubscribe = null;
+    }
+    if (this.unifiedBatchUnsubscribe) {
+      this.unifiedBatchUnsubscribe();
+      this.unifiedBatchUnsubscribe = null;
+    }
+
+    this.chatLoading = true;
+    let batchMessages: ChatMessage[] = [];
+    let tableMessages: ChatMessage[] = [];
+    let batchLoaded = !table.procurement_batch_id;
+    let tableLoaded = false;
+
+    const mergeMessages = () => {
+      if (!batchLoaded || !tableLoaded) return;
+      this.chatMessages = [
+        ...batchMessages.map(m => ({ ...m, _source: 'batch' as const })),
+        ...tableMessages.map(m => ({ ...m, _source: 'table' as const }))
+      ].sort((a, b) => a.created_at.localeCompare(b.created_at));
+      this.chatLoading = false;
+      if (this.showChatPanel && !this.chatMinimized) {
+        this.markChatRead(table.id);
+      }
+      this.cdr.detectChanges();
+    };
+
+    const tableQ = query(this.getTableMessagesRef(table.id), orderBy('created_at', 'asc'));
+    this.chatUnsubscribe = onSnapshot(tableQ, (snap) => {
+      tableMessages = snap.docs.map(docSnap => ({
+        id: docSnap.id,
+        ...(docSnap.data() as Omit<ChatMessage, 'id'>)
+      }));
+      tableLoaded = true;
+      mergeMessages();
+    }, () => {
+      tableLoaded = true;
+      mergeMessages();
+    });
+
+    if (table.procurement_batch_id) {
+      const batchQ = query(this.getBatchMessagesRef(table.procurement_batch_id), orderBy('created_at', 'asc'));
+      this.unifiedBatchUnsubscribe = onSnapshot(batchQ, (snap) => {
+        batchMessages = snap.docs.map(docSnap => ({
+          id: docSnap.id,
+          ...(docSnap.data() as Omit<ChatMessage, 'id'>)
+        }));
+        batchLoaded = true;
+        mergeMessages();
+      }, () => {
+        batchLoaded = true;
+        mergeMessages();
+      });
+    }
+  }
+
   async sendChatMessage() {
-    if (!this.chatTable || !this.chatInput.trim() || !this.isChatWritable()) return;
+    if (!this.chatInput.trim() || !this.isChatWritable()) return;
     try {
-      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      const messagesRef = this.chatContextType === 'batch' && this.chatBatch
+        ? this.getBatchMessagesRef(this.chatBatch.id)
+        : this.chatTable
+          ? this.getTableMessagesRef(this.chatTable.id)
+          : null;
+      if (!messagesRef) return;
+
       await this.run(() => addDoc(messagesRef, {
         sender_id: this.userId,
         sender_email: this.userName,
@@ -3131,7 +3896,48 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   async initiateCloseRequestInChat() {
-    if (!this.chatTable || !this.canInitiateCloseRequest()) return;
+    if (!this.canInitiateCloseRequest()) return;
+
+    if (this.chatContextType === 'batch' && this.chatBatch) {
+      if (!confirm('Mark batch as delivered? Production must accept to confirm procurement delivery.')) return;
+
+      const batchRef = doc(this.firestore, 'procurement_batches', this.chatBatch.id);
+      const initiatedAt = new Date().toISOString();
+      try {
+        await this.run(() => updateDoc(batchRef, {
+          close_request_pending: true,
+          close_request_initiated_at: initiatedAt,
+          close_request_initiated_by: this.userId,
+          close_request_mode: 'procurement',
+          close_request_production_accepted: false,
+          updated_at: initiatedAt
+        }));
+
+        await this.run(() => addDoc(this.getBatchMessagesRef(this.chatBatch!.id), {
+          sender_id: this.userId,
+          sender_email: this.userName,
+          sender_role: this.userRole,
+          message: 'Procurement requested delivery (P.O uploaded). Production must accept to confirm batch delivery.',
+          message_type: 'close_request',
+          created_at: initiatedAt
+        }));
+
+        this.patchLocalBatch(this.chatBatch.id, {
+          close_request_pending: true,
+          close_request_production_accepted: false,
+          close_request_initiated_at: initiatedAt,
+          close_request_initiated_by: this.userId,
+          close_request_mode: 'procurement'
+        });
+        this.showToast('Batch delivery request initiated', 'success');
+      } catch (err) {
+        console.error('initiateCloseRequestInChat batch failed', err);
+        this.showToast('Failed to initiate delivery request', 'error');
+      }
+      return;
+    }
+
+    if (!this.chatTable) return;
 
     const mode: 'procurement' | 'production' =
       this.userRole === 'procurement' ||
@@ -3154,17 +3960,9 @@ export class Page3Component implements OnInit, OnDestroy {
         close_request_initiated_at: initiatedAt,
         close_request_initiated_by: this.userId,
         close_request_mode: mode,
+        close_request_user_accepted: false,
+        close_request_production_accepted: false,
         updated_at: initiatedAt
-      }));
-
-      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
-      await this.run(() => addDoc(messagesRef, {
-        sender_id: this.userId,
-        sender_email: this.userName,
-        sender_role: this.userRole,
-        message: systemMessage,
-        message_type: 'close_request',
-        created_at: initiatedAt
       }));
 
       this.patchLocalTable(this.chatTable.id, {
@@ -3175,17 +3973,85 @@ export class Page3Component implements OnInit, OnDestroy {
         close_request_initiated_by: this.userId,
         close_request_mode: mode
       });
+
+      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      try {
+        await this.run(() => addDoc(messagesRef, {
+          sender_id: this.userId,
+          sender_email: this.userName,
+          sender_role: this.userRole,
+          message: systemMessage,
+          message_type: 'close_request',
+          created_at: initiatedAt
+        }));
+      } catch (msgErr) {
+        console.error('initiateCloseRequestInChat message failed', msgErr);
+        this.showToast('Delivery request saved, but chat message could not be posted', 'info');
+        return;
+      }
+
       this.showToast('Delivery request initiated', 'success');
     } catch (err) {
       console.error('initiateCloseRequestInChat failed', err);
-      this.showToast(
-        'Failed to initiate delivery request. Deploy the latest firestore.rules to Firebase, then try again.',
-        'error'
-      );
+      this.showToast(this.formatFirestoreError(err, 'Failed to initiate delivery request'), 'error');
     }
   }
 
   async respondToCloseRequest(accept: boolean) {
+    if (this.chatContextType === 'batch' && this.chatBatch?.close_request_pending) {
+      if (!this.canRespondToCloseRequest()) return;
+      try {
+        const batchId = this.chatBatch.id;
+        const batchRef = doc(this.firestore, 'procurement_batches', batchId);
+        const now = new Date().toISOString();
+
+        if (!accept) {
+          await this.run(() => updateDoc(batchRef, {
+            close_request_pending: false,
+            close_request_production_accepted: false,
+            close_request_mode: null,
+            updated_at: now
+          }));
+          await this.addBatchChatSystemMessage(
+            batchId,
+            'Production rejected the batch delivery request. Batch remains PENDING.',
+            'close_response',
+            'rejected'
+          );
+          this.patchLocalBatch(batchId, {
+            close_request_pending: false,
+            close_request_production_accepted: false,
+            close_request_mode: undefined
+          });
+          this.showToast('Batch delivery request rejected', 'info');
+          return;
+        }
+
+        await this.run(() => updateDoc(batchRef, {
+          close_request_production_accepted: true,
+          updated_at: now
+        }));
+        await this.addBatchChatSystemMessage(
+          batchId,
+          'Production accepted the batch delivery request.',
+          'close_response',
+          'accepted'
+        );
+
+        const batchSnap = await this.run(() => getDoc(batchRef));
+        const data = batchSnap.data() || {};
+        if (data['close_request_production_accepted'] === true) {
+          await this.finalizeBatchCloseRequest(batchId);
+        } else {
+          this.patchLocalBatch(batchId, { close_request_production_accepted: true });
+          this.showToast('Your acceptance was recorded', 'success');
+        }
+      } catch {
+        this.showToast('Failed to respond to batch delivery request', 'error');
+      }
+      return;
+    }
+
     if (!this.chatTable?.close_request_pending || !this.canRespondToCloseRequest()) return;
 
     try {
@@ -3292,6 +4158,86 @@ export class Page3Component implements OnInit, OnDestroy {
     this.showToast('Request delivered', 'success');
   }
 
+  private async finalizeBatchCloseRequest(batchId: string) {
+    const now = new Date().toISOString();
+    const batch = this.getBatchById(batchId);
+    if (!batch) return;
+
+    const batchRef = doc(this.firestore, 'procurement_batches', batchId);
+    await this.run(() => updateDoc(batchRef, {
+      request_status: 'DONE',
+      request_closed: true,
+      request_closed_at: now,
+      request_closed_by: this.userId,
+      close_request_pending: false,
+      close_request_mode: null,
+      updated_at: now
+    }));
+
+    await this.addBatchChatSystemMessage(
+      batchId,
+      'Batch delivered. Procurement chat is now read-only. Production will coordinate delivery with each user separately.',
+      'system'
+    );
+
+    for (const tableId of batch.table_ids) {
+      const tableRef = doc(this.firestore, 'tables', tableId);
+      await this.run(() => updateDoc(tableRef, {
+        procurement_batch_closed: true,
+        user_delivery_chat_started_at: now,
+        close_request_pending: false,
+        close_request_user_accepted: false,
+        close_request_production_accepted: false,
+        close_request_mode: null,
+        updated_at: now
+      }));
+      await this.addChatSystemMessage(
+        tableId,
+        'You have been added to this delivery chat. Production will coordinate S.M upload and delivery confirmation with you.',
+        'system'
+      );
+      this.patchLocalTable(tableId, {
+        procurement_batch_closed: true,
+        user_delivery_chat_started_at: now,
+        close_request_pending: false,
+        close_request_user_accepted: false,
+        close_request_production_accepted: false,
+        close_request_mode: undefined
+      });
+    }
+
+    this.patchLocalBatch(batchId, {
+      request_status: 'DONE',
+      request_closed: true,
+      request_closed_at: now,
+      request_closed_by: this.userId,
+      close_request_pending: false,
+      close_request_mode: undefined
+    });
+    this.setupUnreadChatListeners();
+    this.showToast('Batch delivered — opening user delivery chat', 'success');
+    this.autoOpenUserDeliveryChat(batchId);
+  }
+
+  private async addBatchChatSystemMessage(
+    batchId: string,
+    message: string,
+    messageType: ChatMessage['message_type'],
+    closeResponse?: 'accepted' | 'rejected'
+  ) {
+    const messagesRef = this.getBatchMessagesRef(batchId);
+    const payload: Record<string, unknown> = {
+      sender_id: this.userId,
+      sender_email: this.userName,
+      sender_role: this.userRole,
+      message,
+      message_type: messageType,
+      created_at: new Date().toISOString()
+    };
+    if (closeResponse) payload['close_response'] = closeResponse;
+    await this.run(() => addDoc(messagesRef, payload));
+  }
+
   private async markTableRequisitionsDelivered(tableId: string) {
     const reqs = [
       ...this.requisitions,
@@ -3358,6 +4304,15 @@ export class Page3Component implements OnInit, OnDestroy {
       const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
       const now = new Date().toISOString();
 
+      console.log('SM upload attempt', {
+        tableId: this.chatTable.id,
+        userId: this.userId,
+        userRole: this.userRole,
+        submitted: this.chatTable.submitted,
+        production_reviewed: this.chatTable.production_reviewed,
+        procurement_batch_closed: this.chatTable.procurement_batch_closed
+      });
+
       await this.run(() => updateDoc(tableRef, {
         sm_file_data: base64,
         sm_file_mime: mime,
@@ -3369,16 +4324,6 @@ export class Page3Component implements OnInit, OnDestroy {
         updated_at: now
       }));
 
-      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
-      await this.run(() => addDoc(messagesRef, {
-        sender_id: this.userId,
-        sender_email: this.userName,
-        sender_role: this.userRole,
-        message: `Uploaded Shipping Manifest: ${file.name}`,
-        message_type: 'sm_upload',
-        created_at: now
-      }));
-
       this.patchLocalTable(this.chatTable.id, {
         sm_file_data: base64,
         sm_file_mime: mime,
@@ -3386,9 +4331,27 @@ export class Page3Component implements OnInit, OnDestroy {
         sm_file_size: file.size,
         sm_file_type: mime
       });
+
+      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      try {
+        await this.run(() => addDoc(messagesRef, {
+          sender_id: this.userId,
+          sender_email: this.userName,
+          sender_role: this.userRole,
+          message: `Uploaded Shipping Manifest: ${file.name}`,
+          message_type: 'sm_upload',
+          created_at: now
+        }));
+      } catch (msgErr) {
+        console.error('onChatSmFileSelected message failed', msgErr);
+        this.showToast('Shipping Manifest saved, but chat message could not be posted', 'info');
+        return;
+      }
+
       this.showToast('Shipping Manifest uploaded', 'success');
-    } catch {
-      this.showToast('Failed to upload Shipping Manifest', 'error');
+    } catch (err) {
+      console.error('onChatSmFileSelected failed', err);
+      this.showToast(this.formatFirestoreError(err, 'Failed to upload Shipping Manifest'), 'error');
     } finally {
       this.isUploadingSm = false;
       input.value = '';
@@ -3396,7 +4359,7 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   async onChatImageSelected(event: Event) {
-    if (!this.chatTable || !this.isChatWritable()) return;
+    if (!this.isChatWritable()) return;
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
@@ -3415,7 +4378,12 @@ export class Page3Component implements OnInit, OnDestroy {
 
     try {
       const { base64, mime } = await this.readFileAsBase64(file);
-      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+      const messagesRef = this.chatContextType === 'batch' && this.chatBatch
+        ? this.getBatchMessagesRef(this.chatBatch.id)
+        : this.chatTable
+          ? this.getTableMessagesRef(this.chatTable.id)
+          : null;
+      if (!messagesRef) return;
       const now = new Date().toISOString();
       await this.run(() => addDoc(messagesRef, {
         sender_id: this.userId,
@@ -3436,7 +4404,7 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   async onChatPoFileSelected(event: Event) {
-    if (!this.chatTable || !this.isChatWritable() || !this.canUploadPo()) {
+    if (!this.isChatWritable() || !this.canUploadPo()) {
       this.showToast('Only procurement can upload P.O files', 'error');
       return;
     }
@@ -3453,44 +4421,89 @@ export class Page3Component implements OnInit, OnDestroy {
     try {
       this.isUploadingPo = true;
       const { base64, mime } = await this.readFileAsBase64(file);
-      const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
       const now = new Date().toISOString();
 
-      await this.run(() => updateDoc(tableRef, {
-        po_file_data: base64,
-        po_file_mime: mime,
-        po_file_name: file.name,
-        po_file_size: file.size,
-        po_file_type: mime,
-        po_uploaded_at: now,
-        po_uploaded_by: this.userId,
-        updated_at: now
-      }));
+      if (this.chatContextType === 'batch' && this.chatBatch) {
+        const batchRef = doc(this.firestore, 'procurement_batches', this.chatBatch.id);
+        await this.run(() => updateDoc(batchRef, {
+          po_file_data: base64,
+          po_file_mime: mime,
+          po_file_name: file.name,
+          po_file_size: file.size,
+          po_file_type: mime,
+          po_uploaded_at: now,
+          po_uploaded_by: this.userId,
+          updated_at: now
+        }));
 
-      const messagesRef = this.getTableMessagesRef(this.chatTable.id);
-      await this.run(() => addDoc(messagesRef, {
-        sender_id: this.userId,
-        sender_email: this.userName,
-        sender_role: this.userRole,
-        message: `Uploaded P.O: ${file.name}`,
-        message_type: 'po_upload',
-        po_file_name: file.name,
-        created_at: now
-      }));
+        await this.run(() => addDoc(this.getBatchMessagesRef(this.chatBatch!.id), {
+          sender_id: this.userId,
+          sender_email: this.userName,
+          sender_role: this.userRole,
+          message: `Uploaded P.O: ${file.name}`,
+          message_type: 'po_upload',
+          po_file_name: file.name,
+          created_at: now
+        }));
 
-      this.patchLocalTable(this.chatTable.id, {
-        po_file_data: base64,
-        po_file_mime: mime,
-        po_file_name: file.name,
-        po_file_size: file.size,
-        po_file_type: mime
-      });
+        this.patchLocalBatch(this.chatBatch.id, {
+          po_file_data: base64,
+          po_file_mime: mime,
+          po_file_name: file.name,
+          po_file_size: file.size,
+          po_file_type: mime
+        });
+      } else if (this.chatTable) {
+        const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
+        await this.run(() => updateDoc(tableRef, {
+          po_file_data: base64,
+          po_file_mime: mime,
+          po_file_name: file.name,
+          po_file_size: file.size,
+          po_file_type: mime,
+          po_uploaded_at: now,
+          po_uploaded_by: this.userId,
+          updated_at: now
+        }));
+
+        const messagesRef = this.getTableMessagesRef(this.chatTable.id);
+        await this.run(() => addDoc(messagesRef, {
+          sender_id: this.userId,
+          sender_email: this.userName,
+          sender_role: this.userRole,
+          message: `Uploaded P.O: ${file.name}`,
+          message_type: 'po_upload',
+          po_file_name: file.name,
+          created_at: now
+        }));
+
+        this.patchLocalTable(this.chatTable.id, {
+          po_file_data: base64,
+          po_file_mime: mime,
+          po_file_name: file.name,
+          po_file_size: file.size,
+          po_file_type: mime
+        });
+      }
       this.showToast('P.O uploaded to chat', 'success');
     } catch {
       this.showToast('Failed to upload P.O', 'error');
     } finally {
       this.isUploadingPo = false;
       input.value = '';
+    }
+  }
+
+  private patchLocalBatch(batchId: string, patch: Partial<ProcurementBatch>) {
+    const batchIndex = this.procurementBatches.findIndex(b => b.id === batchId);
+    if (batchIndex !== -1) {
+      this.procurementBatches[batchIndex] = { ...this.procurementBatches[batchIndex], ...patch };
+    }
+    if (this.selectedBatch?.id === batchId) {
+      this.selectedBatch = { ...this.selectedBatch, ...patch };
+    }
+    if (this.chatBatch?.id === batchId) {
+      this.chatBatch = { ...this.chatBatch, ...patch };
     }
   }
 
@@ -3618,12 +4631,21 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   updateProcurementPagination() {
-    this.procurementTotalPages = Math.max(1, Math.ceil(this.procurementTableSummaries.length / this.pageSize));
+    const materialCount = this.userRole === 'procurement' && this.selectedBatch
+      ? this.procurementConsolidatedMaterials.length
+      : this.procurementTableSummaries.length;
+    this.procurementTotalPages = Math.max(1, Math.ceil(materialCount / this.pageSize));
     if (this.currentPage > this.procurementTotalPages) {
       this.currentPage = this.procurementTotalPages;
     }
     const start = (this.currentPage - 1) * this.pageSize;
-    this.paginatedProcurementSummaries = this.procurementTableSummaries.slice(start, start + this.pageSize);
+    if (this.userRole === 'procurement' && this.selectedBatch) {
+      this.paginatedProcurementMaterials = this.procurementConsolidatedMaterials.slice(start, start + this.pageSize);
+      this.paginatedProcurementSummaries = [];
+    } else {
+      this.paginatedProcurementMaterials = [];
+      this.paginatedProcurementSummaries = this.procurementTableSummaries.slice(start, start + this.pageSize);
+    }
   }
 
   goToPage(page: number) {
@@ -3644,6 +4666,19 @@ export class Page3Component implements OnInit, OnDestroy {
     this.currentPage = 1;
     this.updatePagination();
     this.updateProcurementPagination();
+  }
+
+  private formatFirestoreError(err: unknown, fallback: string): string {
+    const code = (err as { code?: string })?.code || '';
+    const message = (err as { message?: string })?.message || '';
+
+    if (code === 'permission-denied') {
+      return 'Permission denied. Deploy the latest firestore.rules to Firebase, then try again.';
+    }
+    if (code === 'invalid-argument' || message.toLowerCase().includes('size')) {
+      return 'File is too large to store on this table. Try a smaller file.';
+    }
+    return fallback;
   }
 
   showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {

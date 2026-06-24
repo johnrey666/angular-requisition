@@ -15,15 +15,16 @@
       <span class="subtitle">{{ getPageSubtitle() }}</span>
     </div>
     <div class="header-actions">
-      <!-- Transfer Reviewed Table Button for Production -->
-      <ng-container *ngIf="!selectedTable?.production_reviewed">
-        <button *ngIf="canSubmitReviewedTable()" 
+      <!-- Transfer Reviewed Tables (Production) -->
+      <ng-container *ngIf="userRole === 'production'">
+        <button *ngIf="canTransferSelectedTables()" 
                 class="btn btn-success" 
                 (click)="openTransferToProcurementModal()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <path d="M20 6L9 17l-5-5"/>
           </svg>
           Transfer to Procurement
+          <span *ngIf="transferSelectedTableIds.size > 0">({{ transferSelectedTableIds.size }})</span>
         </button>
       </ng-container>
       <span *ngIf="selectedTable?.production_reviewed && userRole === 'production'" class="badge badge-success">
@@ -31,7 +32,7 @@
       </span>
 
       <button
-        *ngIf="selectedTable && canOpenChat(selectedTable)"
+        *ngIf="selectedTable && canOpenChat(selectedTable) && userRole !== 'procurement'"
         class="btn btn-outline"
         (click)="openChat(selectedTable)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -41,6 +42,20 @@
         <span class="chat-unread-dot" *ngIf="hasUnreadChat(selectedTable)" title="New messages"></span>
         <span class="badge" [class.badge-closed]="isRequestDone(selectedTable)">
           {{ getRequestStatusLabel(selectedTable) }}
+        </span>
+      </button>
+
+      <button
+        *ngIf="userRole === 'procurement' && selectedBatch && canOpenBatchChat(selectedBatch)"
+        class="btn btn-outline"
+        (click)="openBatchChat(selectedBatch)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        Batch Chat
+        <span class="chat-unread-dot" *ngIf="hasUnreadBatchChat(selectedBatch)" title="New messages"></span>
+        <span class="badge" [class.badge-closed]="isBatchDone(selectedBatch)">
+          {{ isBatchDone(selectedBatch) ? 'DONE' : 'PENDING' }}
         </span>
       </button>
 
@@ -65,9 +80,15 @@
               </svg>
             </button>
           </div>
+
+          <div class="dropdown-filters">
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'pending'" (click)="setTableStatusFilter('pending')">Pending</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'done'" (click)="setTableStatusFilter('done')">Done</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'all'" (click)="setTableStatusFilter('all')">All</button>
+          </div>
           
           <div class="dropdown-list">
-            <div *ngFor="let table of tables" 
+            <div *ngFor="let table of getFilteredTables()" 
                  class="dropdown-item" 
                  [class.active]="selectedTable?.id === table.id"
                  [class.submitted]="table.submitted"
@@ -92,8 +113,8 @@
         </div>
       </div>
       
-      <!-- Tables Dropdown for Production/Procurement (no show-all option) -->
-      <div class="dropdown" [class.open]="showTableDropdown" *ngIf="userRole === 'production' || userRole === 'procurement'">
+      <!-- Tables Dropdown for Production -->
+      <div class="dropdown" [class.open]="showTableDropdown" *ngIf="userRole === 'production'">
         <button class="btn btn-outline" (click)="toggleTableDropdown()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
             <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -105,24 +126,74 @@
         
         <div class="dropdown-menu" *ngIf="showTableDropdown">
           <div class="dropdown-header">
-            <span>{{ userRole === 'production' ? 'Submitted Tables' : 'Confirmed Tables' }}</span>
+            <span>Submitted Tables</span>
+          </div>
+
+          <div class="dropdown-filters">
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'pending'" (click)="setTableStatusFilter('pending')">Pending</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'done'" (click)="setTableStatusFilter('done')">Done</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'all'" (click)="setTableStatusFilter('all')">All</button>
           </div>
           
           <div class="dropdown-list">
-            <div *ngFor="let table of tables" 
+            <div *ngFor="let table of getFilteredTables()" 
                  class="dropdown-item" 
                  [class.active]="selectedTable?.id === table.id"
                  [class.submitted]="table.submitted"
                  (click)="selectTable(table)">
+              <label class="transfer-checkbox" *ngIf="isTableReadyForTransfer(table)" (click)="$event.stopPropagation()">
+                <input type="checkbox" [checked]="isTransferSelected(table)" (change)="toggleTransferSelection(table, $event)">
+              </label>
               <span class="name">{{ table.name || 'Untitled' }}</span>
               <span class="count">{{ table.item_count || 0 }}</span>
               <span *ngIf="table.submitted" class="submitted-badge" title="Submitted">✓</span>
               <span *ngIf="table.request_closed" class="closed-badge" title="Delivered">Delivered</span>
+              <span *ngIf="table.production_reviewed" class="transferred-badge" title="With Procurement">Proc</span>
               <span class="submitted-by" *ngIf="table.user_email">by {{ table.user_email }}</span>
             </div>
             
-            <div *ngIf="tables.length === 0" class="dropdown-empty">
-              <p>No tables yet</p>
+            <div *ngIf="getFilteredTables().length === 0" class="dropdown-empty">
+              <p>No tables match this filter</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Batches Dropdown for Procurement -->
+      <div class="dropdown" [class.open]="showTableDropdown" *ngIf="userRole === 'procurement'">
+        <button class="btn btn-outline" (click)="toggleTableDropdown()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          {{ selectedBatch ? selectedBatch.name : 'Select Batch' }}
+        </button>
+        
+        <div class="dropdown-menu" *ngIf="showTableDropdown">
+          <div class="dropdown-header">
+            <span>Consolidated Batches</span>
+          </div>
+
+          <div class="dropdown-filters">
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'pending'" (click)="setTableStatusFilter('pending')">Pending</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'done'" (click)="setTableStatusFilter('done')">Done</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'all'" (click)="setTableStatusFilter('all')">All</button>
+          </div>
+          
+          <div class="dropdown-list">
+            <div *ngFor="let batch of getFilteredBatches()" 
+                 class="dropdown-item" 
+                 [class.active]="selectedBatch?.id === batch.id"
+                 (click)="selectBatch(batch)">
+              <span class="name">{{ batch.name }}</span>
+              <span class="count">{{ batch.table_ids.length }}</span>
+              <span *ngIf="isBatchDone(batch)" class="closed-badge" title="Delivered">Delivered</span>
+              <span class="submitted-by" *ngIf="batch.table_names?.length">{{ batch.table_names!.length }} slip(s)</span>
+            </div>
+            
+            <div *ngIf="getFilteredBatches().length === 0" class="dropdown-empty">
+              <p>No batches yet</p>
             </div>
           </div>
         </div>
@@ -181,8 +252,21 @@
     </div>
   </div>
 
-  <!-- No Table Selected State for Production/Procurement -->
-  <div class="empty-card" *ngIf="(userRole === 'production' || userRole === 'procurement') && !selectedTable && !isLoading">
+  <!-- No Batch Selected State for Procurement -->
+  <div class="empty-card" *ngIf="userRole === 'procurement' && !selectedBatch && !isLoading">
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      <h3>Select a Batch</h3>
+      <p>Choose a consolidated batch from the dropdown above to view combined materials from production.</p>
+    </div>
+  </div>
+
+  <!-- No Table Selected State for Production -->
+  <div class="empty-card" *ngIf="userRole === 'production' && !selectedTable && !isLoading">
     <div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -190,7 +274,7 @@
         <line x1="9" y1="21" x2="9" y2="9"/>
       </svg>
       <h3>Select a Table</h3>
-      <p>Choose a table from the dropdown above to view its requisitions.</p>
+      <p>Choose a table from the dropdown above. Check multiple reviewed tables to transfer them together to procurement.</p>
     </div>
   </div>
 
@@ -208,22 +292,22 @@
   </div>
 
   <!-- No Data State for Procurement -->
-  <div class="empty-card" *ngIf="userRole === 'procurement' && selectedTable && procurementTableSummaries.length === 0 && !isLoading">
+  <div class="empty-card" *ngIf="userRole === 'procurement' && selectedBatch && procurementConsolidatedMaterials.length === 0 && !isLoading">
     <div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
         <line x1="3" y1="9" x2="21" y2="9"/>
         <line x1="9" y1="21" x2="9" y2="9"/>
       </svg>
-      <h3>No Confirmed Materials in "{{ selectedTable.name }}"</h3>
-      <p>This table has no production-confirmed requisitions yet.</p>
+      <h3>No Confirmed Materials in "{{ selectedBatch.name }}"</h3>
+      <p>This batch has no production-confirmed requisitions yet.</p>
     </div>
   </div>
 
   <!-- Main Content Container -->
   <div class="main-content" *ngIf="
     (userRole === 'production' && selectedTable) ||
-    (userRole === 'procurement' && selectedTable) ||
+    (userRole === 'procurement' && selectedBatch) ||
     (selectedTable && viewMode === 'my_tables')
   ">
     <!-- Master Data Section -->
@@ -267,18 +351,19 @@
       <div class="table-context-main">
         <div class="table-context-stats">
           <span class="stat-chip" *ngIf="userRole !== 'procurement'">{{ getTableStatLabel() }}</span>
-          <span class="stat-chip stat-date-needed" *ngIf="userRole === 'procurement' && selectedTable!.procurement_date_needed">
-            Date Needed: {{ selectedTable!.procurement_date_needed | date:'mediumDate' }}
+          <span class="stat-chip stat-date-needed" *ngIf="userRole === 'procurement' && selectedBatch?.procurement_date_needed">
+            Date Needed: {{ selectedBatch!.procurement_date_needed | date:'mediumDate' }}
           </span>
           <span class="stat-chip" *ngIf="userRole === 'procurement'">{{ getProcurementMaterialCount() }} materials</span>
-          <span class="stat-chip" *ngIf="selectedTable!.submitted">
+          <span class="stat-chip" *ngIf="selectedTable?.submitted">
             Submitted {{ selectedTable!.submitted_at | date:'short' }}
           </span>
-          <span class="stat-chip" *ngIf="selectedTable!.user_email && userRole === 'production'">
+          <span class="stat-chip" *ngIf="selectedTable?.user_email && userRole === 'production'">
             by {{ selectedTable!.user_email }}
           </span>
-          <span class="stat-chip stat-closed" *ngIf="isRequestDone(selectedTable)">Delivered</span>
-          <span class="stat-chip stat-transferred" *ngIf="selectedTable!.production_reviewed && userRole === 'production'">
+          <span class="stat-chip stat-closed" *ngIf="selectedTable && isRequestDone(selectedTable)">Delivered</span>
+          <span class="stat-chip stat-closed" *ngIf="userRole === 'procurement' && selectedBatch && isBatchDone(selectedBatch)">Batch Delivered</span>
+          <span class="stat-chip stat-transferred" *ngIf="selectedTable?.production_reviewed && userRole === 'production'">
             Transferred
           </span>
         </div>
@@ -291,12 +376,9 @@
           Delete
         </button>
       </div>
-      <div class="table-context-actions" *ngIf="userRole === 'procurement' && selectedTable">
-        <button class="btn btn-sm btn-outline" (click)="openProcurementOriginalItemsModalForSelectedTable()">
-          View Exact Requisition Items
-        </button>
-        <span class="stat-chip" *ngIf="hasPoDocument(selectedTable)">P.O Uploaded</span>
-        <span class="stat-chip stat-pending" *ngIf="!hasPoDocument(selectedTable)">P.O Pending</span>
+      <div class="table-context-actions" *ngIf="userRole === 'procurement' && selectedBatch">
+        <span class="stat-chip" *ngIf="hasPoDocument(selectedBatch)">P.O Uploaded</span>
+        <span class="stat-chip stat-pending" *ngIf="!hasPoDocument(selectedBatch)">P.O Pending</span>
       </div>
     </div>
 
@@ -363,7 +445,7 @@
               <th></th>
               <th *ngIf="showRequisitionTableColumn()">Table</th>
               <th *ngIf="userRole === 'production'">Submitted By</th>
-              <th>Req #</th>
+              <th *ngIf="userRole !== 'production'">Req #</th>
               <th>Date</th>
               <th>SKU Code</th>
               <th>SKU Name</th>
@@ -373,7 +455,7 @@
               <th>Brand</th>
               <th>Status</th>
               <th>Scheduled</th>
-              <th class="actions-col">Actions</th>
+              <th class="actions-col" *ngIf="userRole !== 'production'">Actions</th>
              </tr>
           </thead>
           <tbody>
@@ -394,7 +476,7 @@
                 <td *ngIf="userRole === 'production'">
                   <span class="submitted-by" [title]="req.user_email || ''">{{ req.user_email || '—' }}</span>
                 </td>
-                <td><span class="req-number">{{ req.reqNumber || req.id || 'N/A' }}</span></td>
+                <td *ngIf="userRole !== 'production'"><span class="req-number">{{ req.reqNumber || req.id || 'N/A' }}</span></td>
                 <td>{{ req.dateNeeded || 'ASAP' }}</td>
                 <td><span class="sku" title="{{ req.skuCode || req['sku_code'] || '' }}">{{ req.skuCode || req['sku_code'] }}</span></td>
                 <td class="limit" title="{{ req.skuName || req['sku_name'] || '—' }}">{{ req.skuName || req['sku_name'] || '—' }}</td>
@@ -414,39 +496,9 @@
                   <span *ngIf="!req.scheduled_date && req.status === 'Scheduled'" class="scheduled-date">Pending Schedule</span>
                   <span *ngIf="!req.scheduled_date && req.status !== 'Scheduled'">—</span>
                 </td>
-                <td class="actions-col">
+                <td class="actions-col" *ngIf="userRole !== 'production'">
                   <div class="action-buttons">
-                    <!-- Production bulk material action buttons -->
-                    <button *ngIf="canProductionEditMaterials(req)"
-                            class="btn-icon success"
-                            (click)="confirmAllMaterials(req); $event.stopPropagation()"
-                            title="Accept all materials for this requisition">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path d="M20 6L9 17l-5-5"/>
-                      </svg>
-                    </button>
-
-                    <button *ngIf="canProductionEditMaterials(req)"
-                            class="btn-icon danger"
-                            (click)="rejectAllMaterials(req); $event.stopPropagation()"
-                            title="Reject all materials for this requisition">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </button>
-
-                    <button *ngIf="userRole === 'production' && req.status === 'Submitted' && !isProductionActionsLocked(req)"
-                            class="btn-icon primary"
-                            (click)="openProductionNotesModal(req); $event.stopPropagation()"
-                            title="Add production note">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                      </svg>
-                    </button>
-
-                    <button *ngIf="req.production_notes && (userRole === 'user' || userRole === 'store' || userRole === 'production' || userRole === 'procurement' || userRole === 'admin')"
+                    <button *ngIf="req.production_notes && (userRole === 'user' || userRole === 'store' || userRole === 'procurement' || userRole === 'admin')"
                             class="btn-icon primary"
                             (click)="openProductionNotesModal(req, true); $event.stopPropagation()"
                             title="View production note">
@@ -457,25 +509,6 @@
                         <line x1="16" y1="17" x2="8" y2="17"/>
                       </svg>
                     </button>
-
-                    <!-- Locked indicator after transfer -->
-                    <span *ngIf="userRole === 'production' && isProductionActionsLocked(req)" class="action-marked locked" title="Locked after transfer to Procurement">
-                      Locked
-                    </span>
-
-                    <!-- Status Indicators -->
-                    <span *ngIf="req.production_action === 'confirmed'" class="action-marked confirmed" title="Confirmed by production">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <path d="M20 6L9 17l-5-5"/>
-                      </svg>
-                    </span>
-
-                    <span *ngIf="req.production_action === 'removed'" class="action-marked removed" title="Removed by production">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                        <line x1="18" y1="6" x2="6" y2="18"/>
-                        <line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
-                    </span>
 
                     <button *ngIf="canMarkDelivered(req)"
                             class="btn-icon success"
@@ -530,32 +563,16 @@
                               <th>Unit</th>
                               <th>Type</th>
                               <th>Total Required</th>
-                              <th *ngIf="canProductionEditMaterials(req)">Action</th>
                             </tr>
                           </thead>
                           <tbody>
-                            <tr *ngFor="let mat of req.materials" [class.material-confirmed]="mat.production_action === 'confirmed'" [class.material-removed]="mat.production_action === 'removed'">
+                            <tr *ngFor="let mat of req.materials">
                               <td>{{ mat.raw_material || '—' }}</td>
                               <td class="number">{{ (mat.quantity_per_batch ?? 0) | number:'1.2-2' }}</td>
                               <td><span class="badge">{{ mat.unit || '—' }}</span></td>
                               <td><span class="badge" [class.badge-material]="mat.type">{{ mat.type || 'N/A' }}</span></td>
                               <td class="number primary">
                                 {{ calculateMaterialTotal(req.quantity || req['qty_needed'] || 0, mat.quantity_per_batch) | number:'1.2-2' }}
-                              </td>
-                              <td *ngIf="canProductionEditMaterials(req)">
-                                <div class="material-action-cell">
-                                <button class="btn-icon success" [class.active]="mat.production_action === 'confirmed'" aria-label="Accept material" (click)="setMaterialAction(req, mat, 'confirmed'); $event.stopPropagation()">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                    <path d="M20 6L9 17l-5-5"/>
-                                  </svg>
-                                </button>
-                                <button class="btn-icon danger" [class.active]="mat.production_action === 'removed'" aria-label="Reject material" (click)="setMaterialAction(req, mat, 'removed'); $event.stopPropagation()">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                                    <line x1="18" y1="6" x2="6" y2="18"/>
-                                    <line x1="6" y1="6" x2="18" y2="18"/>
-                                  </svg>
-                                </button>
-                                </div>
                               </td>
                             </tr>
                           </tbody>
@@ -623,7 +640,7 @@
     </div>
 
     <!-- Procurement materials -->
-    <div class="card" *ngIf="userRole === 'procurement' && selectedTable" [class.card-loading]="isLoading">
+    <div class="card" *ngIf="userRole === 'procurement' && selectedBatch" [class.card-loading]="isLoading">
       <div class="table-wrapper">
     <div *ngIf="isLoading" class="loading">
       <div class="spinner"></div>
@@ -633,89 +650,40 @@
     <table class="procurement-summary-table" [class.table-dimmed]="isLoading">
       <thead>
         <tr>
-          <th *ngIf="!selectedTable">Table</th>
-          <th>Unique Materials</th>
-          <th>Total Requested Qty</th>
+          <th>Raw Material</th>
+          <th>Brand</th>
+          <th>Supplier</th>
+          <th class="number-col">Order Qty</th>
+          <th>Unit</th>
         </tr>
       </thead>
       <tbody>
-        <ng-container *ngFor="let summary of paginatedProcurementSummaries">
-          <tr class="procurement-summary-row">
-            <td *ngIf="!selectedTable">
-              {{ summary.table_name }}
-              <span *ngIf="getTableForSummary(summary)?.request_closed" class="closed-badge-inline">Delivered</span>
-            </td>
-            <td>{{ summary.uniqueMaterialsCount }}</td>
-            <td>{{ summary.totalRequestedQuantity | number:'1.2-2' }}</td>
-          </tr>
-          <tr class="procurement-detail-row">
-            <td [attr.colspan]="getProcurementSummaryColspan()">
-              <div class="procurement-materials-block">
-                <h4>Requested Materials</h4>
-                <table class="materials-table procurement-modal-table">
-                  <thead>
-                    <tr>
-                      <th>Raw Material</th>
-                      <th>Type</th>
-                      <th>Total Requested Qty</th>
-                      <th>Unit</th>
-                      <th>Production</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr *ngFor="let item of summary.materials">
-                      <td>{{ item.raw_material }}</td>
-                      <td>{{ item.type }}</td>
-                      <td class="number">{{ item.totalQuantity | number:'1.2-2' }}</td>
-                      <td>{{ item.unit }}</td>
-                      <td>
-                        <!-- Production status indicator in procurement view -->
-                        <span *ngIf="item.production_status === 'confirmed'" class="production-action-badge confirmed" title="Accepted by production">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <path d="M20 6L9 17l-5-5"/>
-                          </svg>
-                        </span>
-                        <span *ngIf="item.production_status === 'removed'" class="production-action-badge removed" title="Rejected by production">
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                            <line x1="18" y1="6" x2="6" y2="18"/>
-                            <line x1="6" y1="6" x2="18" y2="18"/>
-                          </svg>
-                        </span>
-                        <span *ngIf="!item.production_status" class="text-muted">—</span>
-                      </td>
-                    </tr>
-                    <tr *ngIf="!summary.materials.length">
-                      <td colspan="5" class="empty">
-                        <div>
-                          <p>No requested materials available.</p>
-                        </div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </td>
-          </tr>
-        </ng-container>
-        <tr *ngIf="!procurementTableSummaries.length && !isLoading">
-          <td [attr.colspan]="getProcurementSummaryColspan()" class="empty">
+        <tr *ngFor="let item of paginatedProcurementMaterials">
+          <td class="material-name-cell">{{ item.raw_material }}</td>
+          <td [class.cell-empty]="!item.brand">{{ item.brand || '—' }}</td>
+          <td [class.cell-empty]="!item.supplier">{{ item.supplier || '—' }}</td>
+          <td class="number">{{ item.totalQuantity | number:'1.2-2' }}</td>
+          <td>{{ item.unit }}</td>
+        </tr>
+        <tr *ngIf="!procurementConsolidatedMaterials.length && !isLoading">
+          <td colspan="5" class="empty">
             <div>
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
                 <line x1="3" y1="9" x2="21" y2="9"/>
                 <line x1="9" y1="21" x2="9" y2="9"/>
               </svg>
-              <h3>No production-confirmed tables</h3>
-              <p>There are no tables transferred to procurement yet.</p>
+              <h3>No materials in this batch</h3>
+              <p>There are no consolidated materials for procurement in this batch.</p>
             </div>
           </td>
         </tr>
       </tbody>
     </table>
 
-    <div class="pagination" *ngIf="procurementTableSummaries.length > 0 && !isLoading">
+    <div class="pagination" *ngIf="procurementConsolidatedMaterials.length > 0 && !isLoading">
       <span class="info">
-        {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, procurementTableSummaries.length) }} of {{ procurementTableSummaries.length }}
+        {{ (currentPage - 1) * pageSize + 1 }}-{{ Math.min(currentPage * pageSize, procurementConsolidatedMaterials.length) }} of {{ procurementConsolidatedMaterials.length }}
       </span>
       <div class="controls">
         <button [disabled]="currentPage === 1" (click)="goToPage(currentPage - 1)">
@@ -1152,27 +1120,107 @@
   <!-- Transfer to Procurement Modal (Production) -->
   <div class="modal" [class.active]="showTransferToProcurementModal">
     <div class="backdrop" (click)="closeTransferToProcurementModal()"></div>
-    <div class="modal-container modal-sm">
-      <div class="modal-header">
-        <h3>Transfer to Procurement</h3>
-        <button class="close" (click)="closeTransferToProcurementModal()">✕</button>
-      </div>
-      <div class="modal-body">
-        <p class="modal-subtitle">
-          Transfer table <strong>{{ selectedTable?.name }}</strong> to procurement after production review.
-        </p>
-        <div class="field">
+    <div class="modal-container modal-lg transfer-procurement-modal">
+      <div class="modal-header transfer-modal-header">
+        <div>
+          <h3>Transfer to Procurement</h3>
+          <p class="modal-subtitle">
+            {{ getTransferSelectedTables().length }} requisition slip(s) — consolidated raw materials preview for procurement
+          </p>
+        </div>
+        <div class="transfer-date-field">
           <label>Date Needed *</label>
           <input
             type="date"
             [(ngModel)]="transferDateNeeded"
-            [min]="today"
-            placeholder="Select date needed">
+            [min]="today">
+        </div>
+        <button class="close" (click)="closeTransferToProcurementModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="transfer-materials-preview">
+          <table class="materials-table transfer-preview-table">
+            <thead>
+              <tr>
+                <th>Raw Material</th>
+                <th>Type</th>
+                <th>Unit</th>
+                <th class="number-col">Order Qty</th>
+                <th>Brand <span class="col-optional">(optional)</span></th>
+                <th>Supplier <span class="col-optional">(optional)</span></th>
+                <th class="transfer-exclude-col">Exclude</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let item of transferMaterialPreview"
+                  [class.transfer-material-excluded]="item.excluded">
+                <td class="material-name-cell">{{ item.raw_material }}</td>
+                <td><span class="type-badge">{{ item.type }}</span></td>
+                <td>
+                  <input
+                    type="text"
+                    class="transfer-unit-input"
+                    [(ngModel)]="item.unit"
+                    [disabled]="item.excluded"
+                    placeholder="e.g. pack, kg, g"
+                    list="transfer-unit-suggestions">
+                </td>
+                <td class="number">
+                  <input
+                    type="number"
+                    class="transfer-qty-input"
+                    [(ngModel)]="item.quantity"
+                    [disabled]="item.excluded"
+                    min="0"
+                    step="0.01">
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    class="transfer-text-input"
+                    [(ngModel)]="item.brand"
+                    [disabled]="item.excluded"
+                    placeholder="Brand name">
+                </td>
+                <td>
+                  <input
+                    type="text"
+                    class="transfer-text-input"
+                    [(ngModel)]="item.supplier"
+                    [disabled]="item.excluded"
+                    placeholder="Supplier name">
+                </td>
+                <td class="transfer-exclude-col">
+                  <label class="transfer-exclude-label" title="Exclude from procurement request">
+                    <input
+                      type="checkbox"
+                      [checked]="item.excluded"
+                      (change)="toggleTransferMaterialExcluded(item)">
+                    <span>Remove</span>
+                  </label>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="transfer-preview-hint" *ngIf="transferMaterialPreview.length">
+            {{ getActiveTransferMaterialCount() }} of {{ transferMaterialPreview.length }} material(s) will be sent to procurement.
+            Adjust unit, quantity, brand, and supplier as needed before transferring.
+          </p>
+          <datalist id="transfer-unit-suggestions">
+            <option value="pack"></option>
+            <option value="pcs"></option>
+            <option value="kg"></option>
+            <option value="g"></option>
+            <option value="L"></option>
+            <option value="mL"></option>
+            <option value="box"></option>
+            <option value="sack"></option>
+          </datalist>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" (click)="closeTransferToProcurementModal()">Cancel</button>
-        <button class="btn btn-success" (click)="confirmTransferToProcurement()" [disabled]="!transferDateNeeded || isSubmitting">
+        <button class="btn btn-success" (click)="confirmTransferToProcurement()" [disabled]="!canConfirmTransfer()">
           Transfer to Procurement
         </button>
       </div>
@@ -1486,11 +1534,11 @@
   </div>
 
   <!-- Table Chat Panel -->
-  <div class="chat-panel" *ngIf="showChatPanel && chatTable" [class.minimized]="chatMinimized">
+  <div class="chat-panel" *ngIf="showChatPanel && (chatTable || chatBatch)" [class.minimized]="chatMinimized">
     <div class="chat-header" (click)="chatMinimized ? toggleChatMinimize() : null">
       <div class="chat-header-info">
-        <strong>{{ chatTable.name }}</strong>
-        <span class="chat-status" [class.done]="isRequestDone(chatTable)">{{ getRequestStatusLabel(chatTable) }}</span>
+        <strong>{{ getChatTitle() }}</strong>
+        <span class="chat-status" [class.done]="getChatStatusLabel() === 'DONE'">{{ getChatStatusLabel() }}</span>
       </div>
       <div class="chat-header-actions">
         <button class="chat-icon-btn" type="button" (click)="toggleChatMinimize(); $event.stopPropagation()" [title]="chatMinimized ? 'Expand' : 'Minimize'">
@@ -1501,7 +1549,7 @@
     </div>
 
     <ng-container *ngIf="!chatMinimized">
-      <div class="chat-close-banner" *ngIf="chatTable.close_request_pending && canRespondToCloseRequest()">
+      <div class="chat-close-banner" *ngIf="(chatTable?.close_request_pending || chatBatch?.close_request_pending) && canRespondToCloseRequest()">
         <p>{{ getDeliveryRequestBannerText() }}</p>
         <div class="chat-close-actions">
           <button class="btn btn-sm btn-success" type="button" (click)="respondToCloseRequest(true)">Accept Delivery</button>
@@ -1525,14 +1573,17 @@
         </ng-container>
         <ng-container *ngIf="hasChatDocuments()">
           <span class="chat-toolbar-divider" *ngIf="hasChatWritableToolbar()"></span>
-          <button *ngIf="canShowPoInChat()" type="button" class="btn btn-sm btn-outline" (click)="openDocViewer(chatTable, 'po')">View P.O</button>
+          <button *ngIf="canShowPoInChat()" type="button" class="btn btn-sm btn-outline" (click)="openDocViewer(getPoViewerTarget(), 'po')">View P.O</button>
           <button *ngIf="canShowSmInChat()" type="button" class="btn btn-sm btn-outline" (click)="openDocViewer(chatTable, 'sm')">View S.M</button>
         </ng-container>
       </div>
 
       <div class="chat-messages">
         <div *ngIf="chatLoading" class="chat-loading">Loading messages...</div>
-        <ng-container *ngFor="let msg of chatMessages">
+        <ng-container *ngFor="let msg of chatMessages; let i = index">
+          <div *ngIf="shouldShowChatPhaseDivider(msg, i)" class="chat-phase-divider">
+            <span>User delivery phase</span>
+          </div>
           <div *ngIf="shouldShowChatMessage(msg)"
                class="chat-message"
                [class.system]="msg.message_type !== 'text' && msg.message_type !== 'image'"
