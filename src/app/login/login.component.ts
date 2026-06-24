@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { AuthService } from '../core/services/auth.service';
 import { UserService } from '../core/services/user.service';
 import { LoaderService } from '../core/services/loader.service';
+import { ToastService } from '../core/services/toast.service';
 import { Firestore, doc, getDoc, setDoc } from '@angular/fire/firestore';
 
 @Component({
@@ -26,7 +27,8 @@ export class LoginComponent {
     private authService: AuthService,
     private userService: UserService,
     private firestore: Firestore,
-    private loader: LoaderService
+    private loader: LoaderService,
+    private toast: ToastService
   ) {
     this.loginForm = this.fb.nonNullable.group({
       email: ['', [Validators.required, Validators.email]],
@@ -142,16 +144,19 @@ export class LoginComponent {
 
   private mapAuthError(err: any): void {
     const code = err?.code || '';
+    let message: string;
     if (code === 'auth/user-not-found' || code === 'auth/invalid-credential') {
-      this.authError = 'No account found with this email';
+      message = 'No account found with this email';
     } else if (code === 'auth/wrong-password') {
-      this.authError = 'Incorrect password';
+      message = 'Incorrect password';
     } else if (code === 'auth/invalid-email') {
-      this.authError = 'Invalid email format';
+      message = 'Invalid email format';
     } else if (code === 'auth/too-many-requests') {
-      this.authError = 'Too many failed attempts. Please try again later';
+      message = 'Too many failed attempts. Please try again later';
     } else {
-      this.authError = err?.message || 'Sign in failed';
+      message = err?.message || 'Sign in failed';
     }
+    this.authError = message;
+    this.toast.error(message);
   }
 }

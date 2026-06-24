@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import * as ExcelJS from 'exceljs';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { ToastService } from '../../../core/services/toast.service';
 import { Firestore, doc, getDoc, collection, query, where, getDocs } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 
@@ -80,12 +81,7 @@ export class Page2Component implements OnInit {
   currentPage = 1;
   pageSize = 10;
   totalPages = 1;
-  
-  // Snackbar
-  showSnackbar = false;
-  snackbarMessage = '';
-  snackbarType: 'success' | 'error' | 'info' = 'info';
-  snackbarTimeout: any;
+  readonly skeletonRows = [1, 2, 3, 4, 5, 6];
 
   // User Role
   userRole: string = '';
@@ -101,7 +97,8 @@ export class Page2Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private router: Router
+    private router: Router,
+    private toast: ToastService
   ) {}
 
   async ngOnInit() {
@@ -925,25 +922,11 @@ export class Page2Component implements OnInit {
   }
 
   showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
-    this.snackbarMessage = message;
-    this.snackbarType = type;
-    this.showSnackbar = true;
-    
-    if (this.snackbarTimeout) {
-      clearTimeout(this.snackbarTimeout);
-    }
-    
-    this.snackbarTimeout = setTimeout(() => {
-      this.hideSnackbar();
-    }, 5000);
+    this.toast.show(message, type);
   }
 
   hideSnackbar() {
-    this.showSnackbar = false;
-    if (this.snackbarTimeout) {
-      clearTimeout(this.snackbarTimeout);
-      this.snackbarTimeout = null;
-    }
+    this.toast.dismissAll();
   }
 
   updatePagination() {

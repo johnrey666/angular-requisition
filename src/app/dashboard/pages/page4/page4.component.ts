@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import { ToastService } from '../../../core/services/toast.service';
 import { Firestore, doc, getDoc } from '@angular/fire/firestore';
 import { Router } from '@angular/router';
 import * as XLSX from 'xlsx';
@@ -70,11 +71,7 @@ export class Page4Component implements OnInit {
   totalMaterials: number = 0;
   totalQuantity: number = 0;
   totalTables: number = 0;
-  
-  showNotification: boolean = false;
-  notificationMessage: string = '';
-  notificationType: 'success' | 'error' | 'info' = 'info';
-  private notificationTimeout: any;
+  readonly skeletonRows = [1, 2, 3, 4, 5, 6];
 
   // User Role
   userRole: string = '';
@@ -87,7 +84,8 @@ export class Page4Component implements OnInit {
     private db: DatabaseService,
     private auth: AuthService,
     private firestore: Firestore,
-    private router: Router
+    private router: Router,
+    private toast: ToastService
   ) {}
 
   get Math() {
@@ -739,27 +737,10 @@ export class Page4Component implements OnInit {
   }
 
   private showMessage(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
-    if (this.notificationTimeout) clearTimeout(this.notificationTimeout);
-    this.notificationMessage = message;
-    this.notificationType = type;
-    this.showNotification = true;
-    
-    this.notificationTimeout = setTimeout(() => {
-      this.hideNotification();
-    }, 3000);
+    this.toast.show(message, type);
   }
 
   hideNotification(): void {
-    this.showNotification = false;
-    if (this.notificationTimeout) clearTimeout(this.notificationTimeout);
-  }
-
-  getNotificationIcon(): string {
-    switch (this.notificationType) {
-      case 'success': return '✓';
-      case 'error': return '✕';
-      case 'info': 
-      default: return 'ⓘ';
-    }
+    this.toast.dismissAll();
   }
 }

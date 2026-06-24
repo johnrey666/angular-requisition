@@ -421,13 +421,45 @@
   background: hsl(var(--muted) / 0.15);
 }
 
-/* Snackbar / toast */
+/* Cards */
+.page-content .card {
+  border-radius: var(--radius-lg, 0.875rem);
+  border: 1px solid hsl(var(--border) / 0.7);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 0.04));
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.page-content .card:hover {
+  box-shadow: var(--shadow-md, 0 4px 16px rgb(0 0 0 / 0.06));
+}
+
+/* Skeleton table in data pages */
+.page-content .skeleton-table-wrap {
+  padding: 0.25rem 0;
+}
+
+.page-content .skeleton-table-row {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+}
+
+.page-content .skeleton-table-cell {
+  height: 0.75rem;
+  flex: var(--flex, 1);
+  border-radius: 0.375rem;
+}
+
+/* Table loading — prefer skeleton over spinners */
+.page-content .table-loading,
+.page-content .loading {
+  display: none;
+}
+
+/* Snackbar — deprecated, use global app-toast */
 .page-content .snackbar {
-  border-radius: 0.75rem;
-  border: 1px solid hsl(var(--border) / 0.6);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.12);
-  font-size: 0.8125rem;
-  font-weight: 500;
+  display: none !important;
 }
 
 /* Pagination */

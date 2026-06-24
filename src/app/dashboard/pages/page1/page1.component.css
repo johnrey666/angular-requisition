@@ -61,6 +61,35 @@
   cursor: not-allowed;
 }
 
+.refresh-btn svg.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.skeleton-module-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.skeleton-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  min-height: 160px;
+  padding: 0.5rem 0;
+}
+
+.skeleton-chart .bar-wrap {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  height: 140px;
+}
+
 .error-banner {
   padding: 0.75rem 1rem;
   margin-bottom: 1.25rem;

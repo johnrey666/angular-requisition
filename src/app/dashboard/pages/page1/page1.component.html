@@ -5,16 +5,28 @@
       <p class="dashboard-subtitle">{{ currentMonthLabel }} · Live summary from Production, Ordering, and Usage Report</p>
     </div>
     <button class="refresh-btn" type="button" (click)="refresh()" [disabled]="isLoading">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" [class.spinning]="isLoading">
         <path d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6"/>
       </svg>
-      {{ isLoading ? 'Loading...' : 'Refresh' }}
+      {{ isLoading ? 'Refreshing...' : 'Refresh' }}
     </button>
   </div>
 
   <div *ngIf="loadError" class="error-banner">{{ loadError }}</div>
 
-  <div class="stats-grid">
+  <!-- Skeleton stats -->
+  <div class="stats-grid" *ngIf="isLoading" aria-hidden="true">
+    <div class="skeleton-stat-card" *ngFor="let _ of skeletonStats">
+      <div class="skeleton skeleton-stat-icon"></div>
+      <div class="skeleton-stat-body">
+        <div class="skeleton skeleton-text" style="--w: 45%"></div>
+        <div class="skeleton skeleton-title" style="--w: 70%"></div>
+        <div class="skeleton skeleton-text" style="--w: 55%"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats-grid" *ngIf="!isLoading">
     <div class="stat-card stat-card-accent">
       <div class="stat-icon stat-icon-item">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
@@ -24,7 +36,7 @@
           <span class="stat-label">Top Item</span>
           <a routerLink="/dashboard/procurement" class="stat-link">View</a>
         </div>
-        <p class="stat-value stat-value-text" [title]="topItemName">{{ isLoading ? '—' : (topItemName || '—') }}</p>
+        <p class="stat-value stat-value-text" [title]="topItemName">{{ topItemName || '—' }}</p>
         <p class="stat-subtitle">{{ topItemCode || 'Most ordered SKU this month' }}</p>
       </div>
     </div>
@@ -38,7 +50,7 @@
           <span class="stat-label">Top Raw Material</span>
           <a routerLink="/dashboard/usage-report" class="stat-link">View</a>
         </div>
-        <p class="stat-value stat-value-text" [title]="topRawMaterial">{{ isLoading ? '—' : (topRawMaterial || '—') }}</p>
+        <p class="stat-value stat-value-text" [title]="topRawMaterial">{{ topRawMaterial || '—' }}</p>
         <p class="stat-subtitle">Most ordered this month</p>
       </div>
     </div>
@@ -52,7 +64,7 @@
           <span class="stat-label">Requisition Slips</span>
           <a routerLink="/dashboard/procurement" class="stat-link">View</a>
         </div>
-        <p class="stat-value">{{ isLoading ? '—' : monthlyRequisitionSlips }}</p>
+        <p class="stat-value">{{ monthlyRequisitionSlips }}</p>
         <p class="stat-subtitle">Submitted this month</p>
       </div>
     </div>
@@ -65,28 +77,25 @@
         <div class="stat-header">
           <span class="stat-label">Pending / In Progress</span>
         </div>
-        <p class="stat-value">{{ isLoading ? '—' : monthlyPendingInProgress }}</p>
+        <p class="stat-value">{{ monthlyPendingInProgress }}</p>
         <p class="stat-subtitle">Active this month</p>
       </div>
     </div>
   </div>
 
   <div class="module-row">
-    <div class="card module-card">
-      <div class="module-card-header">
-        <div class="module-title-wrap">
-          <span class="module-dot module-dot-production"></span>
-          <h3 class="card-title">Production</h3>
+    <ng-container *ngIf="isLoading">
+      <div class="card module-card" *ngFor="let _ of [1,2,3]" aria-hidden="true">
+        <div class="skeleton skeleton-text" style="--w: 40%; margin-bottom: 1rem"></div>
+        <div class="skeleton-module-lines">
+          <div class="skeleton skeleton-text" style="--w: 90%"></div>
+          <div class="skeleton skeleton-text" style="--w: 75%"></div>
+          <div class="skeleton skeleton-text" style="--w: 85%"></div>
         </div>
-        <a routerLink="/dashboard/production" class="stat-link">Open</a>
       </div>
-      <ul class="module-stats">
-        <li><span>Production lines</span><strong>{{ productionLineCount }}</strong></li>
-        <li><span>Items on lines</span><strong>{{ productionItemCount }}</strong></li>
-        <li><span>Total quantity needed</span><strong>{{ totalProductionQty | number:'1.0-0' }}</strong></li>
-      </ul>
-    </div>
+    </ng-container>
 
+    <ng-container *ngIf="!isLoading">
     <div class="card module-card">
       <div class="module-card-header">
         <div class="module-title-wrap">
@@ -102,7 +111,7 @@
       </ul>
     </div>
 
-    <div class="card module-card">
+    <div class="card module-card" *ngIf="!isLoading">
       <div class="module-card-header">
         <div class="module-title-wrap">
           <span class="module-dot module-dot-usage"></span>
@@ -116,6 +125,7 @@
         <li><span>Top material</span><strong class="truncate">{{ topMaterials[0]?.name || '—' }}</strong></li>
       </ul>
     </div>
+    </ng-container>
   </div>
 
   <div class="charts-row">
@@ -123,9 +133,10 @@
       <div class="chart-header">
         <div class="chart-header-left">
           <h3 class="chart-title">Requisition Activity</h3>
-          <span class="chart-subtitle-inline">Last {{ activityDays }} days · {{ weeklyActivityTotal }} total</span>
+          <span class="chart-subtitle-inline" *ngIf="!isLoading">Last {{ activityDays }} days · {{ weeklyActivityTotal }} total</span>
+          <div class="skeleton skeleton-text" *ngIf="isLoading" style="--w: 50%; margin-top: 0.35rem"></div>
         </div>
-        <div class="activity-filters" role="group" aria-label="Activity period">
+        <div class="activity-filters" role="group" aria-label="Activity period" *ngIf="!isLoading">
           <button
             type="button"
             *ngFor="let days of activityDayOptions"
@@ -142,7 +153,12 @@
           No requisition activity in the last {{ activityDays }} days.
         </div>
         <div class="bar-chart-area" *ngIf="isLoading || weeklyActivity.length">
-          <div class="bar-chart" [class.bar-chart-loading]="isLoading">
+          <div class="bar-chart skeleton-chart" *ngIf="isLoading" aria-hidden="true">
+            <div class="bar-wrap" *ngFor="let h of [72, 48, 86, 55, 94, 38, 68]">
+              <div class="skeleton skeleton-chart-bar" [style.--h]="h + '%'"></div>
+            </div>
+          </div>
+          <div class="bar-chart" *ngIf="!isLoading">
             <div
               *ngFor="let day of weeklyActivity"
               class="bar-wrap"
@@ -167,11 +183,17 @@
 
     <div class="card chart-card chart-card-compact">
       <h3 class="chart-title">Requisition Status</h3>
-      <p class="chart-subtitle">Current breakdown</p>
+      <p class="chart-subtitle" *ngIf="!isLoading">Current breakdown</p>
+      <div class="skeleton-module-lines" *ngIf="isLoading" aria-hidden="true">
+        <div class="skeleton skeleton-text" style="--w: 80%"></div>
+        <div class="skeleton skeleton-text" style="--w: 65%"></div>
+        <div class="skeleton skeleton-text" style="--w: 72%"></div>
+        <div class="skeleton skeleton-text" style="--w: 58%"></div>
+      </div>
       <div *ngIf="!isLoading && statusBreakdown.length === 0" class="empty-chart">
         No requisitions yet.
       </div>
-      <ul class="status-list" *ngIf="statusBreakdown.length">
+      <ul class="status-list" *ngIf="!isLoading && statusBreakdown.length">
         <li *ngFor="let item of statusBreakdown">
           <span class="badge" [ngClass]="item.class">{{ item.label }}</span>
           <span class="status-count">{{ item.count }}</span>
@@ -184,13 +206,22 @@
     <div class="card table-card">
       <div class="table-card-header">
         <h3 class="card-title">Recent Requisitions</h3>
-        <a routerLink="/dashboard/procurement" class="stat-link">View all</a>
+        <a routerLink="/dashboard/procurement" class="stat-link" *ngIf="!isLoading">View all</a>
       </div>
       <div class="table-wrapper">
+        <div class="skeleton-table-wrap" *ngIf="isLoading" aria-hidden="true">
+          <div class="skeleton-table-row" *ngFor="let _ of skeletonRows">
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 1.2"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 1.5"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.9"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.7"></div>
+          </div>
+        </div>
         <div *ngIf="!isLoading && recentRequisitions.length === 0" class="empty-table">
           No requisitions found. Create one from the Ordering page.
         </div>
-        <table class="table" *ngIf="recentRequisitions.length">
+        <table class="table" *ngIf="!isLoading && recentRequisitions.length">
           <thead>
             <tr>
               <th>ID</th>
@@ -216,18 +247,24 @@
     <div class="card analytics-card">
       <div class="analytics-card-header">
         <h3 class="card-title">Top Materials</h3>
-        <a routerLink="/dashboard/usage-report" class="stat-link">Full report</a>
+        <a routerLink="/dashboard/usage-report" class="stat-link" *ngIf="!isLoading">Full report</a>
+      </div>
+      <div class="skeleton-module-lines" *ngIf="isLoading" aria-hidden="true">
+        <div class="skeleton skeleton-text" style="--w: 88%"></div>
+        <div class="skeleton skeleton-text" style="--w: 76%"></div>
+        <div class="skeleton skeleton-text" style="--w: 82%"></div>
+        <div class="skeleton skeleton-text" style="--w: 70%"></div>
       </div>
       <div *ngIf="!isLoading && topMaterials.length === 0" class="empty-table">
         No material usage data yet.
       </div>
-      <ul class="top-materials-list" *ngIf="topMaterials.length">
+      <ul class="top-materials-list" *ngIf="!isLoading && topMaterials.length">
         <li *ngFor="let mat of topMaterials; let i = index">
           <span class="rank">{{ i + 1 }}</span>
           <span class="material-name">{{ mat.name }}</span>
         </li>
       </ul>
-      <div class="analytics-summary" *ngIf="totalRequisitions > 0">
+      <div class="analytics-summary" *ngIf="!isLoading && totalRequisitions > 0">
         <p class="analytics-value">{{ fulfillmentRate }}%</p>
         <p class="analytics-label">Delivery completion rate</p>
         <p class="analytics-desc">

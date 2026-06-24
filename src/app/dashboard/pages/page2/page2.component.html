@@ -1,10 +1,4 @@
 <div class="page-content">
-  <!-- Snackbar -->
-  <div class="snackbar" [class.show]="showSnackbar" [class]="snackbarType">
-    <span class="snackbar-message">{{ snackbarMessage }}</span>
-    <button class="snackbar-close" (click)="hideSnackbar()">✕</button>
-  </div>
-
   <!-- Header -->
   <div class="page-header">
     <div class="header-title">
@@ -257,11 +251,18 @@
     </div>
 
     <div class="table-wrapper">
-      <div *ngIf="isTableLoading" class="table-loading">
-        <div class="spinner-small"></div>
-        <p>Loading...</p>
+      <div class="skeleton-table-wrap" *ngIf="isTableLoading" aria-hidden="true">
+        <div class="skeleton-table-row" *ngFor="let _ of skeletonRows">
+          <div class="skeleton skeleton-table-cell" style="--flex: 0.4"></div>
+          <div class="skeleton skeleton-table-cell" style="--flex: 1"></div>
+          <div class="skeleton skeleton-table-cell" style="--flex: 1.2"></div>
+          <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+          <div class="skeleton skeleton-table-cell" style="--flex: 0.6"></div>
+          <div class="skeleton skeleton-table-cell" style="--flex: 0.9"></div>
+          <div class="skeleton skeleton-table-cell" style="--flex: 0.5"></div>
+        </div>
       </div>
-      <table [class.table-dimmed]="isTableLoading">
+      <table *ngIf="!isTableLoading">
         <thead>
           <tr>
             <th></th>

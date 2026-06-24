@@ -1,10 +1,4 @@
 <div class="page-content">
-  <!-- Snackbar -->
-  <div class="snackbar" [class.show]="showSnackbar" [class]="snackbarType">
-    <span>{{ snackbarMessage }}</span>
-    <button (click)="hideSnackbar()">✕</button>
-  </div>
-
   <!-- Header -->
   <div class="header">
     <div class="header-title">
@@ -434,12 +428,19 @@
 
       <!-- Table for non-procurement -->
       <div class="table-wrapper">
-        <div *ngIf="isLoading" class="loading">
-          <div class="spinner"></div>
-          <p>Loading...</p>
+        <div class="skeleton-table-wrap" *ngIf="isLoading" aria-hidden="true">
+          <div class="skeleton-table-row" *ngFor="let _ of skeletonRows">
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.3"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.9"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.7"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 1"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 1.1"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.5"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.6"></div>
+          </div>
         </div>
 
-        <table class="requisitions-table" [class.table-dimmed]="isLoading">
+        <table class="requisitions-table" *ngIf="!isLoading">
           <thead>
              <tr>
               <th></th>
@@ -642,12 +643,17 @@
     <!-- Procurement materials -->
     <div class="card" *ngIf="userRole === 'procurement' && selectedBatch" [class.card-loading]="isLoading">
       <div class="table-wrapper">
-    <div *ngIf="isLoading" class="loading">
-      <div class="spinner"></div>
-      <p>Loading...</p>
-    </div>
+        <div class="skeleton-table-wrap" *ngIf="isLoading" aria-hidden="true">
+          <div class="skeleton-table-row" *ngFor="let _ of skeletonRows">
+            <div class="skeleton skeleton-table-cell" style="--flex: 1.5"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.9"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.6"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.4"></div>
+          </div>
+        </div>
 
-    <table class="procurement-summary-table" [class.table-dimmed]="isLoading">
+        <table class="procurement-summary-table" *ngIf="!isLoading">
       <thead>
         <tr>
           <th>Raw Material</th>

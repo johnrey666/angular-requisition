@@ -7,6 +7,7 @@ import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../core/services/auth.service';
 import { UserService } from '../core/services/user.service';
 import { NotificationService, Notification } from '../core/services/notification.service';
+import { ToastService } from '../core/services/toast.service';
 import { Observable, Subscription } from 'rxjs';
 import { Firestore, collection, getDocs, doc, setDoc, deleteDoc, query, orderBy, getDoc as getFirestoreDoc, serverTimestamp } from '@angular/fire/firestore';
 import { User } from '@angular/fire/auth';
@@ -89,7 +90,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     private userService: UserService,
     private firestore: Firestore,
     private router: Router,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private toast: ToastService
   ) {
     this.user$ = this.authService.getCurrentUserObservable();
     
@@ -481,6 +483,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       await this.userService.createUserAccount(email, password, role, name);
       
       this.createSuccess = 'User created successfully!';
+      this.toast.success('User created successfully!');
       this.createUserForm.reset({ name: '', email: '', password: '', role: 'store' });
       
       await this.loadUserRole(adminUid);
@@ -507,6 +510,9 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.createError = 'You do not have permission to create users.';
       } else {
         this.createError = err?.message || 'Failed to create user. Please try again.';
+      }
+      if (this.createError) {
+        this.toast.error(this.createError);
       }
     } finally {
       this.isCreating = false;

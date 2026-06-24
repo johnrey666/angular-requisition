@@ -4,12 +4,13 @@ import { filter, take } from 'rxjs/operators';
 import { isPlatformBrowser } from '@angular/common';
 import { ThemeService } from './core/services/theme.service';
 import { LoaderComponent } from './core/components/loader/loader.component';
+import { ToastComponent } from './core/components/toast/toast.component';
 import { LoaderService } from './core/services/loader.service';
 
 @Component({
   selector: 'app-root',
-  standalone: true,  // ADD THIS - makes component standalone
-  imports: [RouterOutlet, LoaderComponent],
+  standalone: true,
+  imports: [RouterOutlet, LoaderComponent, ToastComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.css'
 })

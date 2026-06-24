@@ -7,6 +7,7 @@ import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { NotificationService } from '../../../core/services/notification.service';
 import { EmailNotificationService } from '../../../core/services/email-notification.service';
+import { ToastService } from '../../../core/services/toast.service';
 import {
   Firestore, doc, collection, query, where, getDocs,
   writeBatch, getDoc, updateDoc, orderBy, addDoc, onSnapshot, Unsubscribe, limit
@@ -379,6 +380,7 @@ export class Page3Component implements OnInit, OnDestroy {
   snackbarMessage = '';
   snackbarType: 'success' | 'error' | 'info' = 'info';
   snackbarTimeout: any;
+  readonly skeletonRows = [1, 2, 3, 4, 5, 6];
 
   importStatus: 'idle' | 'loading' | 'success' | 'error' = 'idle';
   importMessage = '';
@@ -404,7 +406,8 @@ export class Page3Component implements OnInit, OnDestroy {
     private cdr: ChangeDetectorRef,
     private notificationService: NotificationService,
     private emailNotificationService: EmailNotificationService,
-    private sanitizer: DomSanitizer
+    private sanitizer: DomSanitizer,
+    private toast: ToastService
   ) {}
 
   private run<T>(fn: () => Promise<T>): Promise<T> {
@@ -4682,22 +4685,10 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   showToast(message: string, type: 'success' | 'error' | 'info' = 'info') {
-    this.snackbarMessage = message;
-    this.snackbarType = type;
-    this.showSnackbar = true;
-
-    if (this.snackbarTimeout) clearTimeout(this.snackbarTimeout);
-
-    this.snackbarTimeout = setTimeout(() => {
-      this.hideSnackbar();
-    }, 3000);
+    this.toast.show(message, type);
   }
 
   hideSnackbar() {
-    this.showSnackbar = false;
-    if (this.snackbarTimeout) {
-      clearTimeout(this.snackbarTimeout);
-      this.snackbarTimeout = null;
-    }
+    this.toast.dismissAll();
   }
 }

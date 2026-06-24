@@ -1,10 +1,4 @@
 <div class="page-content">
-  <!-- Notification -->
-  <div class="snackbar" [class.show]="showNotification" [class]="'snackbar-' + notificationType">
-    <span class="snackbar-message">{{ notificationMessage }}</span>
-    <button class="snackbar-close" (click)="hideNotification()">✕</button>
-  </div>
-
   <!-- Header -->
   <div class="page-header">
     <div class="header-title">
@@ -95,7 +89,16 @@
   <!-- Content -->
   <div *ngIf="isLoading || usageData.length > 0">
     <!-- Summary Cards -->
-    <div class="summary-grid">
+    <div class="summary-grid" *ngIf="isLoading" aria-hidden="true">
+      <div class="summary-card skeleton-summary" *ngFor="let _ of [1,2,3,4]">
+        <div class="skeleton skeleton-stat-icon"></div>
+        <div class="skeleton-stat-body">
+          <div class="skeleton skeleton-title" style="--w: 50%"></div>
+          <div class="skeleton skeleton-text" style="--w: 70%"></div>
+        </div>
+      </div>
+    </div>
+    <div class="summary-grid" *ngIf="!isLoading">
       <div class="summary-card">
         <div class="summary-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -162,11 +165,17 @@
       </div>
 
       <div class="table-wrapper">
-        <div *ngIf="isLoading" class="table-loading">
-          <div class="spinner"></div>
-          <p>Loading production data...</p>
+        <div class="skeleton-table-wrap" *ngIf="isLoading" aria-hidden="true">
+          <div class="skeleton-table-row" *ngFor="let _ of skeletonRows">
+            <div class="skeleton skeleton-table-cell" style="--flex: 1.5"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.6"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.7"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.5"></div>
+            <div class="skeleton skeleton-table-cell" style="--flex: 0.5"></div>
+          </div>
         </div>
-        <table [class.table-dimmed]="isLoading" *ngIf="usageData.length > 0">
+        <table *ngIf="!isLoading && usageData.length > 0">
           <thead>
             <tr>
               <th (click)="sortData('material_name')" class="sortable">

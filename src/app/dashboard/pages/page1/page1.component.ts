@@ -43,6 +43,8 @@ export class Page1Component implements OnInit {
   isLoading = true;
   loadError: string | null = null;
   userRole = '';
+  readonly skeletonRows = [1, 2, 3, 4, 5];
+  readonly skeletonStats = [1, 2, 3, 4];
 
   // Monthly overview
   topItemName = '';

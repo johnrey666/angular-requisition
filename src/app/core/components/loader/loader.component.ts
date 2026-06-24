@@ -72,7 +72,8 @@ import { LoaderService } from '../../services/loader.service';
       align-items: center;
       justify-content: center;
       gap: 0.75rem;
-      background: hsl(var(--background));
+      background: hsl(var(--background) / 0.92);
+      backdrop-filter: blur(8px);
       pointer-events: auto;
     }
 
