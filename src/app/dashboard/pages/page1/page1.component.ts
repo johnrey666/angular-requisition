@@ -136,6 +136,11 @@ export class Page1Component implements OnInit {
     }
   }
 
+  /** Admin and production see organization-wide overview stats. */
+  private hasOverallAccess(): boolean {
+    return this.userRole === 'admin' || this.userRole === 'production';
+  }
+
   private async loadDashboardData() {
     this.isLoading = true;
     this.loadError = null;
@@ -285,22 +290,18 @@ export class Page1Component implements OnInit {
 
   private async loadProductionTables(): Promise<any[]> {
     const tablesRef = collection(this.firestore, 'tables');
-    const q = query(
-      tablesRef,
-      where('user_id', '==', this.userId),
-      where('type', '==', 'production')
-    );
+    const q = this.hasOverallAccess()
+      ? query(tablesRef, where('type', '==', 'production'))
+      : query(tablesRef, where('user_id', '==', this.userId), where('type', '==', 'production'));
     const snapshot = await getDocs(q);
     return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
   }
 
   private async loadRequisitionTables(): Promise<any[]> {
     const tablesRef = collection(this.firestore, 'tables');
-    const q = query(
-      tablesRef,
-      where('user_id', '==', this.userId),
-      where('type', '==', 'requisition')
-    );
+    const q = this.hasOverallAccess()
+      ? query(tablesRef, where('type', '==', 'requisition'))
+      : query(tablesRef, where('user_id', '==', this.userId), where('type', '==', 'requisition'));
     const snapshot = await getDocs(q);
     return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
   }
@@ -313,13 +314,13 @@ export class Page1Component implements OnInit {
 
     const requisitionsRef = collection(this.firestore, 'requisitions');
     const snapshots = await Promise.all(
-      productionTables.map(table =>
-        getDocs(query(
-          requisitionsRef,
-          where('table_id', '==', table.id),
-          where('user_id', '==', this.userId)
-        ))
-      )
+      productionTables.map(table => {
+        const constraints = [where('table_id', '==', table.id)];
+        if (!this.hasOverallAccess()) {
+          constraints.push(where('user_id', '==', this.userId));
+        }
+        return getDocs(query(requisitionsRef, ...constraints));
+      })
     );
 
     snapshots.forEach(snapshot => {

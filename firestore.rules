@@ -147,7 +147,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.user_id == request.auth.uid ||
         (canViewAllSubmissions() && isSubmittedOrReviewedTable()) ||
-        isAdmin()
+        isProductionTeam()
       );
 
       allow create: if isAuthenticated() && (
@@ -257,8 +257,7 @@ service cloud.firestore {
     match /requisitions/{reqId} {
       allow read: if isAuthenticated() && (
         resource.data.user_id == request.auth.uid ||
-        (isProduction() && resource.data.status == 'Submitted') ||
-        (isProduction() && resource.data.production_action != null) ||
+        isProduction() ||
         (isProcurement() && resource.data.production_action == 'confirmed') ||
         (isProcurement() && resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||
         isAdmin()
