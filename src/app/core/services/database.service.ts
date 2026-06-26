@@ -585,6 +585,7 @@ export class DatabaseService {
         name: data.name,
         user_id: data.user_id,
         type: type,
+        is_stockroom: data.is_stockroom || false,
         item_count: 0,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
@@ -598,6 +599,77 @@ export class DatabaseService {
     } catch (err) {
       console.error('createUserTable failed', err);
       return { success: false };
+    }
+  }
+
+  async getStockroomItems(): Promise<any[]> {
+    try {
+      const snapshot = await this.run(() =>
+        getDocs(query(collection(this.firestore, 'stockroom_items'), orderBy('item_name', 'asc')))
+      );
+      return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.error('getStockroomItems failed', err);
+      return [];
+    }
+  }
+
+  async createStockroomItem(data: {
+    item_name: string;
+    brands: string[];
+    suppliers: string[];
+  }): Promise<{ success: boolean; id?: string }> {
+    try {
+      const currentUser = await this.auth.getCurrentUserPromise();
+      if (!currentUser) return { success: false };
+
+      const itemData = {
+        item_name: data.item_name,
+        brands: data.brands || [],
+        suppliers: data.suppliers || [],
+        created_by: currentUser.uid,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      const docRef = await this.run(() =>
+        addDoc(collection(this.firestore, 'stockroom_items'), itemData)
+      );
+
+      return { success: true, id: docRef.id };
+    } catch (err) {
+      console.error('createStockroomItem failed', err);
+      return { success: false };
+    }
+  }
+
+  async updateStockroomItem(
+    id: string,
+    data: { item_name: string; brands: string[]; suppliers: string[] }
+  ): Promise<boolean> {
+    try {
+      await this.run(() =>
+        updateDoc(doc(this.firestore, 'stockroom_items', id), {
+          item_name: data.item_name,
+          brands: data.brands || [],
+          suppliers: data.suppliers || [],
+          updated_at: new Date().toISOString()
+        })
+      );
+      return true;
+    } catch (err) {
+      console.error('updateStockroomItem failed', err);
+      return false;
+    }
+  }
+
+  async deleteStockroomItem(id: string): Promise<boolean> {
+    try {
+      await this.run(() => deleteDoc(doc(this.firestore, 'stockroom_items', id)));
+      return true;
+    } catch (err) {
+      console.error('deleteStockroomItem failed', err);
+      return false;
     }
   }
 

@@ -26,7 +26,7 @@
       </span>
 
       <button
-        *ngIf="selectedTable && canOpenChat(selectedTable) && userRole !== 'procurement'"
+        *ngIf="selectedTable && canOpenChat(selectedTable) && (userRole !== 'procurement' || selectedTable.is_stockroom)"
         class="btn btn-outline"
         (click)="openChat(selectedTable)">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -88,6 +88,7 @@
                  [class.submitted]="table.submitted"
                  (click)="selectTable(table)">
               <span class="name">{{ table.name || 'Untitled' }}</span>
+              <span *ngIf="table.is_stockroom" class="stockroom-tag">Stockroom</span>
               <span class="count">{{ table.item_count || 0 }}</span>
               <span *ngIf="table.submitted" class="submitted-badge">✓</span>
             </div>
@@ -192,6 +193,44 @@
           </div>
         </div>
       </div>
+
+      <!-- Stockroom Requests Dropdown for Procurement -->
+      <div class="dropdown" [class.open]="showStockroomDropdown" *ngIf="userRole === 'procurement'">
+        <button class="btn btn-outline" (click)="toggleStockroomDropdown()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M20 7h-9M14 17H5M17 17a3 3 0 1 0 0 .01M7 7a3 3 0 1 0 0 .01"/>
+          </svg>
+          {{ selectedTable?.is_stockroom ? selectedTable!.name : 'Stockroom Requests' }}
+        </button>
+
+        <div class="dropdown-menu" *ngIf="showStockroomDropdown">
+          <div class="dropdown-header">
+            <span>Stockroom Requests</span>
+          </div>
+
+          <div class="dropdown-filters">
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'pending'" (click)="setTableStatusFilter('pending')">Pending</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'done'" (click)="setTableStatusFilter('done')">Done</button>
+            <button type="button" class="filter-chip" [class.active]="tableStatusFilter === 'all'" (click)="setTableStatusFilter('all')">All</button>
+          </div>
+
+          <div class="dropdown-list">
+            <div *ngFor="let table of getStockroomTablesForProcurement()"
+                 class="dropdown-item"
+                 [class.active]="selectedTable?.id === table.id"
+                 (click)="selectStockroomTableForProcurement(table)">
+              <span class="name">{{ table.name }}</span>
+              <span class="stockroom-tag">Stockroom</span>
+              <span *ngIf="isTableDone(table)" class="closed-badge" title="Delivered">Delivered</span>
+              <span class="submitted-by" *ngIf="table.user_email">{{ table.user_email }}</span>
+            </div>
+
+            <div *ngIf="getStockroomTablesForProcurement().length === 0" class="dropdown-empty">
+              <p>No stockroom requests</p>
+            </div>
+          </div>
+        </div>
+      </div>
       
       <!-- Submit Table Button -->
       <button class="btn btn-success" 
@@ -209,6 +248,16 @@
           <path d="M12 5v14M5 12h14"/>
         </svg>
         Create Table
+      </button>
+
+      <button
+        class="btn btn-outline"
+        (click)="openStockroomItemModal()"
+        *ngIf="canManageTables() && selectedTable?.is_stockroom">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+        Add Stockroom Item
       </button>
 
       <button class="btn btn-primary" (click)="openModal()" *ngIf="canCreateRequisition()">
@@ -247,7 +296,7 @@
   </div>
 
   <!-- No Batch Selected State for Procurement -->
-  <div class="empty-card" *ngIf="userRole === 'procurement' && !selectedBatch && !isLoading">
+  <div class="empty-card" *ngIf="userRole === 'procurement' && !selectedBatch && !selectedTable?.is_stockroom && !isLoading">
     <div class="empty-state">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -302,6 +351,7 @@
   <div class="main-content" *ngIf="
     (userRole === 'production' && selectedTable) ||
     (userRole === 'procurement' && selectedBatch) ||
+    (userRole === 'procurement' && selectedTable?.is_stockroom) ||
     (selectedTable && viewMode === 'my_tables')
   ">
     <!-- Master Data Section -->
@@ -344,11 +394,12 @@
     <div class="table-context-bar" *ngIf="showTableContextBar()">
       <div class="table-context-main">
         <div class="table-context-stats">
-          <span class="stat-chip" *ngIf="userRole !== 'procurement'">{{ getTableStatLabel() }}</span>
+          <span class="stat-chip" *ngIf="userRole !== 'procurement' || selectedTable?.is_stockroom">{{ getTableStatLabel() }}</span>
+          <span class="stat-chip stockroom-tag" *ngIf="userRole === 'procurement' && selectedTable?.is_stockroom">Stockroom</span>
           <span class="stat-chip stat-date-needed" *ngIf="userRole === 'procurement' && selectedBatch?.procurement_date_needed">
             Date Needed: {{ selectedBatch!.procurement_date_needed | date:'mediumDate' }}
           </span>
-          <span class="stat-chip" *ngIf="userRole === 'procurement'">{{ getProcurementMaterialCount() }} materials</span>
+          <span class="stat-chip" *ngIf="userRole === 'procurement' && selectedBatch">{{ getProcurementMaterialCount() }} materials</span>
           <span class="stat-chip" *ngIf="selectedTable?.submitted">
             Submitted {{ selectedTable!.submitted_at | date:'short' }}
           </span>
@@ -374,10 +425,14 @@
         <span class="stat-chip" *ngIf="hasPoDocument(selectedBatch)">P.O Uploaded</span>
         <span class="stat-chip stat-pending" *ngIf="!hasPoDocument(selectedBatch)">P.O Pending</span>
       </div>
+      <div class="table-context-actions" *ngIf="userRole === 'procurement' && selectedTable?.is_stockroom">
+        <span class="stat-chip" *ngIf="hasPoDocument(selectedTable)">P.O Uploaded</span>
+        <span class="stat-chip stat-pending" *ngIf="!hasPoDocument(selectedTable)">P.O Pending</span>
+      </div>
     </div>
 
-    <!-- Requisitions Card (non-procurement) -->
-    <div class="card" *ngIf="userRole !== 'procurement'" [class.card-loading]="isLoading">
+    <!-- Requisitions Card (non-procurement, or procurement stockroom) -->
+    <div class="card" *ngIf="userRole !== 'procurement' || selectedTable?.is_stockroom" [class.card-loading]="isLoading">
       <div class="card-header">
         <div>
           <h2>Requisitions</h2>
@@ -978,6 +1033,87 @@
 
       <div class="modal-body">
         <form>
+          <!-- Stockroom requisition fields -->
+          <ng-container *ngIf="isStockroomContext()">
+            <div class="row">
+              <div class="field">
+                <label>Item Name *</label>
+                <select
+                  [(ngModel)]="formData.skuName"
+                  name="stockroomItemName"
+                  (change)="onStockroomItemSelect()"
+                  [disabled]="stockroomItems.length === 0">
+                  <option value="" disabled>
+                    {{ stockroomItems.length ? 'Select item' : 'Add a stockroom item first' }}
+                  </option>
+                  <option *ngFor="let item of stockroomItems" [value]="item.item_name">
+                    {{ item.item_name }}
+                  </option>
+                </select>
+                <span class="error" *ngIf="submitted && !formData.skuName">Required</span>
+                <p class="note small" *ngIf="stockroomItems.length === 0">
+                  Use "Add Stockroom Item" to create items first.
+                </p>
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label>Brand *</label>
+                <select [(ngModel)]="formData.brand" name="stockroomBrand" (change)="onBrandChange()">
+                  <option value="" disabled>Select brand</option>
+                  <option *ngFor="let b of stockroomBrandOptions" [value]="b">{{ b }}</option>
+                  <option value="__other__">Other</option>
+                </select>
+                <span class="error" *ngIf="submitted && !formData.brand">Required</span>
+              </div>
+
+              <div class="field" *ngIf="formData.brand === '__other__'">
+                <label>Brand name *</label>
+                <input
+                  type="text"
+                  [(ngModel)]="formData.customBrand"
+                  name="stockroomCustomBrand"
+                  placeholder="Enter brand name">
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="field">
+                <label>Quantity *</label>
+                <input
+                  type="number"
+                  [(ngModel)]="formData.quantity"
+                  name="stockroomQuantity"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="0.00">
+                <span class="error" *ngIf="submitted && !formData.quantity">Required</span>
+                <span class="error" *ngIf="submitted && formData.quantity <= 0">Must be > 0</span>
+              </div>
+
+              <div class="field">
+                <label>Supplier</label>
+                <select [(ngModel)]="formData.supplier" name="stockroomSupplier" (change)="onSupplierChange()">
+                  <option value="">Optional</option>
+                  <option *ngFor="let s of stockroomSupplierOptions" [value]="s">{{ s }}</option>
+                  <option value="__other__">Other</option>
+                </select>
+              </div>
+
+              <div class="field" *ngIf="formData.supplier === '__other__'">
+                <label>Supplier name</label>
+                <input
+                  type="text"
+                  [(ngModel)]="formData.customSupplier"
+                  name="stockroomCustomSupplier"
+                  placeholder="Enter supplier name">
+              </div>
+            </div>
+          </ng-container>
+
+          <!-- Standard requisition fields -->
+          <ng-container *ngIf="!isStockroomContext()">
           <div class="row">
             <div class="field">
               <label>Category *</label>
@@ -1110,6 +1246,7 @@
                 placeholder="Enter name">
             </div>
           </div>
+          </ng-container>
 
         </form>
       </div>
@@ -1417,6 +1554,16 @@
               (keyup.enter)="updateTableName()">
           </ng-template>
         </div>
+
+        <div class="field" *ngIf="!editingTable">
+          <label class="checkbox-label">
+            <input type="checkbox" [(ngModel)]="newTableIsStockroom">
+            <span>Stockroom?</span>
+          </label>
+          <p class="note small">
+            A stockroom table is for procurement only. Items use a simplified form (Item Name, Brand, Qty, optional Supplier).
+          </p>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" (click)="closeTableModal()">Cancel</button>
@@ -1425,6 +1572,119 @@
         </button>
         <button *ngIf="editingTable" class="btn btn-primary" (click)="updateTableName()">
           Update
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stockroom Item Modal -->
+  <div class="modal" [class.active]="showStockroomItemModal">
+    <div class="backdrop" (click)="closeStockroomItemModal()"></div>
+    <div class="modal-container">
+      <div class="modal-header">
+        <div>
+          <h3>{{ editingStockroomItem ? 'Edit' : 'Add' }} Stockroom Item</h3>
+          <span class="note">Item name and at least one brand are required</span>
+        </div>
+        <button class="close" (click)="closeStockroomItemModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <form>
+          <div class="row">
+            <div class="field">
+              <label>Item Name *</label>
+              <input
+                type="text"
+                [(ngModel)]="stockroomItemForm.item_name"
+                name="stockroomFormItemName"
+                placeholder="Enter item name">
+              <span class="error" *ngIf="stockroomItemSubmitted && !stockroomItemForm.item_name.trim()">Required</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <div class="field-header">
+                <label>Brands *</label>
+                <button type="button" class="btn-link" (click)="addStockroomBrandField()">+ Add brand</button>
+              </div>
+              <div class="multi-input-row" *ngFor="let brand of stockroomItemForm.brands; let i = index; trackBy: trackByIndex">
+                <input
+                  type="text"
+                  [(ngModel)]="stockroomItemForm.brands[i]"
+                  [name]="'stockroomBrand_' + i"
+                  placeholder="Enter brand">
+                <button
+                  type="button"
+                  class="btn-icon danger"
+                  (click)="removeStockroomBrandField(i)"
+                  title="Remove brand">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <div class="field-header">
+                <label>Suppliers</label>
+                <button type="button" class="btn-link" (click)="addStockroomSupplierField()">+ Add supplier</button>
+              </div>
+              <div class="multi-input-row" *ngFor="let supplier of stockroomItemForm.suppliers; let i = index; trackBy: trackByIndex">
+                <input
+                  type="text"
+                  [(ngModel)]="stockroomItemForm.suppliers[i]"
+                  [name]="'stockroomSupplier_' + i"
+                  placeholder="Enter supplier (optional)">
+                <button
+                  type="button"
+                  class="btn-icon danger"
+                  (click)="removeStockroomSupplierField(i)"
+                  title="Remove supplier">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="row" *ngIf="stockroomItems.length > 0">
+            <div class="field">
+              <label>Existing Stockroom Items</label>
+              <div class="stockroom-item-list">
+                <div class="stockroom-item-chip" *ngFor="let item of stockroomItems">
+                  <span class="stockroom-item-name">{{ item.item_name }}</span>
+                  <span class="stockroom-item-meta">{{ item.brands.length }} brand(s) · {{ item.suppliers.length }} supplier(s)</span>
+                  <button type="button" class="btn-icon" (click)="openStockroomItemModal(item)" title="Edit">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                  </button>
+                  <button type="button" class="btn-icon danger" (click)="deleteStockroomItem(item)" title="Delete">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeStockroomItemModal()">Cancel</button>
+        <button class="btn btn-primary" (click)="saveStockroomItem()" [disabled]="isSavingStockroomItem">
+          {{ isSavingStockroomItem ? 'Saving...' : (editingStockroomItem ? 'Update' : 'Add Item') }}
         </button>
       </div>
     </div>

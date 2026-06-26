@@ -2721,3 +2721,86 @@ tr:hover td {
   padding-left: 0.4rem;
   padding-right: 0.4rem;
 }
+
+/* ============================================================
+   Stockroom
+   ============================================================ */
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-weight: 600;
+  color: #334155;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #2563eb;
+}
+
+.stockroom-tag {
+  font-size: 10px;
+  font-weight: 600;
+  color: #7c3aed;
+  background: #ede9fe;
+  border: 1px solid #ddd6fe;
+  padding: 1px 6px;
+  border-radius: 10px;
+  margin-left: 6px;
+  white-space: nowrap;
+}
+
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+
+.field-header label {
+  margin-bottom: 0;
+}
+
+.multi-input-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.multi-input-row input {
+  flex: 1;
+}
+
+.stockroom-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.stockroom-item-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.stockroom-item-chip .stockroom-item-name {
+  font-weight: 600;
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.stockroom-item-chip .stockroom-item-meta {
+  flex: 1;
+  font-size: 11px;
+  color: #64748b;
+}

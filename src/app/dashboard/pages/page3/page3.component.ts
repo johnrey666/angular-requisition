@@ -36,6 +36,7 @@ interface Requisition {
   unit: string;
   supplier: string;
   brand?: string;
+  is_stockroom?: boolean;
   status: string;
   category: string;
   created_at?: string;
@@ -69,6 +70,7 @@ interface Table {
   user_id: string;
   user_email?: string;
   type: 'inventory' | 'requisition' | 'production';
+  is_stockroom?: boolean;
   item_count?: number;
   created_at?: string;
   updated_at?: string;
@@ -153,6 +155,16 @@ interface ChatMessage {
 interface SkuOption {
   sku_code: string;
   sku_name: string;
+}
+
+interface StockroomItem {
+  id: string;
+  item_name: string;
+  brands: string[];
+  suppliers: string[];
+  created_at?: string;
+  created_by?: string;
+  updated_at?: string;
 }
 
 interface MasterDataRow {
@@ -367,6 +379,22 @@ export class Page3Component implements OnInit, OnDestroy {
   editingTable: Table | null = null;
   newTableName: string = '';
   editTableName: string = '';
+  newTableIsStockroom: boolean = false;
+
+  stockroomItems: StockroomItem[] = [];
+  stockroomBrandOptions: string[] = [];
+  stockroomSupplierOptions: string[] = [];
+  showStockroomDropdown: boolean = false;
+
+  showStockroomItemModal: boolean = false;
+  editingStockroomItem: StockroomItem | null = null;
+  stockroomItemForm: { item_name: string; brands: string[]; suppliers: string[] } = {
+    item_name: '',
+    brands: [''],
+    suppliers: ['']
+  };
+  stockroomItemSubmitted: boolean = false;
+  isSavingStockroomItem: boolean = false;
 
   selectedSkuCode: string = '';
 
@@ -429,6 +457,7 @@ export class Page3Component implements OnInit, OnDestroy {
       await this.loadUserRole();
       await this.loadCategories();
       await this.loadMasterDataForMaterials();
+      await this.loadStockroomItems();
       this.setViewModeByRole();
 
       if (this.userRole === 'production') {
@@ -503,48 +532,58 @@ export class Page3Component implements OnInit, OnDestroy {
     try {
       this.isLoading = true;
       const tablesRef = collection(this.firestore, 'tables');
-      let querySnapshot;
+      const docSnaps: any[] = [];
 
       if (this.userRole === 'production') {
-        querySnapshot = await this.run(() => {
-          const q = query(
-            tablesRef,
-            where('type', '==', 'requisition'),
-            where('submitted', '==', true)
-          );
-          return getDocs(q);
-        });
+        const snap = await this.run(() => getDocs(query(
+          tablesRef,
+          where('type', '==', 'requisition'),
+          where('submitted', '==', true)
+        )));
+        docSnaps.push(...snap.docs);
       } else if (this.userRole === 'procurement') {
-        querySnapshot = await this.run(() => {
-          const q = query(
+        // Production-reviewed tables (normal flow) + submitted stockroom tables (direct-to-procurement).
+        const [reviewedSnap, stockroomSnap] = await Promise.all([
+          this.run(() => getDocs(query(
             tablesRef,
             where('type', '==', 'requisition'),
             where('submitted', '==', true),
             where('production_reviewed', '==', true)
-          );
-          return getDocs(q);
+          ))),
+          this.run(() => getDocs(query(
+            tablesRef,
+            where('type', '==', 'requisition'),
+            where('submitted', '==', true),
+            where('is_stockroom', '==', true)
+          )))
+        ]);
+        const seenIds = new Set<string>();
+        [...reviewedSnap.docs, ...stockroomSnap.docs].forEach(d => {
+          if (!seenIds.has(d.id)) {
+            seenIds.add(d.id);
+            docSnaps.push(d);
+          }
         });
       } else {
-        querySnapshot = await this.run(() => {
-          const q = query(
-            tablesRef,
-            where('user_id', '==', this.userId),
-            where('type', '==', 'requisition')
-          );
-          return getDocs(q);
-        });
+        const snap = await this.run(() => getDocs(query(
+          tablesRef,
+          where('user_id', '==', this.userId),
+          where('type', '==', 'requisition')
+        )));
+        docSnaps.push(...snap.docs);
       }
 
       const loadedTables: Table[] = [];
       const userEmailPromises: Promise<void>[] = [];
 
-      querySnapshot.forEach(docSnap => {
+      docSnaps.forEach(docSnap => {
         const data = docSnap.data();
         const table: Table = {
           id: docSnap.id,
           name: data['name'] || 'Untitled',
           user_id: data['user_id'] || '',
           type: data['type'] || 'requisition',
+          is_stockroom: data['is_stockroom'] || false,
           item_count: data['item_count'] || 0,
           submitted: data['submitted'] || false,
           submitted_at: data['submitted_at'],
@@ -594,6 +633,13 @@ export class Page3Component implements OnInit, OnDestroy {
       });
 
       await Promise.all(userEmailPromises);
+
+      if (this.userRole === 'production') {
+        // Stockroom tables bypass production and go straight to procurement.
+        const nonStockroom = loadedTables.filter(t => !t.is_stockroom);
+        loadedTables.length = 0;
+        loadedTables.push(...nonStockroom);
+      }
 
       if (this.userRole === 'production') {
         loadedTables.sort((a, b) => {
@@ -714,10 +760,11 @@ export class Page3Component implements OnInit, OnDestroy {
         submissions.push({ id: docSnap.id, ...data } as Requisition);
       });
 
-      await this.loadUserEmailsForRequisitions(submissions);
-      await this.loadTableNamesForRequisitions(submissions);
-      await this.populateMaterialsForAllRequisitions(submissions);
-      this.productionSubmissions = submissions;
+      const nonStockroom = submissions.filter(s => !s.is_stockroom);
+      await this.loadUserEmailsForRequisitions(nonStockroom);
+      await this.loadTableNamesForRequisitions(nonStockroom);
+      await this.populateMaterialsForAllRequisitions(nonStockroom);
+      this.productionSubmissions = nonStockroom;
     } catch (err) {
       this.showToast('Failed to load submissions', 'error');
     } finally {
@@ -1227,6 +1274,7 @@ export class Page3Component implements OnInit, OnDestroy {
         name: data['name'] || 'Untitled',
         user_id: data['user_id'] || '',
         type: data['type'] || 'requisition',
+        is_stockroom: data['is_stockroom'] || false,
         item_count: data['item_count'] || 0,
         submitted: data['submitted'] || false,
         submitted_at: data['submitted_at'],
@@ -1290,6 +1338,10 @@ export class Page3Component implements OnInit, OnDestroy {
       this.updatePagination();
 
     } else if (this.userRole === 'procurement') {
+      if (table.is_stockroom) {
+        await this.selectStockroomTableForProcurement(table);
+        return;
+      }
       this.selectedTableId = table.id;
       this.selectedTable = table;
       this.showTableDropdown = false;
@@ -1416,6 +1468,7 @@ export class Page3Component implements OnInit, OnDestroy {
     if (!this.editingTable) {
       this.newTableName = this.getNextRequisitionTableName();
       this.editTableName = '';
+      this.newTableIsStockroom = false;
     }
     this.showTableDropdown = false;
   }
@@ -1423,6 +1476,7 @@ export class Page3Component implements OnInit, OnDestroy {
   closeTableModal() {
     this.showTableModal = false;
     this.editingTable = null;
+    this.newTableIsStockroom = false;
   }
 
   async createTable() {
@@ -1432,10 +1486,14 @@ export class Page3Component implements OnInit, OnDestroy {
     }
 
     const tableName = this.newTableName.trim() || this.getNextRequisitionTableName();
+    const isStockroom = this.newTableIsStockroom;
     this.isSubmitting = true;
 
     try {
-      const result = await this.db.createUserTable({ name: tableName, user_id: this.userId }, 'requisition');
+      const result = await this.db.createUserTable(
+        { name: tableName, user_id: this.userId, is_stockroom: isStockroom },
+        'requisition'
+      );
 
       if (result.success && result.tableId) {
         const newTable: Table = {
@@ -1443,6 +1501,7 @@ export class Page3Component implements OnInit, OnDestroy {
           name: tableName,
           user_id: this.userId,
           type: 'requisition',
+          is_stockroom: isStockroom,
           item_count: 0,
           submitted: false,
           created_at: new Date().toISOString()
@@ -1576,6 +1635,23 @@ export class Page3Component implements OnInit, OnDestroy {
       customBrand: ''
     };
 
+    if (req.is_stockroom) {
+      const item = this.stockroomItems.find(i => i.item_name === req.skuName);
+      this.stockroomBrandOptions = item ? [...item.brands] : [];
+      this.stockroomSupplierOptions = item ? [...item.suppliers] : [];
+
+      if (this.formData.brand && !this.stockroomBrandOptions.includes(this.formData.brand)) {
+        this.formData.customBrand = this.formData.brand;
+        this.formData.brand = '__other__';
+      }
+      if (this.formData.supplier && !this.stockroomSupplierOptions.includes(this.formData.supplier)) {
+        this.formData.customSupplier = this.formData.supplier;
+        this.formData.supplier = '__other__';
+      }
+      this.selectedSkuCode = '';
+      return;
+    }
+
     const predefinedSuppliers = ['Supplier A', 'Supplier B', 'Supplier C'];
     if (this.formData.supplier && !predefinedSuppliers.includes(this.formData.supplier)) {
       this.formData.customSupplier = this.formData.supplier;
@@ -1611,11 +1687,12 @@ export class Page3Component implements OnInit, OnDestroy {
     this.isSubmitting = true;
 
     try {
+      const stockroom = this.isStockroomContext();
       const skuName = this.formData.skuName;
       const selectedItem = this.availableSkus.find(item => item.sku_name === skuName);
-      const skuCode = this.db.normalizeSkuCode(
-        selectedItem ? selectedItem.sku_code : this.selectedSkuCode
-      );
+      const skuCode = stockroom
+        ? ''
+        : this.db.normalizeSkuCode(selectedItem ? selectedItem.sku_code : this.selectedSkuCode);
 
       const finalSupplier = this.formData.supplier === '__other__'
         ? (this.formData.customSupplier?.trim() || '')
@@ -1636,15 +1713,16 @@ export class Page3Component implements OnInit, OnDestroy {
 
       const requisitionData: any = {
         reqNumber,
-        dateNeeded: this.formData.dateNeeded || 'ASAP',
+        dateNeeded: stockroom ? 'ASAP' : (this.formData.dateNeeded || 'ASAP'),
         skuCode,
         skuName,
         quantity: Number(this.formData.quantity),
-        unit: this.formData.unit,
+        unit: stockroom ? '' : this.formData.unit,
         supplier: finalSupplier,
         brand: finalBrand,
+        is_stockroom: stockroom,
         status: this.editingRequisition ? this.editingRequisition.status : 'Pending',
-        category: this.formData.category,
+        category: stockroom ? 'Stockroom' : this.formData.category,
         user_id: this.userId,
         table_id: this.selectedTableId || this.editingRequisition?.table_id || '',
         updated_at: new Date().toISOString()
@@ -1718,7 +1796,11 @@ export class Page3Component implements OnInit, OnDestroy {
       return;
     }
 
-    if (!confirm(`Submit table "${table.name}" and all its requisitions for approval?`)) return;
+    const isStockroom = !!table.is_stockroom;
+    const confirmMessage = isStockroom
+      ? `Submit stockroom table "${table.name}"? It will be sent directly to Procurement.`
+      : `Submit table "${table.name}" and all its requisitions for approval?`;
+    if (!confirm(confirmMessage)) return;
 
     try {
       this.isSubmitting = true;
@@ -1752,37 +1834,54 @@ export class Page3Component implements OnInit, OnDestroy {
           });
         });
 
+        const now = new Date().toISOString();
         const tableRef = doc(this.firestore, 'tables', table.id);
-        batch.update(tableRef, {
+        const tableUpdate: any = {
           submitted: true,
-          submitted_at: new Date().toISOString()
-        });
+          submitted_at: now
+        };
+        if (isStockroom) {
+          // Stockroom tables skip production review and go straight to procurement.
+          tableUpdate.production_reviewed = true;
+          tableUpdate.production_reviewed_at = now;
+          tableUpdate.production_reviewed_by = this.userId;
+        }
+        batch.update(tableRef, tableUpdate);
 
         await batch.commit();
       });
 
       table.submitted = true;
       table.submitted_at = new Date().toISOString();
+      if (isStockroom) {
+        table.production_reviewed = true;
+        table.production_reviewed_at = table.submitted_at;
+        table.production_reviewed_by = this.userId;
+      }
 
       const currentUser = await this.auth.getCurrentUserPromise();
       const userEmail = currentUser?.email || 'unknown@example.com';
 
-      try {
-        await this.emailNotificationService.sendTableSubmittedNotification({
-          tableName: table.name,
-          userEmail: userEmail,
-          submittedAt: new Date().toISOString(),
-          items: items,
-          tableId: table.id,
-          itemCount: items.length,
-          reviewLink: `${window.location.origin}/dashboard/procurement?tableId=${table.id}`
-        });
-        this.showToast(`Table "${table.name}" submitted and Production team has been notified`, 'success');
-      } catch (emailError) {
-        this.showToast(`Table "${table.name}" submitted successfully (email notification failed)`, 'info');
-      }
+      if (isStockroom) {
+        this.showToast(`Stockroom table "${table.name}" submitted directly to Procurement`, 'success');
+      } else {
+        try {
+          await this.emailNotificationService.sendTableSubmittedNotification({
+            tableName: table.name,
+            userEmail: userEmail,
+            submittedAt: new Date().toISOString(),
+            items: items,
+            tableId: table.id,
+            itemCount: items.length,
+            reviewLink: `${window.location.origin}/dashboard/procurement?tableId=${table.id}`
+          });
+          this.showToast(`Table "${table.name}" submitted and Production team has been notified`, 'success');
+        } catch (emailError) {
+          this.showToast(`Table "${table.name}" submitted successfully (email notification failed)`, 'info');
+        }
 
-      await this.notificationService.sendTableSubmittedNotification(table.id, table.name, this.userId);
+        await this.notificationService.sendTableSubmittedNotification(table.id, table.name, this.userId);
+      }
       await this.loadRequisitionsDirectly();
     } catch (err) {
       this.showToast('Failed to submit table', 'error');
@@ -2668,7 +2767,8 @@ export class Page3Component implements OnInit, OnDestroy {
 
   isProcurementInWorkflow(table: Table | null | undefined): boolean {
     if (this.chatContextType === 'batch') return true;
-    return !!table?.production_reviewed && !this.isTableInActiveProcurementBatch(table);
+    return (!!table?.production_reviewed || (!!table?.is_stockroom && !!table?.submitted)) &&
+      !this.isTableInActiveProcurementBatch(table);
   }
 
   isBatchProcurementWorkflow(): boolean {
@@ -3190,6 +3290,17 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   validateForm(): boolean {
+    if (this.isStockroomContext()) {
+      const brand = this.formData.brand === '__other__'
+        ? this.formData.customBrand?.trim()
+        : this.formData.brand;
+      return !!(
+        this.formData.skuName &&
+        brand &&
+        this.formData.quantity &&
+        this.formData.quantity > 0
+      );
+    }
     return !!(
       this.formData.category &&
       this.formData.skuName &&
@@ -3217,6 +3328,8 @@ export class Page3Component implements OnInit, OnDestroy {
       customBrand: ''
     };
     this.selectedSkuCode = '';
+    this.stockroomBrandOptions = [];
+    this.stockroomSupplierOptions = [];
   }
 
   onSupplierChange() {
@@ -3225,6 +3338,203 @@ export class Page3Component implements OnInit, OnDestroy {
 
   onBrandChange() {
     if (this.formData.brand !== '__other__') this.formData.customBrand = '';
+  }
+
+  // ============================================================
+  // Stockroom
+  // ============================================================
+  isStockroomContext(): boolean {
+    if (this.editingRequisition) return !!this.editingRequisition.is_stockroom;
+    return !!this.selectedTable?.is_stockroom;
+  }
+
+  isStockroomTableSelected(): boolean {
+    return !!this.selectedTable?.is_stockroom;
+  }
+
+  getStockroomTablesForProcurement(): Table[] {
+    return this.tables
+      .filter(t => t.is_stockroom)
+      .filter(t => {
+        if (this.tableStatusFilter === 'pending') return !this.isTableDone(t);
+        if (this.tableStatusFilter === 'done') return this.isTableDone(t);
+        return true;
+      });
+  }
+
+  toggleStockroomDropdown() {
+    this.showStockroomDropdown = !this.showStockroomDropdown;
+    this.showTableDropdown = false;
+  }
+
+  async selectStockroomTableForProcurement(table: Table) {
+    this.selectedBatchId = '';
+    this.selectedBatch = null;
+    this.selectedTableId = table.id;
+    this.selectedTable = table;
+    this.showStockroomDropdown = false;
+    this.showTableDropdown = false;
+    await this.loadStockroomTableRequisitions(table.id);
+  }
+
+  async loadStockroomTableRequisitions(tableId: string) {
+    try {
+      this.isLoading = true;
+      // Procurement can only read requisitions where is_stockroom == true (per security rules),
+      // so the query must constrain on it — Firestore rejects queries that aren't provably allowed.
+      const snapshot = await this.run(() =>
+        getDocs(query(
+          collection(this.firestore, 'requisitions'),
+          where('table_id', '==', tableId),
+          where('is_stockroom', '==', true)
+        ))
+      );
+      const reqs: Requisition[] = [];
+      snapshot.forEach(d => reqs.push({ id: d.id, ...d.data() } as Requisition));
+      reqs.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+      this.requisitions = reqs;
+      this.filteredRequisitions = reqs;
+      this.currentPage = 1;
+      this.updatePagination();
+    } catch (err) {
+      console.error('loadStockroomTableRequisitions failed', err);
+      this.filteredRequisitions = [];
+      this.showToast(this.formatFirestoreError(err, 'Failed to load stockroom requisitions'), 'error');
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  async loadStockroomItems() {
+    try {
+      const items = await this.db.getStockroomItems();
+      this.stockroomItems = (items || []).map(i => ({
+        id: i.id,
+        item_name: i.item_name || '',
+        brands: Array.isArray(i.brands) ? i.brands : [],
+        suppliers: Array.isArray(i.suppliers) ? i.suppliers : [],
+        created_at: i.created_at,
+        created_by: i.created_by,
+        updated_at: i.updated_at
+      }));
+    } catch {
+      this.stockroomItems = [];
+    }
+  }
+
+  onStockroomItemSelect() {
+    const item = this.stockroomItems.find(i => i.item_name === this.formData.skuName);
+    this.stockroomBrandOptions = item ? [...item.brands] : [];
+    this.stockroomSupplierOptions = item ? [...item.suppliers] : [];
+    if (this.formData.brand && !this.stockroomBrandOptions.includes(this.formData.brand)) {
+      this.formData.brand = '';
+    }
+    if (this.formData.supplier && !this.stockroomSupplierOptions.includes(this.formData.supplier)) {
+      this.formData.supplier = '';
+    }
+  }
+
+  openStockroomItemModal(item?: StockroomItem) {
+    if (item) {
+      this.editingStockroomItem = item;
+      this.stockroomItemForm = {
+        item_name: item.item_name,
+        brands: item.brands.length ? [...item.brands] : [''],
+        suppliers: item.suppliers.length ? [...item.suppliers] : ['']
+      };
+    } else {
+      this.editingStockroomItem = null;
+      this.stockroomItemForm = { item_name: '', brands: [''], suppliers: [''] };
+    }
+    this.stockroomItemSubmitted = false;
+    this.showStockroomItemModal = true;
+  }
+
+  closeStockroomItemModal() {
+    this.showStockroomItemModal = false;
+    this.editingStockroomItem = null;
+    this.stockroomItemSubmitted = false;
+  }
+
+  addStockroomBrandField() {
+    this.stockroomItemForm.brands.push('');
+  }
+
+  removeStockroomBrandField(index: number) {
+    this.stockroomItemForm.brands.splice(index, 1);
+    if (this.stockroomItemForm.brands.length === 0) this.stockroomItemForm.brands.push('');
+  }
+
+  addStockroomSupplierField() {
+    this.stockroomItemForm.suppliers.push('');
+  }
+
+  removeStockroomSupplierField(index: number) {
+    this.stockroomItemForm.suppliers.splice(index, 1);
+    if (this.stockroomItemForm.suppliers.length === 0) this.stockroomItemForm.suppliers.push('');
+  }
+
+  trackByIndex(index: number): number {
+    return index;
+  }
+
+  async saveStockroomItem() {
+    this.stockroomItemSubmitted = true;
+
+    const itemName = this.stockroomItemForm.item_name.trim();
+    const brands = this.stockroomItemForm.brands.map(b => b.trim()).filter(b => !!b);
+    const suppliers = this.stockroomItemForm.suppliers.map(s => s.trim()).filter(s => !!s);
+
+    if (!itemName || brands.length === 0) {
+      this.showToast('Item name and at least one brand are required', 'error');
+      return;
+    }
+
+    this.isSavingStockroomItem = true;
+    try {
+      if (this.editingStockroomItem) {
+        const ok = await this.db.updateStockroomItem(this.editingStockroomItem.id, {
+          item_name: itemName,
+          brands,
+          suppliers
+        });
+        if (ok) {
+          this.showToast('Stockroom item updated', 'success');
+        } else {
+          this.showToast('Failed to update stockroom item', 'error');
+          return;
+        }
+      } else {
+        const result = await this.db.createStockroomItem({ item_name: itemName, brands, suppliers });
+        if (result.success) {
+          this.showToast('Stockroom item added', 'success');
+        } else {
+          this.showToast('Failed to add stockroom item', 'error');
+          return;
+        }
+      }
+      await this.loadStockroomItems();
+      this.closeStockroomItemModal();
+    } catch {
+      this.showToast('Failed to save stockroom item', 'error');
+    } finally {
+      this.isSavingStockroomItem = false;
+    }
+  }
+
+  async deleteStockroomItem(item: StockroomItem) {
+    if (!confirm(`Delete stockroom item "${item.item_name}"?`)) return;
+    try {
+      const ok = await this.db.deleteStockroomItem(item.id);
+      if (ok) {
+        this.stockroomItems = this.stockroomItems.filter(i => i.id !== item.id);
+        this.showToast('Stockroom item deleted', 'success');
+      } else {
+        this.showToast('Failed to delete stockroom item', 'error');
+      }
+    } catch {
+      this.showToast('Failed to delete stockroom item', 'error');
+    }
   }
 
   toggleTableDropdown() {
@@ -3236,6 +3546,7 @@ export class Page3Component implements OnInit, OnDestroy {
     const target = event.target as HTMLElement;
     if (!target.closest('.dropdown')) {
       this.showTableDropdown = false;
+      this.showStockroomDropdown = false;
     }
   }
 
@@ -3318,7 +3629,7 @@ export class Page3Component implements OnInit, OnDestroy {
       return !!table.submitted;
     }
     if (this.userRole === 'production') return !!table.submitted;
-    if (this.userRole === 'procurement') return !!table.production_reviewed;
+    if (this.userRole === 'procurement') return !!table.production_reviewed || (!!table.is_stockroom && !!table.submitted);
     return false;
   }
 
@@ -3511,6 +3822,7 @@ export class Page3Component implements OnInit, OnDestroy {
       return this.chatTable.user_id === this.userId && !this.chatTable.close_request_user_accepted;
     }
     if (this.userRole === 'production' && mode === 'procurement') {
+      if (this.chatTable.is_stockroom) return false;
       return !this.chatTable.close_request_production_accepted;
     }
     if (this.userRole === 'production' && mode === 'production') {
@@ -3942,21 +4254,25 @@ export class Page3Component implements OnInit, OnDestroy {
 
     if (!this.chatTable) return;
 
+    const isStockroom = !!this.chatTable.is_stockroom;
     const mode: 'procurement' | 'production' =
       this.userRole === 'procurement' ||
       (this.userRole === 'admin' && this.isProcurementInWorkflow(this.chatTable))
         ? 'procurement'
         : 'production';
-    const confirmMessage = mode === 'procurement'
+    const needsProductionAccept = mode === 'procurement' && !isStockroom;
+    const confirmMessage = needsProductionAccept
       ? 'Mark request as delivered? User and Production must both accept to confirm delivery.'
       : 'Mark request as delivered? User must accept to confirm delivery.';
     if (!confirm(confirmMessage)) return;
 
     const tableRef = doc(this.firestore, 'tables', this.chatTable.id);
     const initiatedAt = new Date().toISOString();
-    const systemMessage = mode === 'procurement'
+    const systemMessage = needsProductionAccept
       ? 'Procurement requested delivery (P.O uploaded). User and Production must accept to confirm all items as delivered.'
-      : 'Production requested delivery. User must accept to confirm all items as delivered.';
+      : isStockroom
+        ? 'Procurement requested delivery (P.O uploaded). User must accept to confirm all items as delivered.'
+        : 'Production requested delivery. User must accept to confirm all items as delivered.';
     try {
       await this.run(() => updateDoc(tableRef, {
         close_request_pending: true,
@@ -4116,7 +4432,8 @@ export class Page3Component implements OnInit, OnDestroy {
         close_request_production_accepted: productionAccepted
       });
 
-      const deliveryConfirmed = mode === 'production'
+      const isStockroom = !!this.chatTable?.is_stockroom;
+      const deliveryConfirmed = (mode === 'production' || isStockroom)
         ? userAccepted
         : userAccepted && productionAccepted;
 

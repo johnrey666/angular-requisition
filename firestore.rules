@@ -143,6 +143,11 @@ service cloud.firestore {
       allow write: if isStore() || isAdmin();
     }
 
+    match /stockroom_items/{itemId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isStore() || isProcurement() || isAdmin();
+    }
+
     match /tables/{tableId} {
       allow read: if isAuthenticated() && (
         resource.data.user_id == request.auth.uid ||
@@ -202,7 +207,7 @@ service cloud.firestore {
           )) ||
         ((isProcurement() || isAdmin()) &&
           resource.data.submitted == true &&
-          resource.data.production_reviewed == true &&
+          (resource.data.production_reviewed == true || resource.data.is_stockroom == true) &&
           (
             hasOnlyKeys(poUploadKeys()) ||
             (hasOnlyKeys(closeInitKeys()) &&
@@ -260,6 +265,7 @@ service cloud.firestore {
         isProduction() ||
         (isProcurement() && resource.data.production_action == 'confirmed') ||
         (isProcurement() && resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||
+        (isProcurement() && resource.data.is_stockroom == true) ||
         isAdmin()
       );
 
@@ -280,6 +286,12 @@ service cloud.firestore {
           resource.data.user_id == request.auth.uid &&
           resource.data.status == 'Pending' &&
           request.resource.data.status == 'Submitted') ||
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.is_stockroom == true) ||
+        (isProcurement() &&
+          resource.data.is_stockroom == true &&
+          request.resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||
         (isProduction() &&
           resource.data.status == 'Submitted' &&
           (request.resource.data.status in ['Production_Confirmed', 'Removed'] ||
