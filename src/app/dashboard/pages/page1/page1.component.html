@@ -202,6 +202,173 @@
     </div>
   </div>
 
+  <!-- Ordering Forecast -->
+  <section class="forecast-section" aria-labelledby="forecast-heading">
+    <div class="forecast-section-header">
+      <div>
+        <h2 id="forecast-heading" class="forecast-section-title">Ordering Forecast</h2>
+        <p class="forecast-section-subtitle" *ngIf="!isLoading">Based on last 90 days of ordering history · Estimated projections</p>
+        <div class="skeleton skeleton-text" *ngIf="isLoading" style="--w: 55%; margin-top: 0.35rem"></div>
+      </div>
+      <div class="activity-filters" role="group" aria-label="Forecast period" *ngIf="!isLoading">
+        <button
+          type="button"
+          *ngFor="let days of forecastDayOptions"
+          class="activity-filter-btn"
+          [class.active]="forecastDays === days"
+          (click)="setForecastDays(days)"
+        >
+          {{ days }}d
+        </button>
+      </div>
+    </div>
+
+    <div class="forecast-stats-grid" *ngIf="isLoading" aria-hidden="true">
+      <div class="skeleton-stat-card forecast-stat-skeleton" *ngFor="let _ of [1, 2]">
+        <div class="skeleton skeleton-stat-icon"></div>
+        <div class="skeleton-stat-body">
+          <div class="skeleton skeleton-text" style="--w: 50%"></div>
+          <div class="skeleton skeleton-title" style="--w: 75%"></div>
+          <div class="skeleton skeleton-text" style="--w: 60%"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="forecast-stats-grid" *ngIf="!isLoading">
+      <div class="stat-card stat-card-accent">
+        <div class="stat-icon stat-icon-forecast-sku">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-header">
+            <span class="stat-label">Projected Top SKU</span>
+            <span class="forecast-estimated-badge">Estimated</span>
+          </div>
+          <p class="stat-value stat-value-text" [title]="projectedTopSku?.skuName || ''">
+            {{ projectedTopSku?.skuName || '—' }}
+          </p>
+          <p class="stat-subtitle">
+            <ng-container *ngIf="projectedTopSku">
+              {{ projectedTopSku.skuCode }} · ~{{ projectedTopSku.projectedCount }} orders next {{ forecastDays }}d
+            </ng-container>
+            <ng-container *ngIf="!projectedTopSku">Next {{ forecastDays }} days</ng-container>
+          </p>
+        </div>
+      </div>
+
+      <div class="stat-card stat-card-accent">
+        <div class="stat-icon stat-icon-forecast-material">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <div class="stat-body">
+          <div class="stat-header">
+            <span class="stat-label">Projected Top Material</span>
+            <span class="forecast-estimated-badge">Estimated</span>
+          </div>
+          <p class="stat-value stat-value-text" [title]="projectedTopMaterial?.name || ''">
+            {{ projectedTopMaterial?.name || '—' }}
+          </p>
+          <p class="stat-subtitle">
+            <ng-container *ngIf="projectedTopMaterial">
+              ~{{ projectedTopMaterial.projectedQty | number:'1.0-2' }} {{ projectedTopMaterial.unit }} next {{ forecastDays }}d
+            </ng-container>
+            <ng-container *ngIf="!projectedTopMaterial">Next {{ forecastDays }} days</ng-container>
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="forecast-tables-row">
+      <div class="card forecast-table-card">
+        <div class="forecast-table-header">
+          <h3 class="card-title">Top SKUs Forecast</h3>
+          <span class="forecast-estimated-badge" *ngIf="!isLoading">Estimated</span>
+        </div>
+        <div class="table-wrapper">
+          <div class="skeleton-table-wrap" *ngIf="isLoading" aria-hidden="true">
+            <div class="skeleton-table-row" *ngFor="let _ of skeletonRows">
+              <div class="skeleton skeleton-table-cell" style="--flex: 0.4"></div>
+              <div class="skeleton skeleton-table-cell" style="--flex: 1.5"></div>
+              <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+              <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+            </div>
+          </div>
+          <div *ngIf="!isLoading && !forecastHasHistory" class="empty-table">
+            No ordering history yet — forecasts will appear after requisitions are submitted.
+          </div>
+          <div *ngIf="!isLoading && forecastHasHistory && !forecastHasEnoughData" class="empty-table">
+            Not enough history for a reliable forecast — check back after a few more weeks of ordering.
+          </div>
+          <table class="table forecast-table" *ngIf="!isLoading && forecastHasEnoughData && forecastSkus.length">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>SKU</th>
+                <th>Avg / month</th>
+                <th>Projected ({{ forecastDays }}d)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let sku of forecastSkus; let i = index">
+                <td><span class="forecast-rank">{{ i + 1 }}</span></td>
+                <td>
+                  <span class="forecast-sku-name">{{ sku.skuName }}</span>
+                  <span class="forecast-sku-code">{{ sku.skuCode }}</span>
+                </td>
+                <td>{{ sku.historicalAvgPerMonth | number:'1.0-1' }}</td>
+                <td class="forecast-projected">~{{ sku.projectedCount | number:'1.0-1' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card forecast-table-card">
+        <div class="forecast-table-header">
+          <h3 class="card-title">Raw Material Demand Forecast</h3>
+          <span class="forecast-estimated-badge" *ngIf="!isLoading">Estimated</span>
+        </div>
+        <div class="table-wrapper">
+          <div class="skeleton-table-wrap" *ngIf="isLoading" aria-hidden="true">
+            <div class="skeleton-table-row" *ngFor="let _ of skeletonRows">
+              <div class="skeleton skeleton-table-cell" style="--flex: 0.4"></div>
+              <div class="skeleton skeleton-table-cell" style="--flex: 1.5"></div>
+              <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+              <div class="skeleton skeleton-table-cell" style="--flex: 0.8"></div>
+            </div>
+          </div>
+          <div *ngIf="!isLoading && !forecastHasHistory" class="empty-table">
+            No ordering history yet — forecasts will appear after requisitions are submitted.
+          </div>
+          <div *ngIf="!isLoading && forecastHasHistory && !forecastHasEnoughData" class="empty-table">
+            Not enough history for a reliable forecast — check back after a few more weeks of ordering.
+          </div>
+          <table class="table forecast-table" *ngIf="!isLoading && forecastHasEnoughData && forecastMaterials.length">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Material</th>
+                <th>Avg / month</th>
+                <th>Projected ({{ forecastDays }}d)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let mat of forecastMaterials; let i = index">
+                <td><span class="forecast-rank">{{ i + 1 }}</span></td>
+                <td>
+                  <span class="forecast-sku-name">{{ mat.name }}</span>
+                  <span class="forecast-sku-code" *ngIf="mat.unit">{{ mat.unit }}</span>
+                </td>
+                <td>{{ mat.historicalAvgPerMonth | number:'1.0-2' }} <span class="text-muted" *ngIf="mat.unit">{{ mat.unit }}</span></td>
+                <td class="forecast-projected">~{{ mat.projectedQty | number:'1.0-2' }} <span class="text-muted" *ngIf="mat.unit">{{ mat.unit }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <div class="bottom-row">
     <div class="card table-card">
       <div class="table-card-header">

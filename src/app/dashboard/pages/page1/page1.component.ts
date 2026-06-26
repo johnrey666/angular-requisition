@@ -3,6 +3,11 @@ import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { DatabaseService } from '../../../core/services/database.service';
 import { AuthService } from '../../../core/services/auth.service';
+import {
+  ForecastMaterial,
+  ForecastSku,
+  OrderingForecastService,
+} from '../../../core/services/ordering-forecast.service';
 import { Firestore, collection, doc, getDoc, getDocs, query, where } from '@angular/fire/firestore';
 
 interface RecentRequisition {
@@ -79,14 +84,24 @@ export class Page1Component implements OnInit {
   activityDays = 7;
   readonly activityDayOptions = [7, 15, 30];
 
+  // Forecast
+  forecastDays = 30;
+  readonly forecastDayOptions = [7, 30];
+  forecastSkus: ForecastSku[] = [];
+  forecastMaterials: ForecastMaterial[] = [];
+  forecastHasEnoughData = false;
+  forecastHasHistory = false;
+
   userId = '';
   private allRequisitions: any[] = [];
   private tableNameMap = new Map<string, string>();
+  private skuCache = new Map<string, any[]>();
 
   constructor(
     private db: DatabaseService,
     private auth: AuthService,
-    private firestore: Firestore
+    private firestore: Firestore,
+    private forecastService: OrderingForecastService
   ) {}
 
   async ngOnInit() {
@@ -113,6 +128,13 @@ export class Page1Component implements OnInit {
       return;
     }
     this.buildActivityChart(this.allRequisitions, days);
+  }
+
+  setForecastDays(days: number) {
+    if (this.forecastDays === days) return;
+    this.forecastDays = days;
+    if (this.isLoading) return;
+    this.buildForecast(this.allRequisitions);
   }
 
   private buildSkeletonActivity(days: number): DayActivity[] {
@@ -166,7 +188,9 @@ export class Page1Component implements OnInit {
 
       await this.loadProductionStats(productionTables);
       this.loadOrderingStats(requisitions);
-      await this.loadUsageStats(requisitions);
+      this.skuCache = await this.buildSkuCache(requisitions);
+      this.loadUsageStats(requisitions, this.skuCache);
+      this.buildForecast(requisitions);
       await this.buildMonthlyOverview(monthlyRequisitions);
       this.buildActivityChart(requisitions, this.activityDays);
       this.buildStatusBreakdown(requisitions);
@@ -352,10 +376,8 @@ export class Page1Component implements OnInit {
       : 0;
   }
 
-  private async loadUsageStats(requisitions: any[]) {
+  private async buildSkuCache(requisitions: any[]): Promise<Map<string, any[]>> {
     const skuCache = new Map<string, any[]>();
-    const materialMap = new Map<string, { quantity: number; unit: string }>();
-
     const uniqueSkus = [...new Set(
       requisitions
         .map(r => this.db.normalizeSkuCode(r.sku_code || r.skuCode || ''))
@@ -366,6 +388,12 @@ export class Page1Component implements OnInit {
       const materials = await this.db.getMaterialsForSku(sku);
       skuCache.set(sku, materials);
     }));
+
+    return skuCache;
+  }
+
+  private loadUsageStats(requisitions: any[], skuCache: Map<string, any[]>) {
+    const materialMap = new Map<string, { quantity: number; unit: string }>();
 
     for (const req of requisitions) {
       const skuCode = this.db.normalizeSkuCode(req.sku_code || req.skuCode || '');
@@ -394,6 +422,27 @@ export class Page1Component implements OnInit {
       .map(([name, data]) => ({ name, quantity: data.quantity, unit: data.unit }))
       .sort((a, b) => b.quantity - a.quantity)
       .slice(0, 5);
+  }
+
+  private buildForecast(requisitions: any[]) {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 90);
+    this.forecastHasHistory = requisitions.some(req => {
+      if ((req.status || '') === 'Removed') return false;
+      const date = this.getRequisitionDate(req);
+      return date !== null && date >= cutoff;
+    });
+
+    const result = this.forecastService.computeForecast(
+      requisitions,
+      this.skuCache,
+      this.forecastDays,
+      req => this.getRequisitionDate(req)
+    );
+
+    this.forecastSkus = result.topSkus;
+    this.forecastMaterials = result.topMaterials;
+    this.forecastHasEnoughData = result.hasEnoughData;
   }
 
   private buildActivityChart(requisitions: any[], days: number) {
@@ -513,5 +562,13 @@ export class Page1Component implements OnInit {
 
   get currentMonthLabel(): string {
     return new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+
+  get projectedTopSku(): ForecastSku | null {
+    return this.forecastSkus[0] ?? null;
+  }
+
+  get projectedTopMaterial(): ForecastMaterial | null {
+    return this.forecastMaterials[0] ?? null;
   }
 }
