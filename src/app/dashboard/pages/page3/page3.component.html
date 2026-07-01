@@ -376,6 +376,12 @@
             </svg>
             {{ importStatus === 'loading' ? 'Uploading...' : 'Upload Excel' }}
           </button>
+          <button class="btn btn-outline" (click)="openMasterDataItemModal()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+            Add Item
+          </button>
         </ng-container>
         <button class="btn btn-outline" (click)="openMasterDataModal()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
@@ -1178,6 +1184,7 @@
               <label>Unit *</label>
               <select [(ngModel)]="formData.unit" name="unit">
                 <option value="" disabled>Select unit</option>
+                <option value="pack">pack</option>
                 <option value="per unit">per unit</option>
                 <option value="per pack">per pack</option>
                 <option value="kg">kg</option>
@@ -1591,6 +1598,28 @@
 
       <div class="modal-body">
         <form>
+          <div class="row" *ngIf="!editingStockroomItem">
+            <div class="field">
+              <label>Bulk Import</label>
+              <input type="file" accept=".xlsx,.xls" (change)="onStockroomExcelSelected($event)" hidden #stockroomFileInput>
+              <button
+                type="button"
+                class="btn btn-outline"
+                (click)="stockroomFileInput.click()"
+                [disabled]="isImportingStockroomExcel">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+                  <polyline points="8 12 12 16 16 12"/>
+                  <line x1="12" y1="2" x2="12" y2="16"/>
+                </svg>
+                {{ isImportingStockroomExcel ? 'Importing...' : 'Upload Excel' }}
+              </button>
+              <span class="note small">
+                Columns: description (item name), brand, supplier. Rows sharing the same item name are merged into one item with multiple brands &amp; suppliers.
+              </span>
+            </div>
+          </div>
+
           <div class="row">
             <div class="field">
               <label>Item Name *</label>
@@ -1794,6 +1823,142 @@
             <line x1="12" y1="2" x2="12" y2="16"/>
           </svg>
           Export XLSX
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Master Data Add Item Modal -->
+  <div class="modal" [class.active]="showMasterDataItemModal">
+    <div class="backdrop" (click)="closeMasterDataItemModal()"></div>
+    <div class="modal-container modal-lg">
+      <div class="modal-header">
+        <div>
+          <h3>Add Requisition Item</h3>
+          <span class="note">Add a SKU with its raw materials to master data</span>
+        </div>
+        <button class="close" (click)="closeMasterDataItemModal()">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <form>
+          <div class="row">
+            <div class="field">
+              <label>Category *</label>
+              <select [(ngModel)]="masterDataItemForm.category" name="mdCategory">
+                <option value="" disabled>Select category</option>
+                <option *ngFor="let cat of masterDataCategoryOptions" [value]="cat">{{ cat }}</option>
+              </select>
+              <span class="error" *ngIf="masterDataItemSubmitted && !masterDataItemForm.category">Required</span>
+            </div>
+
+            <div class="field" *ngIf="masterDataItemForm.category === 'others'">
+              <label>Type *</label>
+              <input
+                type="text"
+                [(ngModel)]="masterDataItemForm.customCategory"
+                name="mdCustomCategory"
+                placeholder="Enter custom category">
+              <span class="note small">This will appear in the requisition category dropdown.</span>
+              <span class="error" *ngIf="masterDataItemSubmitted && !masterDataItemForm.customCategory.trim()">Required</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label>SKU Name *</label>
+              <input
+                type="text"
+                [(ngModel)]="masterDataItemForm.sku_name"
+                name="mdSkuName"
+                placeholder="Enter SKU name">
+              <span class="error" *ngIf="masterDataItemSubmitted && !masterDataItemForm.sku_name.trim()">Required</span>
+            </div>
+
+            <div class="field">
+              <label>SKU Code *</label>
+              <input
+                type="text"
+                [(ngModel)]="masterDataItemForm.sku_code"
+                name="mdSkuCode"
+                placeholder="Enter SKU code">
+              <span class="error" *ngIf="masterDataItemSubmitted && !masterDataItemForm.sku_code.trim()">Required</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <div class="field-header">
+                <label>Raw Materials *</label>
+                <button type="button" class="btn-link" (click)="addMasterDataMaterialRow()">+ Add raw material</button>
+              </div>
+
+              <table class="materials-nested-table">
+                <thead>
+                  <tr>
+                    <th>Raw Material</th>
+                    <th>Qty/Batch</th>
+                    <th>Batch Unit</th>
+                    <th>Type</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let mat of masterDataItemForm.materials; let i = index; trackBy: trackByIndex">
+                    <td>
+                      <input
+                        type="text"
+                        [(ngModel)]="mat.raw_material"
+                        [name]="'mdRawMaterial_' + i"
+                        placeholder="e.g. 14 x 20 HD">
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        [(ngModel)]="mat.qty_per_batch"
+                        [name]="'mdQtyPerBatch_' + i"
+                        min="0"
+                        step="0.01"
+                        placeholder="0">
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        [(ngModel)]="mat.batch_unit"
+                        [name]="'mdBatchUnit_' + i"
+                        placeholder="e.g. pieces">
+                    </td>
+                    <td>
+                      <input
+                        type="text"
+                        [(ngModel)]="mat.type"
+                        [name]="'mdType_' + i"
+                        placeholder="e.g. Packaging">
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        class="btn-icon danger"
+                        (click)="removeMasterDataMaterialRow(i)"
+                        title="Remove raw material">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                          <line x1="18" y1="6" x2="6" y2="18"/>
+                          <line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeMasterDataItemModal()">Cancel</button>
+        <button class="btn btn-primary" (click)="saveMasterDataItem()" [disabled]="isSavingMasterDataItem">
+          {{ isSavingMasterDataItem ? 'Saving...' : 'Add Item' }}
         </button>
       </div>
     </div>

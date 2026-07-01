@@ -395,6 +395,29 @@ export class Page3Component implements OnInit, OnDestroy {
   };
   stockroomItemSubmitted: boolean = false;
   isSavingStockroomItem: boolean = false;
+  isImportingStockroomExcel: boolean = false;
+
+  // Master Data: manual "Add Item" form
+  showMasterDataItemModal: boolean = false;
+  masterDataItemSubmitted: boolean = false;
+  isSavingMasterDataItem: boolean = false;
+  readonly masterDataCategoryOptions: string[] = [
+    'Cooked products', 'Dimsum', 'HMLS Products', 'Marinated Products', 'Pre-Mixes',
+    'Preserves', 'Raw', 'Rice Toppings', 'Sauces', 'Semi-Process', 'others'
+  ];
+  masterDataItemForm: {
+    category: string;
+    customCategory: string;
+    sku_name: string;
+    sku_code: string;
+    materials: Array<{ raw_material: string; qty_per_batch: number | null; batch_unit: string; type: string }>;
+  } = {
+    category: '',
+    customCategory: '',
+    sku_name: '',
+    sku_code: '',
+    materials: [{ raw_material: '', qty_per_batch: null, batch_unit: '', type: '' }]
+  };
 
   selectedSkuCode: string = '';
 
@@ -3253,6 +3276,83 @@ export class Page3Component implements OnInit, OnDestroy {
     }
   }
 
+  openMasterDataItemModal() {
+    this.masterDataItemForm = {
+      category: '',
+      customCategory: '',
+      sku_name: '',
+      sku_code: '',
+      materials: [{ raw_material: '', qty_per_batch: null, batch_unit: '', type: '' }]
+    };
+    this.masterDataItemSubmitted = false;
+    this.showMasterDataItemModal = true;
+  }
+
+  closeMasterDataItemModal() {
+    this.showMasterDataItemModal = false;
+    this.masterDataItemSubmitted = false;
+  }
+
+  addMasterDataMaterialRow() {
+    this.masterDataItemForm.materials.push({ raw_material: '', qty_per_batch: null, batch_unit: '', type: '' });
+  }
+
+  removeMasterDataMaterialRow(index: number) {
+    this.masterDataItemForm.materials.splice(index, 1);
+    if (this.masterDataItemForm.materials.length === 0) {
+      this.addMasterDataMaterialRow();
+    }
+  }
+
+  async saveMasterDataItem() {
+    this.masterDataItemSubmitted = true;
+
+    const f = this.masterDataItemForm;
+    const category = (f.category === 'others' ? f.customCategory : f.category).trim();
+    const skuName = f.sku_name.trim();
+    const skuCode = f.sku_code.trim();
+    const materials = f.materials
+      .map(m => ({
+        raw_material: m.raw_material.trim(),
+        qty_per_batch: m.qty_per_batch,
+        batch_unit: m.batch_unit.trim(),
+        type: m.type.trim()
+      }))
+      .filter(m => !!m.raw_material);
+
+    if (!category || !skuName || !skuCode || materials.length === 0) {
+      this.showToast('Category, SKU name, SKU code, and at least one raw material are required', 'error');
+      return;
+    }
+
+    this.isSavingMasterDataItem = true;
+    try {
+      const result = await this.db.createMasterDataItem({
+        category,
+        sku_name: skuName,
+        sku_code: skuCode,
+        materials
+      });
+
+      if (result.success) {
+        this.showToast(`Added ${result.count} master data row(s)`, 'success');
+        await this.loadCategories();
+        if (this.showMasterDataModal) {
+          this.masterDataRows = await this.db.getAllMasterData();
+          this.buildGroupedMasterData();
+          this.applyMasterDataFilter();
+        }
+        this.closeMasterDataItemModal();
+      } else {
+        this.showToast(result.error || 'Failed to add master data item', 'error');
+      }
+    } catch {
+      this.showToast('Failed to add master data item', 'error');
+    } finally {
+      this.isSavingMasterDataItem = false;
+    }
+  }
+
   switchProductionView(view: 'submissions' | 'reviewed') {
     this.selectedProductionView = view;
     this.selectedTableId = '';
@@ -3320,7 +3420,7 @@ export class Page3Component implements OnInit, OnDestroy {
       category: '',
       skuName: '',
       quantity: null,
-      unit: '',
+      unit: 'pack',
       dateNeeded: '',
       supplier: '',
       customSupplier: '',
@@ -3535,6 +3635,125 @@ export class Page3Component implements OnInit, OnDestroy {
     } catch {
       this.showToast('Failed to delete stockroom item', 'error');
     }
+  }
+
+  async onStockroomExcelSelected(event: any) {
+    const file = event?.target?.files?.[0];
+    if (!file) return;
+
+    this.isImportingStockroomExcel = true;
+    try {
+      const grouped = await this.parseStockroomExcel(file);
+      if (!grouped.length) {
+        this.showToast('No valid rows found. Expected columns: description, brand, supplier', 'error');
+        return;
+      }
+
+      let created = 0;
+      let updated = 0;
+      let failed = 0;
+
+      for (const g of grouped) {
+        const existing = this.stockroomItems.find(
+          i => i.item_name.trim().toLowerCase() === g.item_name.trim().toLowerCase()
+        );
+
+        if (existing) {
+          const brands = this.mergeUnique(existing.brands, g.brands);
+          const suppliers = this.mergeUnique(existing.suppliers, g.suppliers);
+          const ok = await this.db.updateStockroomItem(existing.id, {
+            item_name: existing.item_name,
+            brands,
+            suppliers
+          });
+          ok ? updated++ : failed++;
+        } else {
+          const res = await this.db.createStockroomItem({
+            item_name: g.item_name,
+            brands: g.brands,
+            suppliers: g.suppliers
+          });
+          res.success ? created++ : failed++;
+        }
+      }
+
+      await this.loadStockroomItems();
+
+      const parts: string[] = [];
+      if (created) parts.push(`${created} added`);
+      if (updated) parts.push(`${updated} updated`);
+      if (failed) parts.push(`${failed} failed`);
+      this.showToast(`Stockroom import: ${parts.join(', ') || 'nothing to import'}`, failed ? 'error' : 'success');
+    } catch (err) {
+      console.error('onStockroomExcelSelected failed', err);
+      this.showToast('Failed to import stockroom items', 'error');
+    } finally {
+      this.isImportingStockroomExcel = false;
+      if (event?.target) event.target.value = '';
+    }
+  }
+
+  private parseStockroomExcel(
+    file: File
+  ): Promise<Array<{ item_name: string; brands: string[]; suppliers: string[] }>> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = new Uint8Array(e.target!.result as ArrayBuffer);
+          const workbook = XLSX.read(data, { type: 'array' });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
+
+          // Skip a header row if the first row looks like column titles.
+          let startIdx = 0;
+          if (rows.length) {
+            const header = rows[0].map((c: any) => String(c).toLowerCase().trim());
+            const looksLikeHeader = header.some(h =>
+              h.includes('description') || h.includes('item') || h.includes('brand') || h.includes('supplier')
+            );
+            if (looksLikeHeader) startIdx = 1;
+          }
+
+          const map = new Map<string, { item_name: string; brands: string[]; suppliers: string[] }>();
+          for (let i = startIdx; i < rows.length; i++) {
+            const row = rows[i];
+            if (!Array.isArray(row)) continue;
+
+            const name = String(row[0] ?? '').trim();
+            const brand = String(row[1] ?? '').trim();
+            const supplier = String(row[2] ?? '').trim();
+            if (!name) continue;
+
+            const key = name.toLowerCase();
+            if (!map.has(key)) {
+              map.set(key, { item_name: name, brands: [], suppliers: [] });
+            }
+            const entry = map.get(key)!;
+            if (brand && !entry.brands.some(b => b.toLowerCase() === brand.toLowerCase())) {
+              entry.brands.push(brand);
+            }
+            if (supplier && !entry.suppliers.some(s => s.toLowerCase() === supplier.toLowerCase())) {
+              entry.suppliers.push(supplier);
+            }
+          }
+
+          resolve(Array.from(map.values()));
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  private mergeUnique(a: string[], b: string[]): string[] {
+    const out = [...(a || [])];
+    for (const v of b || []) {
+      if (v && !out.some(x => x.toLowerCase() === v.toLowerCase())) out.push(v);
+    }
+    return out;
   }
 
   toggleTableDropdown() {

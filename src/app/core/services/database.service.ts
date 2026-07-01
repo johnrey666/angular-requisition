@@ -313,6 +313,94 @@ export class DatabaseService {
     }
   }
 
+  /**
+   * Creates master data rows manually (one document per raw material) for a
+   * single SKU. Mirrors the docId scheme used by the bulk Excel import so a
+   * later re-import merges cleanly with manually added items.
+   */
+  async createMasterDataItem(data: {
+    category: string;
+    sku_name: string;
+    sku_code: string;
+    materials: Array<{ raw_material: string; qty_per_batch: number | null; batch_unit: string; type: string }>;
+  }): Promise<{ success: boolean; count?: number; error?: string }> {
+    try {
+      const currentUser = await this.auth.getCurrentUserPromise();
+      if (!currentUser) {
+        return { success: false, error: 'You must be logged in to add master data' };
+      }
+
+      const skuCode = this.normalizeSkuCode(data.sku_code);
+      if (!skuCode) {
+        return { success: false, error: 'A valid SKU code is required' };
+      }
+
+      const category = (data.category || '').trim();
+      const skuName = (data.sku_name || '').trim();
+      const colRef = collection(this.firestore, 'masterData');
+      let savedCount = 0;
+
+      await this.run(async () => {
+        const batch = writeBatch(this.firestore);
+
+        for (const mat of data.materials || []) {
+          const rawMaterial = (mat.raw_material || '').trim();
+          if (!rawMaterial) continue;
+
+          const qtyPerBatch =
+            mat.qty_per_batch === null || mat.qty_per_batch === undefined || (mat.qty_per_batch as any) === ''
+              ? null
+              : Number(mat.qty_per_batch);
+
+          const docData: MasterData = {
+            sku_code: skuCode,
+            sku_name: skuName,
+            qty_per_unit: null,
+            unit: '',
+            qty_per_pack: null,
+            pack_unit: '',
+            projected_yield_per_batch: null,
+            yield_unit: '',
+            category,
+            raw_material: rawMaterial,
+            qty_per_batch: qtyPerBatch,
+            batch_unit: (mat.batch_unit || '').trim(),
+            type: (mat.type || '').trim(),
+            supplier: null,
+            created_at: new Date(),
+            updated_at: new Date(),
+            uploaded_by: currentUser.uid,
+            uploaded_at: new Date()
+          };
+
+          const docId = `${skuCode}_${rawMaterial}`
+            .replace(/[^a-zA-Z0-9_-]/g, '_')
+            .substring(0, 1500);
+
+          batch.set(doc(colRef, docId), docData, { merge: true });
+          savedCount++;
+        }
+
+        await batch.commit();
+      });
+
+      this.invalidateMasterDataCache();
+
+      return { success: true, count: savedCount };
+    } catch (err: any) {
+      console.error('createMasterDataItem failed', err);
+
+      if (err.code === 'permission-denied' || err.message?.includes('permission')) {
+        return {
+          success: false,
+          error: 'Missing or insufficient permissions. Please check your Firestore security rules.'
+        };
+      }
+
+      return { success: false, error: err.message || 'Unknown error' };
+    }
+  }
+
   async getUniqueCategories(): Promise<string[]> {
     try {
       const rows = await this.loadMasterDataCached();
