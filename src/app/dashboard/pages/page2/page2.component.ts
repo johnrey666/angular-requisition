@@ -88,7 +88,7 @@ export class Page2Component implements OnInit {
   userId: string = '';
 
   // Allowed roles for accessing this page
-  private readonly allowedRoles = ['user', 'store', 'production', 'procurement', 'admin'];
+  private readonly allowedRoles = ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'];
 
   // Expose Math to template
   Math = Math;
@@ -150,11 +150,13 @@ export class Page2Component implements OnInit {
       console.log('Loading production tables directly for user:', this.userId);
       
       const tablesRef = collection(this.firestore, 'tables');
-      const q = query(
-        tablesRef, 
-        where('user_id', '==', this.userId),
-        where('type', '==', 'production')
-      );
+      const q = this.userRole === 'supervisor'
+        ? query(tablesRef, where('type', '==', 'production'))
+        : query(
+            tablesRef, 
+            where('user_id', '==', this.userId),
+            where('type', '==', 'production')
+          );
       
       const querySnapshot = await getDocs(q);
       console.log('Found', querySnapshot.size, 'production tables');
@@ -218,11 +220,13 @@ export class Page2Component implements OnInit {
       console.log('Loading production items for table:', this.currentTable.id);
       
       const requisitionsRef = collection(this.firestore, 'requisitions');
-      const q = query(
-        requisitionsRef,
-        where('table_id', '==', this.currentTable.id),
-        where('user_id', '==', this.userId)
-      );
+      const q = this.userRole === 'supervisor'
+        ? query(requisitionsRef, where('table_id', '==', this.currentTable.id))
+        : query(
+            requisitionsRef,
+            where('table_id', '==', this.currentTable.id),
+            where('user_id', '==', this.userId)
+          );
       
       const querySnapshot = await getDocs(q);
       console.log('Found', querySnapshot.size, 'production items');
@@ -415,11 +419,16 @@ export class Page2Component implements OnInit {
   }
 
   canAddItem(): boolean {
+    if (this.isReadOnlyView()) return false;
     return !!this.currentTable &&
            !!this.newItem.category &&
            !!this.newItem.sku_code &&
            !!this.newItem.supplier?.trim() &&
            this.newItem.qty_needed != null && this.newItem.qty_needed > 0;
+  }
+
+  isReadOnlyView(): boolean {
+    return this.userRole === 'supervisor';
   }
 
   async addItem() {
@@ -566,7 +575,7 @@ export class Page2Component implements OnInit {
       return;
     }
 
-    if (table.user_id !== this.userId) {
+    if (!this.isReadOnlyView() && table.user_id !== this.userId) {
       this.showToast('You can only access your own tables', 'error');
       return;
     }
@@ -584,6 +593,10 @@ export class Page2Component implements OnInit {
   }
 
   async createNewTable() {
+    if (this.isReadOnlyView()) {
+      this.showToast('Supervisors have read-only access', 'error');
+      return;
+    }
     const tableName = prompt('Enter production line name:');
     if (!tableName?.trim()) return;
 
@@ -621,6 +634,11 @@ export class Page2Component implements OnInit {
       return;
     }
 
+    if (this.isReadOnlyView()) {
+      this.showToast('Supervisors have read-only access', 'error');
+      return;
+    }
+
     if (table.user_id !== this.userId) {
       this.showToast('You can only rename your own tables', 'error');
       return;
@@ -652,6 +670,11 @@ export class Page2Component implements OnInit {
   async deleteTable(table: ProductionTable) {
     if (table.type !== 'production') {
       this.showToast('Invalid table type', 'error');
+      return;
+    }
+
+    if (this.isReadOnlyView()) {
+      this.showToast('Supervisors have read-only access', 'error');
       return;
     }
 

@@ -78,7 +78,7 @@ export class Page4Component implements OnInit {
   userId: string = '';
 
   // Allowed roles for accessing this page (matches navItems in dashboard)
-  private readonly allowedRoles = ['user', 'store', 'production', 'procurement', 'admin'];
+  private readonly allowedRoles = ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'];
 
   constructor(
     private db: DatabaseService,
@@ -151,24 +151,27 @@ export class Page4Component implements OnInit {
 
   async loadUserTables(): Promise<void> {
     try {
-      const allTables = await this.db.getUserTables(this.userId);
-      
-      // For production role, filter to show only production-relevant tables
-      if (this.userRole === 'production') {
-        this.userTables = allTables.filter(table => 
-          table.name?.toLowerCase().includes('production') || 
-          table.name?.toLowerCase().includes('prod') ||
-          table.name?.toLowerCase().includes('line') ||
-          table.name?.toLowerCase().includes('batch')
-        );
-        
-        // If no production-specific tables found, show all tables
-        if (this.userTables.length === 0) {
+      if (this.userRole === 'supervisor') {
+        this.userTables = await this.db.getAllTables();
+      } else {
+        const allTables = await this.db.getUserTables(this.userId);
+        // For production role, filter to show only production-relevant tables
+        if (this.userRole === 'production') {
+          this.userTables = allTables.filter(table => 
+            table.name?.toLowerCase().includes('production') || 
+            table.name?.toLowerCase().includes('prod') ||
+            table.name?.toLowerCase().includes('line') ||
+            table.name?.toLowerCase().includes('batch')
+          );
+          
+          // If no production-specific tables found, show all tables
+          if (this.userTables.length === 0) {
+            this.userTables = allTables;
+          }
+        } else {
+          // For all other roles (user, store, procurement, admin), show all tables
           this.userTables = allTables;
         }
-      } else {
-        // For all other roles (user, store, procurement, admin), show all tables
-        this.userTables = allTables;
       }
       
       console.log('Loaded user tables:', this.userTables);
@@ -217,7 +220,17 @@ export class Page4Component implements OnInit {
       }
 
       let allRequisitions: any[] = [];
-      if (this.selectedTableId === 'all') {
+      if (this.userRole === 'supervisor') {
+        if (this.selectedTableId === 'all') {
+          const tableIds = relevantTables.map(t => t.id);
+          const snapshots = await Promise.all(
+            tableIds.map(tableId => this.db.getRequisitionsByTableId(tableId))
+          );
+          allRequisitions = snapshots.flat();
+        } else {
+          allRequisitions = await this.db.getRequisitionsByTableId(this.selectedTableId);
+        }
+      } else if (this.selectedTableId === 'all') {
         allRequisitions = await this.db.getUserRequisitions(this.userId);
       } else {
         allRequisitions = await this.db.getTableRequisitions(this.selectedTableId, this.userId);
@@ -271,7 +284,7 @@ export class Page4Component implements OnInit {
       }>();
 
       for (const req of allRequisitions) {
-        if (req.user_id !== this.userId) continue;
+        if (this.userRole !== 'supervisor' && req.user_id !== this.userId) continue;
 
         const tableName = tableNameById.get(req.table_id) || `Table ${req.table_id?.substring?.(0, 8) ?? ''}`;
         const skuCode = (req.sku_code || req.skuCode || '').toString();

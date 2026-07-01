@@ -105,6 +105,62 @@ export class EmailNotificationService {
     return this.getUsersByRole('procurement');
   }
 
+  async getSupervisorEmails(): Promise<string[]> {
+    return this.getUsersByRole('supervisor');
+  }
+
+  /**
+   * Send table submitted notification to ALL supervisor team members
+   */
+  async sendTableSubmittedForSupervisorNotification(data: TableSubmittedData): Promise<EmailResponse[]> {
+    try {
+      let supervisorEmails = await this.getSupervisorEmails();
+      if (supervisorEmails.length === 0) {
+        console.warn('No supervisor users found, using fallback email');
+        supervisorEmails = [data.recipientEmail || 'supervisor@yourdomain.com'];
+      }
+
+      const itemsListHtml = this.createItemsListHtml(data.items);
+      const itemsListPlain = this.createItemsListPlain(data.items);
+      const results: EmailResponse[] = [];
+
+      for (const supervisorEmail of supervisorEmails) {
+        try {
+          const payload: any = {
+            emailType: 'table_submitted',
+            to: supervisorEmail,
+            tableName: data.tableName,
+            userEmail: data.userEmail,
+            submittedAt: data.submittedAt,
+            itemCount: data.itemCount,
+            reviewLink: data.reviewLink,
+            items: data.items,
+            itemsListHtml: itemsListHtml,
+            itemsListPlain: itemsListPlain
+          };
+          const params = this.buildHttpParams(payload);
+          const response = await firstValueFrom(
+            this.http.get<EmailResponse>(this.SCRIPT_URL, { params })
+          );
+          results.push(response);
+        } catch (error: any) {
+          results.push({
+            success: false,
+            error: `Failed to send to ${supervisorEmail}: ${error?.message || 'Unknown error'}`,
+            message: 'Partial failure'
+          });
+        }
+      }
+      return results;
+    } catch (error: any) {
+      return [{
+        success: false,
+        error: error?.message || 'Unknown error occurred',
+        message: 'Failed to send email notifications'
+      }];
+    }
+  }
+
   /**
    * Send table submitted notification to ALL Production team members
    */

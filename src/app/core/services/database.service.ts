@@ -906,11 +906,46 @@ export class DatabaseService {
   }
 
   async getRequisitionsForDashboard(userId: string, role: string): Promise<any[]> {
-    const elevatedRoles = ['admin', 'production', 'procurement'];
+    const elevatedRoles = ['admin', 'production', 'procurement', 'supervisor'];
     if (elevatedRoles.includes(role)) {
       return this.getAllRequisitions();
     }
     return this.getUserRequisitions(userId);
+  }
+
+  async getAllTables(type?: 'inventory' | 'requisition' | 'production'): Promise<any[]> {
+    try {
+      const constraints: any[] = [];
+      if (type) {
+        constraints.push(where('type', '==', type));
+      }
+      const snapshot = await this.run(() =>
+        getDocs(constraints.length
+          ? query(collection(this.firestore, 'tables'), ...constraints)
+          : collection(this.firestore, 'tables'))
+      );
+      return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (err) {
+      console.error('getAllTables failed', err);
+      return [];
+    }
+  }
+
+  async getRequisitionsByTableId(tableId: string): Promise<any[]> {
+    try {
+      if (!tableId) return [];
+      const snapshot = await this.run(() =>
+        getDocs(query(
+          collection(this.firestore, 'requisitions'),
+          where('table_id', '==', tableId),
+          orderBy('created_at', 'desc')
+        ))
+      );
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (err) {
+      console.error('getRequisitionsByTableId failed', err);
+      return [];
+    }
   }
 
   async createRequisition(data: any, materials: any[]): Promise<{ success: boolean; id?: string }> {
@@ -1019,6 +1054,13 @@ export class DatabaseService {
           case 'Partially_Delivered':
             updateData.partially_delivered_at = new Date().toISOString();
             updateData.partially_delivered_by = userId;
+            break;
+          case 'Pending_Supervisor':
+            updateData.submitted_at = new Date().toISOString();
+            break;
+          case 'Rejected_By_Supervisor':
+            updateData.rejected_by_supervisor_at = new Date().toISOString();
+            updateData.rejected_by_supervisor_by = userId;
             break;
         }
       }

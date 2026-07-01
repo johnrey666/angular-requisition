@@ -43,10 +43,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
   mobileSidebarOpen = signal(false);
 
   navItems: NavItem[] = [
-    { label: 'Dashboard', route: '/dashboard', icon: 'dashboard', roles: ['user', 'store', 'production', 'procurement', 'admin'] },
-    { label: 'Production', route: '/dashboard/production', icon: 'factory', roles: ['user', 'store', 'production', 'procurement', 'admin'] },
-    { label: 'Ordering', route: '/dashboard/procurement', icon: 'document', roles: ['user', 'store', 'production', 'procurement', 'admin'] },
-    { label: 'Usage Report', route: '/dashboard/usage-report', icon: 'line-chart', roles: ['user', 'store', 'production', 'procurement', 'admin'] },
+    { label: 'Dashboard', route: '/dashboard', icon: 'dashboard', roles: ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'] },
+    { label: 'Production', route: '/dashboard/production', icon: 'factory', roles: ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'] },
+    { label: 'Ordering', route: '/dashboard/procurement', icon: 'document', roles: ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'] },
+    { label: 'Usage Report', route: '/dashboard/usage-report', icon: 'line-chart', roles: ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'] },
   ];
 
   filteredNavItems: NavItem[] = [];
@@ -200,8 +200,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
         this.filterNavItems();
         console.log('Filtered nav items:', this.filteredNavItems);
         
-        // Subscribe to notifications for production and procurement users
-        if (this.userRole === 'production' || this.userRole === 'procurement') {
+        // Subscribe to notifications for production, procurement, and supervisor users
+        if (this.userRole === 'production' || this.userRole === 'procurement' || this.userRole === 'supervisor') {
           this.subscribeToNotifications();
           await this.loadNotifications();
         }

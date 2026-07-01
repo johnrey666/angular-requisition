@@ -188,6 +188,11 @@ h2 {
   color: hsl(var(--role-procurement));
 }
 
+.role-badge.role-supervisor {
+  background: hsl(38 92% 50% / 0.3);
+  color: hsl(38 92% 40%);
+}
+
 .role-badge.role-store,
 .role-badge.role-user {
   background: hsl(var(--role-store) / 0.3);

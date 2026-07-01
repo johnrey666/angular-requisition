@@ -55,7 +55,7 @@ interface Requisition {
   production_action_at?: string;
   production_action_by?: string;
   production_action_notes?: string;
-  production_notes?: string;
+  store_notes?: string;
   procurement_action?: 'reviewed' | 'pending';
   procurement_action_at?: string;
   procurement_action_by?: string;
@@ -107,6 +107,12 @@ interface Table {
   procurement_batch_id?: string;
   procurement_batch_closed?: boolean;
   user_delivery_chat_started_at?: string;
+  supervisor_confirmed?: boolean;
+  supervisor_confirmed_at?: string;
+  supervisor_confirmed_by?: string;
+  supervisor_rejected?: boolean;
+  supervisor_rejected_at?: string;
+  supervisor_rejected_by?: string;
 }
 
 interface ProcurementBatch {
@@ -262,6 +268,7 @@ export class Page3Component implements OnInit, OnDestroy {
   paginatedRequisitions: Requisition[] = [];
 
   productionSubmissions: Requisition[] = [];
+  supervisorSubmissions: Requisition[] = [];
   productionReviewed: Requisition[] = [];
 
   procurementReviewed: Requisition[] = [];
@@ -304,13 +311,15 @@ export class Page3Component implements OnInit, OnDestroy {
   showDeliveryModal = false;
   showMissingNotesModal = false;
   showProductionActionModal = false;
-  showProductionNotesModal = false;
+  showStoreNotesModal = false;
   showTransferToProcurementModal = false;
   transferDateNeeded = '';
   transferSelectedTableIds: Set<string> = new Set();
   transferMaterialPreview: TransferMaterialPreview[] = [];
-  productionNotesText = '';
-  productionNotesReadOnly = false;
+  storeNotesText = '';
+  storeNotesReadOnly = false;
+  supervisorRejectionNotes = '';
+  showSupervisorRejectModal = false;
 
   tableStatusFilter: 'pending' | 'done' | 'all' = 'pending';
 
@@ -339,7 +348,7 @@ export class Page3Component implements OnInit, OnDestroy {
   poViewerTable: Table | ProcurementBatch | null = null;
   docViewerType: 'po' | 'sm' = 'po';
 
-  viewMode: 'my_tables' | 'store_submissions' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
+  viewMode: 'my_tables' | 'store_submissions' | 'supervisor_review' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
   selectedProductionView: 'submissions' | 'reviewed' = 'submissions';
   showAllPending = false;
   submitted = false;
@@ -487,6 +496,9 @@ export class Page3Component implements OnInit, OnDestroy {
         await this.loadTablesDirectly();
         await this.loadProductionSubmissions();
         await this.loadProcurementBatches();
+      } else if (this.userRole === 'supervisor') {
+        await this.loadTablesDirectly();
+        await this.loadSupervisorSubmissions();
       } else if (this.userRole === 'procurement') {
         await this.loadTablesDirectly();
         await this.loadProcurementBatches();
@@ -544,6 +556,8 @@ export class Page3Component implements OnInit, OnDestroy {
   setViewModeByRole() {
     if (this.userRole === 'production') {
       this.viewMode = 'store_submissions';
+    } else if (this.userRole === 'supervisor') {
+      this.viewMode = 'supervisor_review';
     } else if (this.userRole === 'procurement') {
       this.viewMode = 'for_delivery';
     } else {
@@ -563,7 +577,20 @@ export class Page3Component implements OnInit, OnDestroy {
           where('type', '==', 'requisition'),
           where('submitted', '==', true)
         )));
-        docSnaps.push(...snap.docs);
+        docSnaps.push(...snap.docs.filter(d => {
+          const data = d.data();
+          return data['is_stockroom'] || data['supervisor_confirmed'] !== false;
+        }));
+      } else if (this.userRole === 'supervisor') {
+        const snap = await this.run(() => getDocs(query(
+          tablesRef,
+          where('type', '==', 'requisition'),
+          where('submitted', '==', true)
+        )));
+        docSnaps.push(...snap.docs.filter(d => {
+          const data = d.data();
+          return !data['is_stockroom'] && data['supervisor_confirmed'] !== true && !data['supervisor_rejected'];
+        }));
       } else if (this.userRole === 'procurement') {
         // Production-reviewed tables (normal flow) + submitted stockroom tables (direct-to-procurement).
         const [reviewedSnap, stockroomSnap] = await Promise.all([
@@ -642,7 +669,13 @@ export class Page3Component implements OnInit, OnDestroy {
           close_request_mode: data['close_request_mode'],
           procurement_batch_id: data['procurement_batch_id'],
           procurement_batch_closed: data['procurement_batch_closed'] || false,
-          user_delivery_chat_started_at: data['user_delivery_chat_started_at']
+          user_delivery_chat_started_at: data['user_delivery_chat_started_at'],
+          supervisor_confirmed: data['supervisor_confirmed'] || false,
+          supervisor_confirmed_at: data['supervisor_confirmed_at'],
+          supervisor_confirmed_by: data['supervisor_confirmed_by'],
+          supervisor_rejected: data['supervisor_rejected'] || false,
+          supervisor_rejected_at: data['supervisor_rejected_at'],
+          supervisor_rejected_by: data['supervisor_rejected_by']
         };
 
         if (table.user_id) {
@@ -790,6 +823,37 @@ export class Page3Component implements OnInit, OnDestroy {
       this.productionSubmissions = nonStockroom;
     } catch (err) {
       this.showToast('Failed to load submissions', 'error');
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  async loadSupervisorSubmissions() {
+    this.isLoading = true;
+    try {
+      const requisitionsRef = collection(this.firestore, 'requisitions');
+      const submissionsSnapshot = await this.run(() => {
+        const q = query(
+          requisitionsRef,
+          where('status', '==', 'Pending_Supervisor'),
+          orderBy('submitted_at', 'desc')
+        );
+        return getDocs(q);
+      });
+
+      const submissions: Requisition[] = [];
+      submissionsSnapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        submissions.push({ id: docSnap.id, ...data } as Requisition);
+      });
+
+      const nonStockroom = submissions.filter(s => !s.is_stockroom);
+      await this.loadUserEmailsForRequisitions(nonStockroom);
+      await this.loadTableNamesForRequisitions(nonStockroom);
+      await this.populateMaterialsForAllRequisitions(nonStockroom);
+      this.supervisorSubmissions = nonStockroom;
+    } catch (err) {
+      this.showToast('Failed to load supervisor submissions', 'error');
     } finally {
       this.isLoading = false;
     }
@@ -1230,15 +1294,15 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   showRequisitionTableColumn(): boolean {
-    return (this.userRole === 'production' || this.userRole === 'procurement') && !this.selectedTable;
+    return (this.userRole === 'production' || this.userRole === 'supervisor' || this.userRole === 'procurement') && !this.selectedTable;
   }
 
   getColspan(): number {
     let cols = 1;
     if (this.showRequisitionTableColumn()) cols++;
-    if (this.userRole === 'production') cols++;
+    if (this.userRole === 'production' || this.userRole === 'supervisor') cols++;
     cols += 9;
-    if (this.userRole !== 'production') cols += 2;
+    if (this.userRole !== 'production' && this.userRole !== 'supervisor') cols += 2;
     return cols;
   }
 
@@ -1339,7 +1403,15 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   async selectTable(table: Table) {
-    if (this.userRole === 'production') {
+    if (this.userRole === 'supervisor') {
+      this.selectedTableId = table.id;
+      this.selectedTable = table;
+      this.showTableDropdown = false;
+      this.filteredRequisitions = this.supervisorSubmissions.filter(r => r.table_id === table.id);
+      this.currentPage = 1;
+      this.updatePagination();
+      this.showToast(`Reviewing submissions from table: ${table.name}`, 'info');
+    } else if (this.userRole === 'production') {
       this.selectedTableId = table.id;
       this.selectedTable = table;
       this.showTableDropdown = false;
@@ -1822,7 +1894,7 @@ export class Page3Component implements OnInit, OnDestroy {
     const isStockroom = !!table.is_stockroom;
     const confirmMessage = isStockroom
       ? `Submit stockroom table "${table.name}"? It will be sent directly to Procurement.`
-      : `Submit table "${table.name}" and all its requisitions for approval?`;
+      : `Submit table "${table.name}" to your supervisor for review?`;
     if (!confirm(confirmMessage)) return;
 
     try {
@@ -1852,7 +1924,7 @@ export class Page3Component implements OnInit, OnDestroy {
             unit: data['unit'] || data['batch_unit'] || 'pcs'
           });
           batch.update(d.ref, {
-            status: 'Submitted',
+            status: isStockroom ? 'Submitted' : 'Pending_Supervisor',
             submitted_at: new Date().toISOString()
           });
         });
@@ -1864,10 +1936,13 @@ export class Page3Component implements OnInit, OnDestroy {
           submitted_at: now
         };
         if (isStockroom) {
-          // Stockroom tables skip production review and go straight to procurement.
+          // Stockroom tables skip supervisor and production review.
           tableUpdate.production_reviewed = true;
           tableUpdate.production_reviewed_at = now;
           tableUpdate.production_reviewed_by = this.userId;
+        } else {
+          tableUpdate.supervisor_confirmed = false;
+          tableUpdate.supervisor_rejected = false;
         }
         batch.update(tableRef, tableUpdate);
 
@@ -1889,7 +1964,7 @@ export class Page3Component implements OnInit, OnDestroy {
         this.showToast(`Stockroom table "${table.name}" submitted directly to Procurement`, 'success');
       } else {
         try {
-          await this.emailNotificationService.sendTableSubmittedNotification({
+          await this.emailNotificationService.sendTableSubmittedForSupervisorNotification({
             tableName: table.name,
             userEmail: userEmail,
             submittedAt: new Date().toISOString(),
@@ -1898,12 +1973,12 @@ export class Page3Component implements OnInit, OnDestroy {
             itemCount: items.length,
             reviewLink: `${window.location.origin}/dashboard/procurement?tableId=${table.id}`
           });
-          this.showToast(`Table "${table.name}" submitted and Production team has been notified`, 'success');
+          this.showToast(`Table "${table.name}" submitted to supervisor for review`, 'success');
         } catch (emailError) {
           this.showToast(`Table "${table.name}" submitted successfully (email notification failed)`, 'info');
         }
 
-        await this.notificationService.sendTableSubmittedNotification(table.id, table.name, this.userId);
+        await this.notificationService.sendTableSubmittedForSupervisorNotification(table.id, table.name, this.userId);
       }
       await this.loadRequisitionsDirectly();
     } catch (err) {
@@ -3882,6 +3957,11 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   getPageSubtitle(): string {
+    if (this.userRole === 'supervisor') {
+      return this.selectedTable
+        ? `Reviewing ${this.selectedTable.name}`
+        : 'Review store requisition slips before production';
+    }
     if (this.userRole === 'production') {
       return this.selectedTable
         ? `Reviewing ${this.selectedTable.name}`
@@ -4050,23 +4130,23 @@ export class Page3Component implements OnInit, OnDestroy {
     return false;
   }
 
-  openProductionNotesModal(req: Requisition, readOnly = false) {
+  openStoreNotesModal(req: Requisition, readOnly = false) {
     this.selectedRequisition = req;
-    this.productionNotesText = req.production_notes || '';
-    this.productionNotesReadOnly = readOnly;
-    this.showProductionNotesModal = true;
+    this.storeNotesText = req.store_notes || '';
+    this.storeNotesReadOnly = readOnly;
+    this.showStoreNotesModal = true;
   }
 
-  closeProductionNotesModal() {
-    this.showProductionNotesModal = false;
+  closeStoreNotesModal() {
+    this.showStoreNotesModal = false;
     this.selectedRequisition = null;
-    this.productionNotesText = '';
-    this.productionNotesReadOnly = false;
+    this.storeNotesText = '';
+    this.storeNotesReadOnly = false;
   }
 
-  async saveProductionNotes() {
-    if (!this.selectedRequisition || this.productionNotesReadOnly) return;
-    if (!this.productionNotesText.trim()) {
+  async saveStoreNotes() {
+    if (!this.selectedRequisition || this.storeNotesReadOnly) return;
+    if (!this.storeNotesText.trim()) {
       this.showToast('Please enter a note', 'error');
       return;
     }
@@ -4076,18 +4156,239 @@ export class Page3Component implements OnInit, OnDestroy {
         this.selectedRequisition.status,
         this.userId,
         this.selectedRequisition.table_id || '',
-        { production_notes: this.productionNotesText.trim() }
+        { store_notes: this.storeNotesText.trim() }
       );
       if (success) {
-        this.selectedRequisition.production_notes = this.productionNotesText.trim();
-        this.closeProductionNotesModal();
-        this.showToast('Production note saved', 'success');
+        this.selectedRequisition.store_notes = this.storeNotesText.trim();
+        this.closeStoreNotesModal();
+        this.showToast('Note saved', 'success');
       } else {
         this.showToast('Failed to save note', 'error');
       }
     } catch {
       this.showToast('Failed to save note', 'error');
     }
+  }
+
+  canAddStoreNotes(req: Requisition): boolean {
+    return (
+      (this.userRole === 'user' || this.userRole === 'store') &&
+      req.status === 'Pending_Supervisor' &&
+      req.user_id === this.userId
+    );
+  }
+
+  canViewStoreNotes(req: Requisition): boolean {
+    return !!req.store_notes && (
+      this.userRole === 'supervisor' ||
+      this.userRole === 'admin' ||
+      ((this.userRole === 'user' || this.userRole === 'store') && req.user_id === this.userId)
+    );
+  }
+
+  canSupervisorConfirmTable(table: Table | null): boolean {
+    return (
+      this.userRole === 'supervisor' &&
+      !!table &&
+      !!table.submitted &&
+      !table.is_stockroom &&
+      !table.supervisor_confirmed &&
+      !table.supervisor_rejected
+    );
+  }
+
+  canSupervisorRejectTable(table: Table | null): boolean {
+    return this.canSupervisorConfirmTable(table);
+  }
+
+  openSupervisorRejectModal() {
+    if (!this.canSupervisorRejectTable(this.selectedTable)) return;
+    this.supervisorRejectionNotes = '';
+    this.showSupervisorRejectModal = true;
+  }
+
+  closeSupervisorRejectModal() {
+    this.showSupervisorRejectModal = false;
+    this.supervisorRejectionNotes = '';
+  }
+
+  async confirmTableBySupervisor(table: Table) {
+    if (!this.canSupervisorConfirmTable(table)) return;
+    if (!confirm(`Confirm requisition slip "${table.name}" and send to production?`)) return;
+
+    try {
+      this.isSubmitting = true;
+      this.isLoading = true;
+      const now = new Date().toISOString();
+      const tableReqs = this.supervisorSubmissions.filter(r => r.table_id === table.id);
+
+      await this.run(async () => {
+        const batch = writeBatch(this.firestore);
+        for (const req of tableReqs) {
+          const reqRef = doc(this.firestore, 'requisitions', req.id);
+          batch.update(reqRef, {
+            status: 'Submitted',
+            submitted_at: now,
+            updated_at: now
+          });
+        }
+        const tableRef = doc(this.firestore, 'tables', table.id);
+        batch.update(tableRef, {
+          supervisor_confirmed: true,
+          supervisor_confirmed_at: now,
+          supervisor_confirmed_by: this.userId,
+          supervisor_rejected: false,
+          updated_at: now
+        });
+        await batch.commit();
+      });
+
+      table.supervisor_confirmed = true;
+      table.supervisor_confirmed_at = now;
+      table.supervisor_rejected = false;
+      this.supervisorSubmissions = this.supervisorSubmissions.filter(r => r.table_id !== table.id);
+      this.tables = this.tables.filter(t => t.id !== table.id);
+
+      if (this.selectedTable?.id === table.id) {
+        this.selectedTable = null;
+        this.selectedTableId = '';
+        this.filteredRequisitions = [];
+      }
+
+      await this.notificationService.sendTableConfirmedBySupervisorNotification(table.id, table.name, this.userId);
+      this.showToast(`"${table.name}" confirmed and sent to production`, 'success');
+    } catch {
+      this.showToast('Failed to confirm table', 'error');
+    } finally {
+      this.isSubmitting = false;
+      this.isLoading = false;
+    }
+  }
+
+  async rejectTableBySupervisor() {
+    const table = this.selectedTable;
+    if (!table || !this.canSupervisorRejectTable(table)) return;
+
+    try {
+      this.isSubmitting = true;
+      this.isLoading = true;
+      const now = new Date().toISOString();
+      const tableReqs = this.supervisorSubmissions.filter(r => r.table_id === table.id);
+
+      await this.run(async () => {
+        const batch = writeBatch(this.firestore);
+        for (const req of tableReqs) {
+          const reqRef = doc(this.firestore, 'requisitions', req.id);
+          const updateData: any = {
+            status: 'Rejected_By_Supervisor',
+            rejected_by_supervisor_at: now,
+            rejected_by_supervisor_by: this.userId,
+            updated_at: now
+          };
+          if (this.supervisorRejectionNotes.trim()) {
+            updateData.supervisor_rejection_notes = this.supervisorRejectionNotes.trim();
+          }
+          batch.update(reqRef, updateData);
+        }
+        const tableRef = doc(this.firestore, 'tables', table.id);
+        batch.update(tableRef, {
+          supervisor_rejected: true,
+          supervisor_rejected_at: now,
+          supervisor_rejected_by: this.userId,
+          updated_at: now
+        });
+        await batch.commit();
+      });
+
+      this.closeSupervisorRejectModal();
+      this.supervisorSubmissions = this.supervisorSubmissions.filter(r => r.table_id !== table.id);
+      this.tables = this.tables.filter(t => t.id !== table.id);
+      this.selectedTable = null;
+      this.selectedTableId = '';
+      this.filteredRequisitions = [];
+      this.showToast(`"${table.name}" rejected`, 'success');
+    } catch {
+      this.showToast('Failed to reject table', 'error');
+    } finally {
+      this.isSubmitting = false;
+      this.isLoading = false;
+    }
+  }
+
+  canResubmitRejectedTable(table: Table | null): boolean {
+    return (
+      (this.userRole === 'user' || this.userRole === 'store' || this.userRole === 'admin') &&
+      !!table &&
+      !!table.supervisor_rejected &&
+      table.user_id === this.userId
+    );
+  }
+
+  async resubmitRejectedTable(table: Table) {
+    if (!this.canResubmitRejectedTable(table)) return;
+    if (!confirm(`Resubmit "${table.name}" to supervisor for review?`)) return;
+
+    try {
+      this.isSubmitting = true;
+      this.isLoading = true;
+      const now = new Date().toISOString();
+
+      const snapshot = await this.run(() => {
+        const requisitionsRef = collection(this.firestore, 'requisitions');
+        const q = query(
+          requisitionsRef,
+          where('table_id', '==', table.id),
+          where('user_id', '==', this.userId)
+        );
+        return getDocs(q);
+      });
+
+      await this.run(async () => {
+        const batch = writeBatch(this.firestore);
+        snapshot.forEach(d => {
+          const data = d.data();
+          if (data['status'] === 'Rejected_By_Supervisor') {
+            batch.update(d.ref, {
+              status: 'Pending_Supervisor',
+              submitted_at: now,
+              updated_at: now
+            });
+          }
+        });
+        const tableRef = doc(this.firestore, 'tables', table.id);
+        batch.update(tableRef, {
+          supervisor_rejected: false,
+          supervisor_confirmed: false,
+          submitted: true,
+          submitted_at: now,
+          updated_at: now
+        });
+        await batch.commit();
+      });
+
+      table.supervisor_rejected = false;
+      table.supervisor_confirmed = false;
+      await this.notificationService.sendTableSubmittedForSupervisorNotification(table.id, table.name, this.userId);
+      await this.loadRequisitionsDirectly();
+      this.showToast(`"${table.name}" resubmitted to supervisor`, 'success');
+    } catch {
+      this.showToast('Failed to resubmit table', 'error');
+    } finally {
+      this.isSubmitting = false;
+      this.isLoading = false;
+    }
+  }
+
+  openProductionNotesModal(req: Requisition, readOnly = false) {
+    this.openStoreNotesModal(req, readOnly);
+  }
+
+  closeProductionNotesModal() {
+    this.closeStoreNotesModal();
+  }
+
+  async saveProductionNotes() {
+    await this.saveStoreNotes();
   }
 
   openChat(table: Table) {
@@ -5097,20 +5398,28 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   canEditRequisition(req: Requisition): boolean {
+    if (this.viewMode !== 'my_tables') return false;
+    if (!(this.userRole === 'admin' || req.user_id === this.userId)) return false;
+    if (!this.selectedTable) return false;
+
+    if (req.status === 'Pending_Supervisor' || req.status === 'Rejected_By_Supervisor') {
+      return true;
+    }
+
     return (
-      this.viewMode === 'my_tables' &&
-      (this.userRole === 'admin' || req.user_id === this.userId) &&
       req.status !== 'Submitted' &&
       req.status !== 'Approved' &&
       req.status !== 'Rejected' &&
       req.status !== 'Delivered' &&
       req.status !== 'Partially_Delivered' &&
-      this.selectedTable !== null &&
       !this.selectedTable.submitted
     );
   }
 
   canDeleteRequisition(req: Requisition): boolean {
+    if (req.status === 'Pending_Supervisor' || req.status === 'Rejected_By_Supervisor') {
+      return false;
+    }
     return (
       this.viewMode === 'my_tables' &&
       (
@@ -5128,10 +5437,12 @@ export class Page3Component implements OnInit, OnDestroy {
   getStatusBadgeClass(status: string): string {
     switch (status) {
       case 'Pending': return 'status-pending';
+      case 'Pending_Supervisor': return 'status-submitted';
       case 'Submitted': return 'status-submitted';
       case 'Scheduled': return 'status-scheduled';
       case 'Approved': return 'status-approved';
       case 'Rejected': return 'status-rejected';
+      case 'Rejected_By_Supervisor': return 'status-rejected';
       case 'Production_Confirmed': return 'status-scheduled';
       case 'Removed': return 'status-rejected';
       case 'Delivered': return 'status-approved';

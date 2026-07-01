@@ -818,6 +818,11 @@
   color: hsl(var(--card-foreground));
 }
 
+.role-badge.role-supervisor {
+  background: hsl(38 92% 50%);
+  color: hsl(var(--card-foreground));
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;

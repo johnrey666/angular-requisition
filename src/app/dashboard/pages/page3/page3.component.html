@@ -21,6 +21,25 @@
           <span *ngIf="transferSelectedTableIds.size > 0">({{ transferSelectedTableIds.size }})</span>
         </button>
       </ng-container>
+
+      <!-- Supervisor Confirm / Reject -->
+      <ng-container *ngIf="userRole === 'supervisor' && selectedTable">
+        <button *ngIf="canSupervisorConfirmTable(selectedTable)"
+                class="btn btn-success"
+                (click)="confirmTableBySupervisor(selectedTable)"
+                [disabled]="isSubmitting">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M20 6L9 17l-5-5"/>
+          </svg>
+          Confirm & Send to Production
+        </button>
+        <button *ngIf="canSupervisorRejectTable(selectedTable)"
+                class="btn btn-danger"
+                (click)="openSupervisorRejectModal()"
+                [disabled]="isSubmitting">
+          Reject Slip
+        </button>
+      </ng-container>
       <span *ngIf="selectedTable?.production_reviewed && userRole === 'production'" class="badge badge-success">
         Transferred to Procurement
       </span>
@@ -108,6 +127,39 @@
         </div>
       </div>
       
+      <!-- Tables Dropdown for Supervisor -->
+      <div class="dropdown" [class.open]="showTableDropdown" *ngIf="userRole === 'supervisor'">
+        <button class="btn btn-outline" (click)="toggleTableDropdown()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="9" y1="21" x2="9" y2="9"/>
+          </svg>
+          {{ selectedTable ? selectedTable.name : 'Select Table' }}
+        </button>
+        
+        <div class="dropdown-menu" *ngIf="showTableDropdown">
+          <div class="dropdown-header">
+            <span>Pending Supervisor Review</span>
+          </div>
+          
+          <div class="dropdown-list">
+            <div *ngFor="let table of getFilteredTables()" 
+                 class="dropdown-item" 
+                 [class.active]="selectedTable?.id === table.id"
+                 (click)="selectTable(table)">
+              <span class="name">{{ table.name || 'Untitled' }}</span>
+              <span class="count">{{ table.item_count || 0 }}</span>
+              <span class="submitted-by" *ngIf="table.user_email">by {{ table.user_email }}</span>
+            </div>
+            
+            <div *ngIf="getFilteredTables().length === 0" class="dropdown-empty">
+              <p>No tables awaiting review</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Tables Dropdown for Production -->
       <div class="dropdown" [class.open]="showTableDropdown" *ngIf="userRole === 'production'">
         <button class="btn btn-outline" (click)="toggleTableDropdown()">
@@ -236,11 +288,18 @@
       <button class="btn btn-success" 
               *ngIf="canSubmitTable() && selectedTable" 
               (click)="submitTable(selectedTable)" 
-              [disabled]="selectedTable.submitted">
+              [disabled]="selectedTable.submitted && !selectedTable.supervisor_rejected">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
           <path d="M20 6L9 17l-5-5"/>
         </svg>
-        {{ selectedTable.submitted ? 'Table Submitted' : 'Submit Table' }}
+        {{ selectedTable.submitted && !selectedTable.supervisor_rejected ? 'Table Submitted' : 'Submit Table' }}
+      </button>
+
+      <button class="btn btn-warning"
+              *ngIf="canResubmitRejectedTable(selectedTable)"
+              (click)="resubmitRejectedTable(selectedTable!)"
+              [disabled]="isSubmitting">
+        Resubmit to Supervisor
       </button>
       
       <button class="btn btn-primary" (click)="openTableModal()" *ngIf="canManageTables() && !selectedTable && tables.length === 0">
@@ -308,6 +367,19 @@
     </div>
   </div>
 
+  <!-- No Table Selected State for Supervisor -->
+  <div class="empty-card" *ngIf="userRole === 'supervisor' && !selectedTable && !isLoading">
+    <div class="empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="3" y1="9" x2="21" y2="9"/>
+        <line x1="9" y1="21" x2="9" y2="9"/>
+      </svg>
+      <h3>Select a Table</h3>
+      <p>Choose a store requisition slip from the dropdown to review and confirm before it goes to production.</p>
+    </div>
+  </div>
+
   <!-- No Table Selected State for Production -->
   <div class="empty-card" *ngIf="userRole === 'production' && !selectedTable && !isLoading">
     <div class="empty-state">
@@ -349,6 +421,7 @@
 
   <!-- Main Content Container -->
   <div class="main-content" *ngIf="
+    (userRole === 'supervisor' && selectedTable) ||
     (userRole === 'production' && selectedTable) ||
     (userRole === 'procurement' && selectedBatch) ||
     (userRole === 'procurement' && selectedTable?.is_stockroom) ||
@@ -475,7 +548,9 @@
           <select [(ngModel)]="filterStatus" (ngModelChange)="applyFilter()">
             <option value="">All status</option>
             <option value="Pending">Pending</option>
+            <option value="Pending_Supervisor">Pending Supervisor</option>
             <option value="Submitted">Submitted</option>
+            <option value="Rejected_By_Supervisor">Rejected By Supervisor</option>
             <option value="Production_Confirmed">Production Confirmed</option>
             <option value="Removed">Removed</option>
             <option value="Scheduled">Scheduled</option>
@@ -506,8 +581,8 @@
              <tr>
               <th></th>
               <th *ngIf="showRequisitionTableColumn()">Table</th>
-              <th *ngIf="userRole === 'production'">Submitted By</th>
-              <th *ngIf="userRole !== 'production'">Req #</th>
+              <th *ngIf="userRole === 'production' || userRole === 'supervisor'">Submitted By</th>
+              <th *ngIf="userRole !== 'production' && userRole !== 'supervisor'">Req #</th>
               <th>Date</th>
               <th>SKU Code</th>
               <th>SKU Name</th>
@@ -517,7 +592,7 @@
               <th>Brand</th>
               <th>Status</th>
               <th>Scheduled</th>
-              <th class="actions-col" *ngIf="userRole !== 'production'">Actions</th>
+              <th class="actions-col" *ngIf="userRole !== 'production' && userRole !== 'supervisor'">Actions</th>
              </tr>
           </thead>
           <tbody>
@@ -535,10 +610,10 @@
                     {{ tableNameMap[req.table_id || ''] || req.table_name || '—' }}
                   </span>
                 </td>
-                <td *ngIf="userRole === 'production'">
+                <td *ngIf="userRole === 'production' || userRole === 'supervisor'">
                   <span class="submitted-by" [title]="req.user_email || ''">{{ req.user_email || '—' }}</span>
                 </td>
-                <td *ngIf="userRole !== 'production'"><span class="req-number">{{ req.reqNumber || req.id || 'N/A' }}</span></td>
+                <td *ngIf="userRole !== 'production' && userRole !== 'supervisor'"><span class="req-number">{{ req.reqNumber || req.id || 'N/A' }}</span></td>
                 <td>{{ req.dateNeeded || 'ASAP' }}</td>
                 <td><span class="sku" title="{{ req.skuCode || req['sku_code'] || '' }}">{{ req.skuCode || req['sku_code'] }}</span></td>
                 <td class="limit" title="{{ req.skuName || req['sku_name'] || '—' }}">{{ req.skuName || req['sku_name'] || '—' }}</td>
@@ -558,12 +633,21 @@
                   <span *ngIf="!req.scheduled_date && req.status === 'Scheduled'" class="scheduled-date">Pending Schedule</span>
                   <span *ngIf="!req.scheduled_date && req.status !== 'Scheduled'">—</span>
                 </td>
-                <td class="actions-col" *ngIf="userRole !== 'production'">
+                <td class="actions-col" *ngIf="userRole !== 'production' && userRole !== 'supervisor'">
                   <div class="action-buttons">
-                    <button *ngIf="req.production_notes && (userRole === 'user' || userRole === 'store' || userRole === 'procurement' || userRole === 'admin')"
+                    <button *ngIf="canAddStoreNotes(req)"
                             class="btn-icon primary"
-                            (click)="openProductionNotesModal(req, true); $event.stopPropagation()"
-                            title="View production note">
+                            (click)="openStoreNotesModal(req, false); $event.stopPropagation()"
+                            title="Add note for supervisor">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                      </svg>
+                    </button>
+                    <button *ngIf="canViewStoreNotes(req) && !canAddStoreNotes(req)"
+                            class="btn-icon primary"
+                            (click)="openStoreNotesModal(req, true); $event.stopPropagation()"
+                            title="View item note">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
                         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                         <polyline points="14 2 14 8 20 8"/>
@@ -610,8 +694,8 @@
                           <span class="material-note">
                             Based on requisition quantity: {{ (req.quantity || req['qty_needed'] || 0) | number }} {{ req.unit || '—' }}
                           </span>
-                          <div class="production-note-display" *ngIf="req.production_notes">
-                            <strong>Production Note:</strong> {{ req.production_notes }}
+                          <div class="production-note-display" *ngIf="req.store_notes">
+                            <strong>Store Note:</strong> {{ req.store_notes }}
                           </div>
                         </div>
                       </div>
@@ -1476,30 +1560,57 @@
     </div>
   </div>
 
-  <!-- Production Notes Modal -->
-  <div class="modal" [class.active]="showProductionNotesModal">
-    <div class="backdrop" (click)="closeProductionNotesModal()"></div>
+  <!-- Store Notes Modal (Store → Supervisor) -->
+  <div class="modal" [class.active]="showStoreNotesModal">
+    <div class="backdrop" (click)="closeStoreNotesModal()"></div>
     <div class="modal-container modal-sm">
       <div class="modal-header">
-        <h3>{{ productionNotesReadOnly ? 'Production Note' : 'Add Production Note' }}</h3>
-        <button class="close" (click)="closeProductionNotesModal()">✕</button>
+        <h3>{{ storeNotesReadOnly ? 'Item Note' : 'Add Item Note' }}</h3>
+        <button class="close" (click)="closeStoreNotesModal()">✕</button>
       </div>
       <div class="modal-body">
         <p class="modal-subtitle" *ngIf="selectedRequisition">
           Requisition <strong>{{ selectedRequisition.reqNumber }}</strong>
         </p>
         <div class="field">
-          <label>{{ productionNotesReadOnly ? 'Note' : 'Note *' }}</label>
+          <label>{{ storeNotesReadOnly ? 'Note' : 'Note for supervisor *' }}</label>
           <textarea
-            [(ngModel)]="productionNotesText"
+            [(ngModel)]="storeNotesText"
             rows="4"
-            [readonly]="productionNotesReadOnly"
-            placeholder="Add notes visible to User and Procurement..."></textarea>
+            [readonly]="storeNotesReadOnly"
+            placeholder="Note corrections or details for the supervisor before confirming..."></textarea>
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" (click)="closeProductionNotesModal()">Close</button>
-        <button *ngIf="!productionNotesReadOnly" class="btn btn-primary" (click)="saveProductionNotes()">Save Note</button>
+        <button class="btn btn-secondary" (click)="closeStoreNotesModal()">Close</button>
+        <button *ngIf="!storeNotesReadOnly" class="btn btn-primary" (click)="saveStoreNotes()">Save Note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Supervisor Reject Modal -->
+  <div class="modal" [class.active]="showSupervisorRejectModal">
+    <div class="backdrop" (click)="closeSupervisorRejectModal()"></div>
+    <div class="modal-container modal-sm">
+      <div class="modal-header">
+        <h3>Reject Requisition Slip</h3>
+        <button class="close" (click)="closeSupervisorRejectModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-subtitle" *ngIf="selectedTable">
+          Reject <strong>{{ selectedTable.name }}</strong> and return to store?
+        </p>
+        <div class="field">
+          <label>Rejection reason (optional)</label>
+          <textarea
+            [(ngModel)]="supervisorRejectionNotes"
+            rows="4"
+            placeholder="Explain what the store needs to correct..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" (click)="closeSupervisorRejectModal()">Cancel</button>
+        <button class="btn btn-danger" (click)="rejectTableBySupervisor()" [disabled]="isSubmitting">Reject Slip</button>
       </div>
     </div>
   </div>

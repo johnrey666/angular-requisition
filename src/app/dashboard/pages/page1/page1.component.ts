@@ -160,9 +160,9 @@ export class Page1Component implements OnInit {
     }
   }
 
-  /** Admin and production see organization-wide overview stats. */
+  /** Admin, production, and supervisor see organization-wide overview stats. */
   private hasOverallAccess(): boolean {
-    return this.userRole === 'admin' || this.userRole === 'production';
+    return this.userRole === 'admin' || this.userRole === 'production' || this.userRole === 'supervisor';
   }
 
   private async loadDashboardData() {
@@ -244,6 +244,7 @@ export class Page1Component implements OnInit {
 
     const inProgressStatuses = new Set([
       'Pending',
+      'Pending_Supervisor',
       'Submitted',
       'Production_Confirmed',
       'Scheduled',
@@ -363,6 +364,7 @@ export class Page1Component implements OnInit {
     this.pendingRequisitions = requisitions.filter(r => r.status === 'Pending').length;
     this.submittedRequisitions = requisitions.filter(r =>
       r.status === 'Submitted' ||
+      r.status === 'Pending_Supervisor' ||
       r.status === 'Production_Confirmed' ||
       r.status === 'Scheduled'
     ).length;

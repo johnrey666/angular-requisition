@@ -10,7 +10,7 @@ import { Router } from '@angular/router';
 
 export interface Notification {
   id?: string;
-  type: 'table_submitted' | 'table_reviewed_by_production' | 'requisition_confirmed' | 'requisition_removed' | 'requisition_scheduled';
+  type: 'table_submitted' | 'table_submitted_for_supervisor' | 'table_confirmed_by_supervisor' | 'table_reviewed_by_production' | 'requisition_confirmed' | 'requisition_removed' | 'requisition_scheduled';
   tableId: string;
   tableName: string;
   submittedBy: string;
@@ -34,6 +34,97 @@ export class NotificationService {
 
   private run<T>(fn: () => Promise<T>): Promise<T> {
     return runInInjectionContext(this.injector, fn);
+  }
+
+  /**
+   * Send notification to all supervisor users when a store submits a table for review
+   */
+  async sendTableSubmittedForSupervisorNotification(tableId: string, tableName: string, submittedBy: string): Promise<void> {
+    try {
+      const usersRef = collection(this.firestore, 'users');
+      const supervisorUsersQuery = query(usersRef, where('role', '==', 'supervisor'));
+      const supervisorUsersSnapshot = await this.run(() => getDocs(supervisorUsersQuery));
+
+      if (supervisorUsersSnapshot.empty) {
+        console.log('No supervisor users found to notify');
+        return;
+      }
+
+      const userDocRef = doc(this.firestore, 'users', submittedBy);
+      const userDoc = await this.run(() => getDoc(userDocRef));
+      let submittedByName = 'A user';
+      if (userDoc.exists()) {
+        const userData = userDoc.data() as any;
+        submittedByName = userData['email'] || userData['name'] || 'A user';
+      }
+
+      const notificationsRef = collection(this.firestore, 'notifications');
+      const now = Timestamp.now();
+      const promises: Promise<any>[] = [];
+
+      supervisorUsersSnapshot.forEach((userDocSnap) => {
+        const notification: Omit<Notification, 'id'> = {
+          type: 'table_submitted_for_supervisor',
+          tableId,
+          tableName,
+          submittedBy,
+          submittedByName,
+          submittedAt: now,
+          read: false,
+          createdAt: now,
+          userId: userDocSnap.id
+        };
+        promises.push(this.run(() => addDoc(notificationsRef, notification)));
+      });
+
+      await Promise.all(promises);
+    } catch (err) {
+      console.error('Failed to send supervisor notification:', err);
+    }
+  }
+
+  /**
+   * Send notification to all production users when supervisor confirms a table
+   */
+  async sendTableConfirmedBySupervisorNotification(tableId: string, tableName: string, confirmedBy: string): Promise<void> {
+    try {
+      const usersRef = collection(this.firestore, 'users');
+      const productionUsersQuery = query(usersRef, where('role', '==', 'production'));
+      const productionUsersSnapshot = await this.run(() => getDocs(productionUsersQuery));
+
+      if (productionUsersSnapshot.empty) return;
+
+      const userDocRef = doc(this.firestore, 'users', confirmedBy);
+      const userDoc = await this.run(() => getDoc(userDocRef));
+      let confirmedByName = 'Supervisor';
+      if (userDoc.exists()) {
+        const userData = userDoc.data() as any;
+        confirmedByName = userData['email'] || userData['name'] || 'Supervisor';
+      }
+
+      const notificationsRef = collection(this.firestore, 'notifications');
+      const now = Timestamp.now();
+      const promises: Promise<any>[] = [];
+
+      productionUsersSnapshot.forEach((userDocSnap) => {
+        const notification: Omit<Notification, 'id'> = {
+          type: 'table_confirmed_by_supervisor',
+          tableId,
+          tableName,
+          submittedBy: confirmedBy,
+          submittedByName: confirmedByName,
+          submittedAt: now,
+          read: false,
+          createdAt: now,
+          userId: userDocSnap.id
+        };
+        promises.push(this.run(() => addDoc(notificationsRef, notification)));
+      });
+
+      await Promise.all(promises);
+    } catch (err) {
+      console.error('Failed to send supervisor confirmed notification:', err);
+    }
   }
 
   /**
