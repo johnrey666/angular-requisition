@@ -1808,6 +1808,7 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   openEditModal(req: Requisition) {
+    if (!this.canEditRequisition(req)) return;
     if (!this.selectedTableId && this.viewMode === 'my_tables') {
       this.showToast('Please select a table first', 'error');
       return;
@@ -1916,7 +1917,7 @@ export class Page3Component implements OnInit, OnDestroy {
         supplier: finalSupplier,
         brand: finalBrand,
         is_stockroom: stockroom,
-        status: this.editingRequisition ? this.editingRequisition.status : 'Pending',
+        status: this.editingRequisition ? this.editingRequisition.status : this.getNewRequisitionStatus(),
         category: stockroom ? 'Stockroom' : this.formData.category,
         user_id: this.userId,
         table_id: this.selectedTableId || this.editingRequisition?.table_id || '',
@@ -1957,6 +1958,11 @@ export class Page3Component implements OnInit, OnDestroy {
 
   async deleteRequisition(req: Requisition) {
     if (!this.selectedTableId || !this.userId) return;
+
+    if (!this.canDeleteRequisition(req)) {
+      this.showToast('This requisition cannot be deleted', 'error');
+      return;
+    }
 
     if (this.userRole !== 'admin' && req.user_id !== this.userId) {
       this.showToast('You can only delete your own requisitions', 'error');
@@ -3961,11 +3967,23 @@ export class Page3Component implements OnInit, OnDestroy {
     );
   }
 
+  isTableAwaitingSupervisorReview(table: Table | null | undefined): boolean {
+    if (!table || table.is_stockroom) return false;
+    return !!table.submitted && !table.supervisor_confirmed && !table.production_reviewed;
+  }
+
+  private getNewRequisitionStatus(): string {
+    if (!this.selectedTable || !this.isTableAwaitingSupervisorReview(this.selectedTable)) {
+      return 'Pending';
+    }
+    return this.selectedTable.supervisor_rejected ? 'Rejected_By_Supervisor' : 'Pending_Supervisor';
+  }
+
   canCreateRequisition(): boolean {
     return (
       this.canManageTables() &&
       !!this.selectedTable &&
-      !this.selectedTable.submitted
+      (!this.selectedTable.submitted || this.isTableAwaitingSupervisorReview(this.selectedTable))
     );
   }
 
@@ -5519,7 +5537,7 @@ export class Page3Component implements OnInit, OnDestroy {
     if (!this.selectedTable) return false;
 
     if (req.status === 'Pending_Supervisor' || req.status === 'Rejected_By_Supervisor') {
-      return true;
+      return this.isTableAwaitingSupervisorReview(this.selectedTable);
     }
 
     return (
@@ -5533,19 +5551,18 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   canDeleteRequisition(req: Requisition): boolean {
+    if (this.viewMode !== 'my_tables') return false;
+    if (!(this.userRole === 'admin' || req.user_id === this.userId)) return false;
+    if (!this.selectedTable) return false;
+
     if (req.status === 'Pending_Supervisor' || req.status === 'Rejected_By_Supervisor') {
-      return false;
+      return this.isTableAwaitingSupervisorReview(this.selectedTable);
     }
+
     return (
-      this.viewMode === 'my_tables' &&
-      (
-        this.userRole === 'admin' ||
-        ((this.userRole === 'user' || this.userRole === 'store') && req.user_id === this.userId)
-      ) &&
       req.status !== 'Submitted' &&
       req.status !== 'Approved' &&
       req.status !== 'Delivered' &&
-      this.selectedTable !== null &&
       !this.selectedTable.submitted
     );
   }

@@ -74,6 +74,15 @@ service cloud.firestore {
         get(/databases/$(database)/documents/tables/$(tableId)).data.submitted == true;
     }
 
+    function storeTableAwaitingSupervisor(tableId) {
+      return exists(/databases/$(database)/documents/tables/$(tableId)) &&
+        get(/databases/$(database)/documents/tables/$(tableId)).data.user_id == request.auth.uid &&
+        get(/databases/$(database)/documents/tables/$(tableId)).data.submitted == true &&
+        get(/databases/$(database)/documents/tables/$(tableId)).data.supervisor_confirmed != true &&
+        get(/databases/$(database)/documents/tables/$(tableId)).data.production_reviewed != true &&
+        get(/databases/$(database)/documents/tables/$(tableId)).data.is_stockroom != true;
+    }
+
     function poUploadKeys() {
       return [
         'po_file_data', 'po_file_mime', 'po_file_name', 'po_file_size',
@@ -328,8 +337,12 @@ service cloud.firestore {
       allow create: if isAuthenticated() && (
         (isStore() &&
           request.resource.data.user_id == request.auth.uid &&
-          request.resource.data.status == 'Pending' &&
-          request.resource.data.table_id != null) ||
+          request.resource.data.table_id != null &&
+          (
+            request.resource.data.status == 'Pending' ||
+            (request.resource.data.status in ['Pending_Supervisor', 'Rejected_By_Supervisor'] &&
+              storeTableAwaitingSupervisor(request.resource.data.table_id))
+          )) ||
         isAdmin()
       );
 
@@ -397,7 +410,12 @@ service cloud.firestore {
       allow delete: if isAuthenticated() && (
         (isStore() &&
           resource.data.user_id == request.auth.uid &&
-          resource.data.status == 'Pending') ||
+          (
+            resource.data.status == 'Pending' ||
+            (resource.data.status in ['Pending_Supervisor', 'Rejected_By_Supervisor'] &&
+              resource.data.table_id != null &&
+              storeTableAwaitingSupervisor(resource.data.table_id))
+          )) ||
         isAdmin()
       );
     }
