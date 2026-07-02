@@ -55,6 +55,8 @@ interface Requisition {
   production_action_at?: string;
   production_action_by?: string;
   production_action_notes?: string;
+  supervisor_notes?: string;
+  supervisor_rejection_notes?: string;
   store_notes?: string;
   procurement_action?: 'reviewed' | 'pending';
   procurement_action_at?: string;
@@ -311,13 +313,13 @@ export class Page3Component implements OnInit, OnDestroy {
   showDeliveryModal = false;
   showMissingNotesModal = false;
   showProductionActionModal = false;
-  showStoreNotesModal = false;
+  showSupervisorNotesModal = false;
   showTransferToProcurementModal = false;
   transferDateNeeded = '';
   transferSelectedTableIds: Set<string> = new Set();
   transferMaterialPreview: TransferMaterialPreview[] = [];
-  storeNotesText = '';
-  storeNotesReadOnly = false;
+  supervisorNotesText = '';
+  supervisorNotesReadOnly = false;
   supervisorRejectionNotes = '';
   showSupervisorRejectModal = false;
 
@@ -348,7 +350,7 @@ export class Page3Component implements OnInit, OnDestroy {
   poViewerTable: Table | ProcurementBatch | null = null;
   docViewerType: 'po' | 'sm' = 'po';
 
-  viewMode: 'my_tables' | 'store_submissions' | 'supervisor_review' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
+  viewMode: 'my_tables' | 'store_submissions' | 'supervisor_review' | 'ica_monitoring' | 'for_delivery' | 'production_reviewed' | 'procurement_reviewed' = 'my_tables';
   selectedProductionView: 'submissions' | 'reviewed' = 'submissions';
   showAllPending = false;
   submitted = false;
@@ -499,6 +501,9 @@ export class Page3Component implements OnInit, OnDestroy {
       } else if (this.userRole === 'supervisor') {
         await this.loadTablesDirectly();
         await this.loadSupervisorSubmissions();
+      } else if (this.userRole === 'ica') {
+        await this.loadTablesDirectly();
+        await this.loadProcurementBatches();
       } else if (this.userRole === 'procurement') {
         await this.loadTablesDirectly();
         await this.loadProcurementBatches();
@@ -558,6 +563,9 @@ export class Page3Component implements OnInit, OnDestroy {
       this.viewMode = 'store_submissions';
     } else if (this.userRole === 'supervisor') {
       this.viewMode = 'supervisor_review';
+    } else if (this.userRole === 'ica') {
+      this.viewMode = 'ica_monitoring';
+      this.tableStatusFilter = 'all';
     } else if (this.userRole === 'procurement') {
       this.viewMode = 'for_delivery';
     } else {
@@ -591,6 +599,45 @@ export class Page3Component implements OnInit, OnDestroy {
           const data = d.data();
           return !data['is_stockroom'] && data['supervisor_confirmed'] !== true && !data['supervisor_rejected'];
         }));
+      } else if (this.userRole === 'ica') {
+        const tablesSnap = await this.run(() => getDocs(query(
+          tablesRef,
+          where('type', '==', 'requisition'),
+          where('submitted', '==', true)
+        )));
+
+        const eligibleIds = new Set<string>();
+        tablesSnap.docs.forEach(d => {
+          const data = d.data();
+          if (data['request_status'] === 'DONE' || data['request_closed']) {
+            eligibleIds.add(d.id);
+          }
+        });
+
+        try {
+          const [deliveredSnap, partialSnap] = await Promise.all([
+            this.run(() => getDocs(query(
+              collection(this.firestore, 'requisitions'),
+              where('status', '==', 'Delivered')
+            ))),
+            this.run(() => getDocs(query(
+              collection(this.firestore, 'requisitions'),
+              where('status', '==', 'Partially_Delivered')
+            )))
+          ]);
+          [...deliveredSnap.docs, ...partialSnap.docs].forEach(d => {
+            const tableId = d.data()['table_id'];
+            if (tableId) eligibleIds.add(tableId);
+          });
+        } catch {
+          // Delivered/partial queries may be blocked until rules are deployed.
+        }
+
+        const tableDocsById = new Map(tablesSnap.docs.map(d => [d.id, d]));
+        eligibleIds.forEach(id => {
+          const docSnap = tableDocsById.get(id);
+          if (docSnap) docSnaps.push(docSnap);
+        });
       } else if (this.userRole === 'procurement') {
         // Production-reviewed tables (normal flow) + submitted stockroom tables (direct-to-procurement).
         const [reviewedSnap, stockroomSnap] = await Promise.all([
@@ -704,6 +751,11 @@ export class Page3Component implements OnInit, OnDestroy {
           }
           return (b.created_at || '').localeCompare(a.created_at || '');
         });
+      } else if (this.userRole === 'ica') {
+        loadedTables.sort((a, b) =>
+          (b.request_closed_at || b.submitted_at || b.created_at || '')
+            .localeCompare(a.request_closed_at || a.submitted_at || a.created_at || '')
+        );
       } else if (this.userRole === 'procurement') {
         loadedTables.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
       }
@@ -857,6 +909,44 @@ export class Page3Component implements OnInit, OnDestroy {
     } finally {
       this.isLoading = false;
     }
+  }
+
+  async loadIcaRequisitions(tableId: string) {
+    this.isLoading = true;
+    try {
+      const reqs = await this.db.getRequisitionsByTableId(tableId);
+      await this.loadUserEmailsForRequisitions(reqs);
+      await this.populateMaterialsForAllRequisitions(reqs);
+      this.requisitions = reqs;
+      this.filteredRequisitions = [...reqs];
+      this.currentPage = 1;
+      this.applyFilter();
+      this.updatePagination();
+    } catch (err) {
+      this.showToast('Failed to load requisitions', 'error');
+      this.requisitions = [];
+      this.filteredRequisitions = [];
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  getIcaPoSource(table: Table | null | undefined): Table | ProcurementBatch | null {
+    if (!table) return null;
+    if (this.hasPoDocument(table)) return table;
+    if (table.procurement_batch_id) {
+      const batch = this.getBatchById(table.procurement_batch_id);
+      if (batch && this.hasPoDocument(batch)) return batch;
+    }
+    return null;
+  }
+
+  canIcaViewPo(table: Table | null | undefined = this.selectedTable): boolean {
+    return this.userRole === 'ica' && !!this.getIcaPoSource(table || null);
+  }
+
+  canIcaViewSm(table: Table | null | undefined = this.selectedTable): boolean {
+    return this.userRole === 'ica' && !!table && this.hasSmDocument(table);
   }
 
   async loadProductionReviewed() {
@@ -1294,15 +1384,19 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   showRequisitionTableColumn(): boolean {
-    return (this.userRole === 'production' || this.userRole === 'supervisor' || this.userRole === 'procurement') && !this.selectedTable;
+    return (this.userRole === 'production' || this.userRole === 'supervisor' || this.userRole === 'ica' || this.userRole === 'procurement') && !this.selectedTable;
   }
 
   getColspan(): number {
     let cols = 1;
     if (this.showRequisitionTableColumn()) cols++;
-    if (this.userRole === 'production' || this.userRole === 'supervisor') cols++;
+    if (this.userRole === 'production' || this.userRole === 'supervisor' || this.userRole === 'ica') cols++;
     cols += 9;
-    if (this.userRole !== 'production' && this.userRole !== 'supervisor') cols += 2;
+    if (this.userRole !== 'production' && this.userRole !== 'supervisor' && this.userRole !== 'ica') {
+      cols += 2;
+    } else if (this.userRole === 'supervisor') {
+      cols += 1;
+    }
     return cols;
   }
 
@@ -1411,6 +1505,12 @@ export class Page3Component implements OnInit, OnDestroy {
       this.currentPage = 1;
       this.updatePagination();
       this.showToast(`Reviewing submissions from table: ${table.name}`, 'info');
+    } else if (this.userRole === 'ica') {
+      this.selectedTableId = table.id;
+      this.selectedTable = table;
+      this.showTableDropdown = false;
+      await this.loadIcaRequisitions(table.id);
+      this.showToast(`Viewing completed slip: ${table.name}`, 'info');
     } else if (this.userRole === 'production') {
       this.selectedTableId = table.id;
       this.selectedTable = table;
@@ -3073,9 +3173,18 @@ export class Page3Component implements OnInit, OnDestroy {
 
   openDocViewer(table: Table | ProcurementBatch | null | undefined, type: 'po' | 'sm') {
     if (!table) return;
-    if (type === 'po' && (!this.canViewPo() || !this.hasPoDocument(table))) return;
+    if (type === 'po') {
+      if (this.userRole === 'ica') {
+        const poSource = this.getIcaPoSource(table as Table);
+        if (!poSource) return;
+        table = poSource;
+      } else if (!this.canViewPo() || !this.hasPoDocument(table)) {
+        return;
+      }
+    }
     if (type === 'sm' && (!(table as Table).sm_file_data && !(table as Table).sm_file_url)) return;
-    if (type === 'sm' && (!this.canViewSm() || !this.hasSmDocument(table as Table))) return;
+    if (type === 'sm' && this.userRole === 'ica' && !this.hasSmDocument(table as Table)) return;
+    if (type === 'sm' && this.userRole !== 'ica' && (!this.canViewSm() || !this.hasSmDocument(table as Table))) return;
     this.poViewerTable = table;
     this.docViewerType = type;
     this.showPoViewerModal = true;
@@ -3445,6 +3554,7 @@ export class Page3Component implements OnInit, OnDestroy {
 
   async updateTableItemCount() {
     if (!this.selectedTableId || !this.userId) return;
+    if (this.userRole === 'ica' || this.userRole === 'supervisor') return;
 
     try {
       await this.db.updateTableItemCount(
@@ -3918,6 +4028,7 @@ export class Page3Component implements OnInit, OnDestroy {
 
   canOpenChat(table: Table | null | undefined): boolean {
     if (!table) return false;
+    if (this.userRole === 'ica') return false;
     if (this.userRole === 'admin') return true;
     if ((this.userRole === 'user' || this.userRole === 'store') && table.user_id === this.userId) {
       return !!table.submitted;
@@ -3957,6 +4068,11 @@ export class Page3Component implements OnInit, OnDestroy {
   }
 
   getPageSubtitle(): string {
+    if (this.userRole === 'ica') {
+      return this.selectedTable
+        ? `Monitoring ${this.selectedTable.name}`
+        : 'View closed and delivered requisition slips from all stores';
+    }
     if (this.userRole === 'supervisor') {
       return this.selectedTable
         ? `Reviewing ${this.selectedTable.name}`
@@ -3979,6 +4095,7 @@ export class Page3Component implements OnInit, OnDestroy {
   getTableStatLabel(): string {
     const count = this.filteredRequisitions.length;
     if (this.userRole === 'production') return `${count} to review`;
+    if (this.userRole === 'ica') return `${count} completed item${count === 1 ? '' : 's'}`;
     return `${count} requisition${count === 1 ? '' : 's'}`;
   }
 
@@ -4130,38 +4247,48 @@ export class Page3Component implements OnInit, OnDestroy {
     return false;
   }
 
-  openStoreNotesModal(req: Requisition, readOnly = false) {
+  openSupervisorNotesModal(req: Requisition, readOnly = false) {
     this.selectedRequisition = req;
-    this.storeNotesText = req.store_notes || '';
-    this.storeNotesReadOnly = readOnly;
-    this.showStoreNotesModal = true;
+    const itemNote = this.getSupervisorItemNote(req);
+    const rejectNote = (req.supervisor_rejection_notes || '').trim();
+    if (readOnly) {
+      const parts: string[] = [];
+      if (itemNote) parts.push(itemNote);
+      if (rejectNote) parts.push(rejectNote);
+      this.supervisorNotesText = parts.join('\n\n');
+    } else {
+      this.supervisorNotesText = itemNote;
+    }
+    this.supervisorNotesReadOnly = readOnly;
+    this.showSupervisorNotesModal = true;
   }
 
-  closeStoreNotesModal() {
-    this.showStoreNotesModal = false;
+  closeSupervisorNotesModal() {
+    this.showSupervisorNotesModal = false;
     this.selectedRequisition = null;
-    this.storeNotesText = '';
-    this.storeNotesReadOnly = false;
+    this.supervisorNotesText = '';
+    this.supervisorNotesReadOnly = false;
   }
 
-  async saveStoreNotes() {
-    if (!this.selectedRequisition || this.storeNotesReadOnly) return;
-    if (!this.storeNotesText.trim()) {
+  getSupervisorItemNote(req: Requisition): string {
+    return (req.supervisor_notes || req.store_notes || '').trim();
+  }
+
+  async saveSupervisorNotes() {
+    if (!this.selectedRequisition || this.supervisorNotesReadOnly) return;
+    if (!this.supervisorNotesText.trim()) {
       this.showToast('Please enter a note', 'error');
       return;
     }
     try {
-      const success = await this.db.updateRequisitionStatus(
+      const success = await this.db.updateSupervisorNotes(
         this.selectedRequisition.id,
-        this.selectedRequisition.status,
-        this.userId,
-        this.selectedRequisition.table_id || '',
-        { store_notes: this.storeNotesText.trim() }
+        this.supervisorNotesText.trim()
       );
       if (success) {
-        this.selectedRequisition.store_notes = this.storeNotesText.trim();
-        this.closeStoreNotesModal();
-        this.showToast('Note saved', 'success');
+        this.selectedRequisition.supervisor_notes = this.supervisorNotesText.trim();
+        this.closeSupervisorNotesModal();
+        this.showToast('Note saved for store', 'success');
       } else {
         this.showToast('Failed to save note', 'error');
       }
@@ -4170,19 +4297,20 @@ export class Page3Component implements OnInit, OnDestroy {
     }
   }
 
-  canAddStoreNotes(req: Requisition): boolean {
-    return (
-      (this.userRole === 'user' || this.userRole === 'store') &&
-      req.status === 'Pending_Supervisor' &&
-      req.user_id === this.userId
-    );
+  canAddSupervisorNotes(req: Requisition): boolean {
+    return this.userRole === 'supervisor' && req.status === 'Pending_Supervisor';
   }
 
-  canViewStoreNotes(req: Requisition): boolean {
-    return !!req.store_notes && (
-      this.userRole === 'supervisor' ||
-      this.userRole === 'admin' ||
-      ((this.userRole === 'user' || this.userRole === 'store') && req.user_id === this.userId)
+  canViewSupervisorNotes(req: Requisition): boolean {
+    const itemNote = this.getSupervisorItemNote(req);
+    const rejectNote = (req.supervisor_rejection_notes || '').trim();
+    if (!itemNote && !rejectNote) return false;
+    if (this.userRole === 'supervisor' || this.userRole === 'admin') {
+      return !!itemNote;
+    }
+    return (
+      (this.userRole === 'user' || this.userRole === 'store') &&
+      req.user_id === this.userId
     );
   }
 
@@ -4377,18 +4505,6 @@ export class Page3Component implements OnInit, OnDestroy {
       this.isSubmitting = false;
       this.isLoading = false;
     }
-  }
-
-  openProductionNotesModal(req: Requisition, readOnly = false) {
-    this.openStoreNotesModal(req, readOnly);
-  }
-
-  closeProductionNotesModal() {
-    this.closeStoreNotesModal();
-  }
-
-  async saveProductionNotes() {
-    await this.saveStoreNotes();
   }
 
   openChat(table: Table) {

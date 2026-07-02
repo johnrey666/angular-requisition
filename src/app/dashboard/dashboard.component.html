@@ -319,7 +319,8 @@
                                        [class.role-production]="user.role === 'production'"
                                        [class.role-store]="user.role === 'store'"
                                        [class.role-procurement]="user.role === 'procurement'"
-                                       [class.role-supervisor]="user.role === 'supervisor'">
+                                       [class.role-supervisor]="user.role === 'supervisor'"
+                                       [class.role-ica]="user.role === 'ica'">
                   {{ user.role || 'user' }}
                 </span>
               </td>
@@ -393,6 +394,7 @@
         <select formControlName="role">
           <option value="store">Store/User (create in production, procurement, dashboard)</option>
           <option value="supervisor">Supervisor (review store requisitions before production)</option>
+          <option value="ica">ICA (monitor closed/delivered requisitions, view P.O. & S.M.)</option>
           <option value="production">Production (accept/decline store input in procurement)</option>
           <option value="procurement">Procurement (confirm delivery, add missing notes)</option>
           <option value="admin">Admin</option>

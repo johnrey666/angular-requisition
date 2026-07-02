@@ -47,6 +47,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     { label: 'Production', route: '/dashboard/production', icon: 'factory', roles: ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'] },
     { label: 'Ordering', route: '/dashboard/procurement', icon: 'document', roles: ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'] },
     { label: 'Usage Report', route: '/dashboard/usage-report', icon: 'line-chart', roles: ['user', 'store', 'production', 'procurement', 'supervisor', 'admin'] },
+    { label: 'Completed Orders', route: '/dashboard/procurement', icon: 'document', roles: ['ica'] },
   ];
 
   filteredNavItems: NavItem[] = [];

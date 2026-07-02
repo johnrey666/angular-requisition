@@ -997,6 +997,20 @@ export class DatabaseService {
     }
   }
 
+  async updateSupervisorNotes(requisitionId: string, notes: string): Promise<boolean> {
+    try {
+      const reqRef = doc(this.firestore, 'requisitions', requisitionId);
+      await this.run(() => updateDoc(reqRef, {
+        supervisor_notes: notes,
+        updated_at: new Date().toISOString()
+      }));
+      return true;
+    } catch (err) {
+      console.error('updateSupervisorNotes failed', err);
+      return false;
+    }
+  }
+
   async updateRequisitionStatus(
     id: string,
     status: string,

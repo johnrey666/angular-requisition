@@ -30,6 +30,14 @@ service cloud.firestore {
       return isAuthenticated() && userRole() == 'procurement';
     }
 
+    function isSupervisor() {
+      return isAuthenticated() && userRole() == 'supervisor';
+    }
+
+    function isIca() {
+      return isAuthenticated() && userRole() == 'ica';
+    }
+
     function isStore() {
       return isAuthenticated() && (userRole() == 'store' || userRole() == 'user');
     }
@@ -52,6 +60,18 @@ service cloud.firestore {
 
     function isSubmittedOrReviewedTable() {
       return resource.data.submitted == true || resource.data.production_reviewed == true;
+    }
+
+    function isClosedOrDeliveredTable() {
+      return resource.data.request_status == 'DONE' ||
+             resource.data.request_closed == true ||
+             resource.data.procurement_batch_closed == true;
+    }
+
+    function icaCanReadTable(tableId) {
+      return exists(/databases/$(database)/documents/tables/$(tableId)) &&
+        get(/databases/$(database)/documents/tables/$(tableId)).data.type == 'requisition' &&
+        get(/databases/$(database)/documents/tables/$(tableId)).data.submitted == true;
     }
 
     function poUploadKeys() {
@@ -114,6 +134,24 @@ service cloud.firestore {
       ];
     }
 
+    function supervisorTableKeys() {
+      return [
+        'supervisor_confirmed', 'supervisor_confirmed_at', 'supervisor_confirmed_by',
+        'supervisor_rejected', 'supervisor_rejected_at', 'supervisor_rejected_by',
+        'updated_at'
+      ];
+    }
+
+    function storeResubmitTableKeys() {
+      return [
+        'supervisor_rejected', 'supervisor_confirmed', 'submitted', 'submitted_at', 'updated_at'
+      ];
+    }
+
+    function storeItemCountKeys() {
+      return ['item_count', 'updated_at'];
+    }
+
     function canInitiateBatchDeliveryRequest() {
       return hasOnlyKeys(closeInitKeys()) &&
              request.resource.data.close_request_pending == true;
@@ -152,7 +190,9 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.user_id == request.auth.uid ||
         (canViewAllSubmissions() && isSubmittedOrReviewedTable()) ||
-        isProductionTeam()
+        isProductionTeam() ||
+        (isSupervisor() && resource.data.type in ['requisition', 'production']) ||
+        (isIca() && resource.data.type == 'requisition' && resource.data.submitted == true)
       );
 
       allow create: if isAuthenticated() && (
@@ -169,7 +209,16 @@ service cloud.firestore {
           request.resource.data.user_id == request.auth.uid) ||
         (isStore() &&
           resource.data.user_id == request.auth.uid &&
+          tableIsOpen() &&
+          hasOnlyKeys(storeItemCountKeys())) ||
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
           request.resource.data.submitted == true) ||
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.submitted == true &&
+          resource.data.supervisor_rejected == true &&
+          hasOnlyKeys(storeResubmitTableKeys())) ||
         (isStore() &&
           resource.data.user_id == request.auth.uid &&
           resource.data.submitted == true &&
@@ -187,6 +236,10 @@ service cloud.firestore {
           hasOnlyKeys(closeFinalizeKeys()) &&
           request.resource.data.request_status == 'DONE' &&
           request.resource.data.request_closed == true) ||
+        (isSupervisor() &&
+          resource.data.type == 'requisition' &&
+          resource.data.submitted == true &&
+          hasOnlyKeys(supervisorTableKeys())) ||
         (isProductionTeam() &&
           isSubmittedOrReviewedTable() &&
           (
@@ -263,6 +316,9 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (
         resource.data.user_id == request.auth.uid ||
         isProduction() ||
+        (isSupervisor() && resource.data.status in ['Pending_Supervisor', 'Rejected_By_Supervisor']) ||
+        (isIca() && resource.data.status in ['Delivered', 'Partially_Delivered']) ||
+        (isIca() && resource.data.table_id != null && icaCanReadTable(resource.data.table_id)) ||
         (isProcurement() && resource.data.production_action == 'confirmed') ||
         (isProcurement() && resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||
         (isProcurement() && resource.data.is_stockroom == true) ||
@@ -285,10 +341,32 @@ service cloud.firestore {
         (isStore() &&
           resource.data.user_id == request.auth.uid &&
           resource.data.status == 'Pending' &&
-          request.resource.data.status == 'Submitted') ||
+          request.resource.data.status in ['Submitted', 'Pending_Supervisor']) ||
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.status in ['Pending_Supervisor', 'Rejected_By_Supervisor'] &&
+          request.resource.data.status == resource.data.status) ||
+        (isStore() &&
+          resource.data.user_id == request.auth.uid &&
+          resource.data.status == 'Rejected_By_Supervisor' &&
+          request.resource.data.status == 'Pending_Supervisor') ||
         (isStore() &&
           resource.data.user_id == request.auth.uid &&
           resource.data.is_stockroom == true) ||
+        (isSupervisor() &&
+          resource.data.status == 'Pending_Supervisor' &&
+          request.resource.data.status in ['Submitted', 'Rejected_By_Supervisor']) ||
+        (isSupervisor() &&
+          resource.data.status == 'Pending_Supervisor' &&
+          request.resource.data.status == resource.data.status &&
+          hasOnlyKeys(['supervisor_notes', 'updated_at'])) ||
+        (isSupervisor() &&
+          resource.data.status == 'Pending_Supervisor' &&
+          request.resource.data.status == 'Rejected_By_Supervisor' &&
+          hasOnlyKeys([
+            'status', 'rejected_by_supervisor_at', 'rejected_by_supervisor_by',
+            'supervisor_rejection_notes', 'supervisor_notes', 'updated_at'
+          ])) ||
         (isProcurement() &&
           resource.data.is_stockroom == true &&
           request.resource.data.status in ['Scheduled', 'Delivered', 'Partially_Delivered']) ||
@@ -327,7 +405,7 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && (
-        (isStore() || isProduction() || isProcurement() || isAdmin()) &&
+        (isStore() || isProduction() || isProcurement() || isSupervisor() || isAdmin()) &&
         request.resource.data.userId is string
       );
       allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
@@ -356,7 +434,9 @@ service cloud.firestore {
     }
 
     match /procurement_batches/{batchId} {
-      allow read: if isAuthenticated() && (isProduction() || isProcurement() || isAdmin());
+      allow read: if isAuthenticated() && (
+        isProduction() || isProcurement() || isAdmin() || isIca()
+      );
 
       allow create: if isAuthenticated() && (isProduction() || isAdmin()) &&
         request.resource.data.created_by == request.auth.uid &&

@@ -152,7 +152,9 @@ export class Page4Component implements OnInit {
   async loadUserTables(): Promise<void> {
     try {
       if (this.userRole === 'supervisor') {
-        this.userTables = await this.db.getAllTables();
+        this.userTables = await this.db.getAllTables('production');
+      } else if (this.userRole === 'ica') {
+        this.userTables = await this.db.getAllTables('requisition');
       } else {
         const allTables = await this.db.getUserTables(this.userId);
         // For production role, filter to show only production-relevant tables

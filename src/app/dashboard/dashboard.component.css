@@ -836,6 +836,11 @@
   color: hsl(var(--card-foreground));
 }
 
+.role-badge.role-ica {
+  background: hsl(262 52% 47%);
+  color: hsl(var(--card-foreground));
+}
+
 /* Empty state */
 .empty-state {
   text-align: center;

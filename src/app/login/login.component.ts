@@ -79,6 +79,9 @@ export class LoginComponent {
           case 'supervisor':
             await this.router.navigate(['/dashboard/procurement']);
             break;
+          case 'ica':
+            await this.router.navigate(['/dashboard/procurement']);
+            break;
           case 'procurement':
             await this.router.navigate(['/dashboard/procurement']);
             break;

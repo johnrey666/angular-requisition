@@ -193,6 +193,11 @@ h2 {
   color: hsl(38 92% 40%);
 }
 
+.role-badge.role-ica {
+  background: hsl(262 52% 47% / 0.3);
+  color: hsl(262 52% 40%);
+}
+
 .role-badge.role-store,
 .role-badge.role-user {
   background: hsl(var(--role-store) / 0.3);
